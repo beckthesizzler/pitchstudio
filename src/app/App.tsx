@@ -6,8 +6,15 @@ import {
   Trash2, Download, Layers, RotateCcw, RotateCw,
   ChevronDown, FileImage, Move,
   ImagePlus, Square, Circle, Minus, Plus, BookOpen,
-  Lock, Star, X, RefreshCw, Magnet, ChevronRight
+  Lock, Star, X, RefreshCw, Magnet, ChevronRight,
+  Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock
 } from "lucide-react"
+import { createClient } from "@supabase/supabase-js"
+import { projectId, publicAnonKey } from "../../utils/supabase/info"
+
+const _sbKey = `sb-client-${projectId}`
+// @ts-expect-error global singleton to survive HMR re-execution
+const supabase: ReturnType<typeof createClient> = (globalThis[_sbKey] ??= createClient(`https://${projectId}.supabase.co`, publicAnonKey))
 
 /* ─────────────────────────── Types ─────────────────────────── */
 type Tool =
@@ -538,6 +545,52 @@ export default function App() {
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [selectedFormation, setSelectedFormation] = useState("4-3-3")
 
+  /* ── Auth ── */
+  const [authUser, setAuthUser] = useState<import("@supabase/supabase-js").User | null>(null)
+  const [showAuth, setShowAuth] = useState(false)
+  const [showMyBoards, setShowMyBoards] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setAuthUser(session?.user ?? null)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const u = session?.user ?? null
+      setAuthUser(u)
+      if (u && (event === "SIGNED_IN" || event === "USER_UPDATED")) {
+        const { data } = await supabase.from("profiles").select("id").eq("id", u.id).maybeSingle()
+        if (!data) {
+          const handle = (u.email ?? "user").split("@")[0].replace(/[^a-z0-9_]/gi, "").toLowerCase() || "user"
+          await supabase.from("profiles").insert({ id: u.id, handle, display_name: "", bio: "" })
+        }
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const [saveError, setSaveError] = useState("")
+
+  const saveBoard = async () => {
+    if (!authUser) { setShowAuth(true); return }
+    setSaveStatus("saving"); setSaveError("")
+    const canvasData = { players, arrows, texts, shapes, images }
+    const { error } = await supabase.from("boards").insert({
+      user_id: authUser.id,
+      title,
+      canvas_data: canvasData,
+    })
+    if (error) {
+      console.error("Save board error:", error)
+      setSaveError(error.message)
+      setSaveStatus("error")
+      setTimeout(() => setSaveStatus("idle"), 6000)
+    } else {
+      setSaveStatus("saved")
+      setTimeout(() => setSaveStatus("idle"), 2000)
+    }
+  }
+
   /* ── Templates ── */
   const [templates, setTemplates] = useState<Template[]>(() => {
     try { return JSON.parse(localStorage.getItem("tactics-templates") || "[]") }
@@ -1029,6 +1082,55 @@ export default function App() {
             style={{ background: "#21262d", color: "#c9d1d9" }}>
             <BookOpen size={13} /> Templates
           </button>
+          {/* My Boards */}
+          {authUser && (
+            <button onClick={() => setShowMyBoards(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
+              style={{ background: "#21262d", color: "#c9d1d9" }}>
+              <FolderOpen size={13} /> My Boards
+            </button>
+          )}
+          {/* Save */}
+          <div className="flex flex-col items-end gap-1">
+            <button onClick={saveBoard}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
+              style={{
+                background: saveStatus === "saved" ? "#3fb950" : saveStatus === "error" ? "#f85149" : "#238636",
+                color: "#ffffff",
+                opacity: saveStatus === "saving" ? 0.7 : 1,
+              }}>
+              {saveStatus === "saved" ? <Check size={13} /> : saveStatus === "error" ? <AlertCircle size={13} /> : <Save size={13} />}
+              {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved!" : saveStatus === "error" ? "Save failed" : "Save"}
+            </button>
+            {saveStatus === "error" && saveError && (
+              <span className="text-xs max-w-48 text-right" style={{ color: "#f85149" }}>{saveError}</span>
+            )}
+          </div>
+          {/* Auth */}
+          {authUser ? (
+            <div className="relative group">
+              <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium"
+                style={{ background: "#21262d", color: "#c9d1d9" }}>
+                <User size={13} />
+                <span className="max-w-20 truncate">{authUser.email?.split("@")[0]}</span>
+                <ChevronDown size={11} />
+              </button>
+              <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 hidden group-hover:flex flex-col"
+                style={{ background: "#1c2128", borderColor: "rgba(255,255,255,0.1)" }}>
+                <button onClick={() => supabase.auth.signOut()}
+                  className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left"
+                  style={{ color: "#f85149" }}>
+                  <LogOut size={12} /> Sign Out
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setShowAuth(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
+              style={{ background: "#21262d", color: "#c9d1d9" }}>
+              <LogIn size={13} /> Sign In
+            </button>
+          )}
           {/* Undo/Redo */}
           <button onClick={undo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
           <button onClick={redo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
@@ -1744,6 +1846,237 @@ export default function App() {
           onDelete={deleteTemplate} onTogglePublish={togglePublish}
           isAdmin={isAdmin} onAdminToggle={() => setIsAdmin(v => !v)} />
       )}
+
+      {/* ── Auth modal ── */}
+      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+
+      {/* ── My Boards modal ── */}
+      {showMyBoards && authUser && (
+        <MyBoardsModal
+          userId={authUser.id}
+          onClose={() => setShowMyBoards(false)}
+          onLoad={(canvasData, boardTitle) => {
+            snapshot()
+            setPlayers(canvasData.players ?? [])
+            setArrows(canvasData.arrows ?? [])
+            setTexts(canvasData.texts ?? [])
+            setShapes(canvasData.shapes ?? [])
+            setImages(canvasData.images ?? [])
+            setTitle(boardTitle)
+            setSel(null)
+            setShowMyBoards(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ─────────────────────────── Auth Modal ────────────────────── */
+function AuthModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<"signin" | "signup">("signin")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  const [message, setMessage] = useState("")
+
+  const submit = async () => {
+    setError(""); setMessage(""); setLoading(true)
+    if (tab === "signup") {
+      const { error: e } = await supabase.auth.signUp({ email, password })
+      if (e) setError(e.message)
+      else { setMessage("Check your email to confirm your account."); }
+    } else {
+      const { error: e } = await supabase.auth.signInWithPassword({ email, password })
+      if (e) setError(e.message)
+      else onClose()
+    }
+    setLoading(false)
+  }
+
+  const signInWithGoogle = async () => {
+    setError("")
+    const { error: e } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    })
+    if (e) setError(e.message)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.75)" }}
+      onClick={onClose}>
+      <div className="relative w-[400px] rounded-xl border overflow-hidden flex flex-col"
+        style={{ background: "#161b22", borderColor: "rgba(255,255,255,0.12)" }}
+        onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold"
+              style={{ background: "#3fb950", color: "#0d1117", fontFamily: "'Barlow Condensed', sans-serif" }}>PS</div>
+            <span className="font-semibold text-sm" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em" }}>
+              PITCHSTUDIO ACCOUNT
+            </span>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-white/10"><X size={16} /></button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+          {(["signin", "signup"] as const).map(t => (
+            <button key={t} onClick={() => { setTab(t); setError(""); setMessage("") }}
+              className="flex-1 py-2.5 text-xs font-semibold uppercase transition-colors"
+              style={{
+                letterSpacing: "0.08em",
+                borderBottom: tab === t ? "2px solid #3fb950" : "2px solid transparent",
+                color: tab === t ? "#3fb950" : "#8b949e",
+              }}>
+              {t === "signin" ? "Sign In" : "Create Account"}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-5 flex flex-col gap-3">
+          {/* Google */}
+          <button onClick={signInWithGoogle}
+            className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-lg border text-sm font-medium transition-colors hover:bg-white/5"
+            style={{ borderColor: "rgba(255,255,255,0.15)", color: "#e6edf3" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Continue with Google
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.1)" }} />
+            <span className="text-xs" style={{ color: "#8b949e" }}>or</span>
+            <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.1)" }} />
+          </div>
+
+          <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)}
+            className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
+            style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }}
+            onKeyDown={e => e.key === "Enter" && submit()} />
+
+          <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)}
+            className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
+            style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }}
+            onKeyDown={e => e.key === "Enter" && submit()} />
+
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: "#f8514920", color: "#f85149" }}>
+              <AlertCircle size={13} /> {error}
+            </div>
+          )}
+          {message && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: "#3fb95020", color: "#3fb950" }}>
+              <Check size={13} /> {message}
+            </div>
+          )}
+
+          <button onClick={submit} disabled={loading || !email || !password}
+            className="w-full py-2.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+            style={{ background: "#3fb950", color: "#0d1117" }}>
+            {loading ? "Please wait…" : tab === "signin" ? "Sign In" : "Create Account"}
+          </button>
+
+          <p className="text-center text-xs" style={{ color: "#8b949e" }}>
+            Save boards to your account and access them anywhere.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ─────────────────────────── My Boards Modal ───────────────── */
+interface BoardRow { id: string; title: string; created_at: string }
+
+function MyBoardsModal({ userId, onClose, onLoad }: {
+  userId: string
+  onClose: () => void
+  onLoad: (canvasData: { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[] }, title: string) => void
+}) {
+  const [boards, setBoards] = useState<BoardRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadingId, setLoadingId] = useState<string | null>(null)
+
+  useEffect(() => {
+    supabase
+      .from("boards")
+      .select("id, title, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => { setBoards(data ?? []); setLoading(false) })
+  }, [userId])
+
+  const loadBoard = async (b: BoardRow) => {
+    setLoadingId(b.id)
+    const { data } = await supabase.from("boards").select("canvas_data, title").eq("id", b.id).single()
+    if (data) onLoad(data.canvas_data, data.title)
+    setLoadingId(null)
+  }
+
+  const fmt = (iso: string) => {
+    const d = new Date(iso)
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) + " · " +
+      d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.75)" }}
+      onClick={onClose}>
+      <div className="relative w-[560px] max-h-[75vh] flex flex-col rounded-xl border overflow-hidden"
+        style={{ background: "#161b22", borderColor: "rgba(255,255,255,0.12)" }}
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+          <div className="flex items-center gap-2">
+            <FolderOpen size={16} style={{ color: "#58a6ff" }} />
+            <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
+              MY BOARDS
+            </span>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-white/10"><X size={16} /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading && (
+            <div className="flex items-center justify-center py-12 gap-2 text-sm" style={{ color: "#8b949e" }}>
+              <Clock size={14} className="animate-spin" /> Loading boards…
+            </div>
+          )}
+          {!loading && boards.length === 0 && (
+            <div className="text-center py-12 text-sm" style={{ color: "#8b949e" }}>
+              No saved boards yet. Use the Save button to save your work.
+            </div>
+          )}
+          <div className="flex flex-col gap-2">
+            {boards.map(b => (
+              <div key={b.id}
+                className="flex items-center justify-between rounded-lg px-4 py-3 border transition-colors cursor-pointer hover:border-white/20"
+                style={{ background: "#21262d", borderColor: "rgba(255,255,255,0.08)" }}
+                onClick={() => loadBoard(b)}>
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.04em" }}>
+                    {b.title || "Untitled Board"}
+                  </span>
+                  <span className="text-xs" style={{ color: "#8b949e" }}>{fmt(b.created_at)}</span>
+                </div>
+                <button
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors flex-shrink-0 ml-3"
+                  style={{ background: loadingId === b.id ? "#21262d" : "#58a6ff", color: loadingId === b.id ? "#8b949e" : "#0d1117" }}
+                  disabled={loadingId === b.id}>
+                  {loadingId === b.id ? "Loading…" : "Load"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
