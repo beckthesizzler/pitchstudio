@@ -20,7 +20,7 @@ const supabase: ReturnType<typeof createClient> = (globalThis[_sbKey] ??= create
 type Tool =
   | "select" | "pan"
   | "homePlayer" | "awayPlayer"
-  | "arrow" | "text" | "shape" | "image"
+  | "arrow" | "text" | "shape" | "image" | "zone"
 
 type ShapeKind = "polygon" | "circle" | "ellipse" | "rect"
 
@@ -28,6 +28,8 @@ interface Player {
   id: string; x: number; y: number
   name: string; num: string
   bg: string; fg: string; ring: string
+  glow?: boolean
+  scale?: number
 }
 interface Arrow {
   id: string
@@ -43,6 +45,8 @@ interface TextBox {
   border: string; dash: boolean
   size: number; bold: boolean; width: number
   layer: "foreground" | "background"
+  manualH?: number
+  noBox?: boolean
 }
 interface Shape {
   id: string; kind: ShapeKind
@@ -52,6 +56,11 @@ interface Shape {
   fill: string; fillOpacity: number
   stroke: string; strokeW: number; strokeDash: boolean
   label: string
+}
+interface CustomZone {
+  id: string
+  x: number; y: number; w: number; h: number  // pitch-local coordinates (0..PW, 0..PH)
+  color: string; opacity: number; label: string
 }
 interface UploadedImage {
   id: string; x: number; y: number
@@ -72,7 +81,7 @@ interface Template {
   createdAt: number
 }
 
-type Sel = null | { kind: "player" | "arrow" | "text" | "shape" | "image"; id: string }
+type Sel = null | { kind: "player" | "arrow" | "text" | "shape" | "image" | "zone"; id: string }
 
 /* ─────────────────────────── Constants ─────────────────────── */
 const CW = 1400, CH = 900    // canvas dimensions
@@ -274,6 +283,40 @@ const FORMATIONS: Formation[] = [
       { x: 800, y: 340, pos: "ST", num: 9 },
     ]
   },
+  {
+    name: "4-2-4",
+    description: "Ultra attacking with four forwards",
+    positions: [
+      { x: 100, y: 340, pos: "GK", num: 1 },
+      { x: 250, y: 110, pos: "LB", num: 3 },
+      { x: 260, y: 255, pos: "CB", num: 5 },
+      { x: 260, y: 425, pos: "CB", num: 4 },
+      { x: 250, y: 570, pos: "RB", num: 2 },
+      { x: 450, y: 260, pos: "CM", num: 6 },
+      { x: 450, y: 420, pos: "CM", num: 8 },
+      { x: 740, y: 110, pos: "LW", num: 11 },
+      { x: 780, y: 260, pos: "ST", num: 9 },
+      { x: 780, y: 420, pos: "ST", num: 10 },
+      { x: 740, y: 570, pos: "RW", num: 7 },
+    ]
+  },
+  {
+    name: "3-4-2-1",
+    description: "Two attacking mids behind lone striker",
+    positions: [
+      { x: 100, y: 340, pos: "GK", num: 1 },
+      { x: 250, y: 185, pos: "CB", num: 5 },
+      { x: 260, y: 340, pos: "CB", num: 4 },
+      { x: 250, y: 495, pos: "CB", num: 3 },
+      { x: 450, y: 120, pos: "LM", num: 11 },
+      { x: 430, y: 268, pos: "CM", num: 8 },
+      { x: 430, y: 412, pos: "CM", num: 6 },
+      { x: 450, y: 560, pos: "RM", num: 2 },
+      { x: 650, y: 240, pos: "AM", num: 10 },
+      { x: 650, y: 440, pos: "AM", num: 7 },
+      { x: 800, y: 340, pos: "ST", num: 9 },
+    ]
+  },
 ]
 
 /* ─────────────────────────── Helpers ────────────────────────── */
@@ -300,13 +343,13 @@ function snapAngle(deg: number, snap: boolean): number {
 
 /* ─────────────────────────── Pitch SVG ─────────────────────── */
 // Renders in pitch-local coords (0..PW, 0..PH)
-function PitchSVG() {
-  const L = "rgba(255,255,255,0.85)", W = 2.5
+function PitchSVG({ pitchColor }: { pitchColor: "green" | "white" }) {
+  const L = pitchColor === "white" ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.85)", W = 2.5
   return (
     <g>
       {Array.from({ length: 13 }, (_, i) => (
         <rect key={i} x={i * (PW / 13)} y={0} width={PW / 13 + 1} height={PH}
-          fill={i % 2 === 0 ? "#1e6634" : "#1a5a2d"} />
+          fill={pitchColor === "white" ? "#ffffff" : i % 2 === 0 ? "#1e6634" : "#1a5a2d"} />
       ))}
       <rect x={3} y={3} width={PW - 6} height={PH - 6} fill="none" stroke={L} strokeWidth={W} />
       <line x1={PCX} y1={3} x2={PCX} y2={PH - 3} stroke={L} strokeWidth={W} />
@@ -314,12 +357,12 @@ function PitchSVG() {
       <circle cx={PCX} cy={PCY} r={4.5} fill={L} />
       <rect x={3} y={PCY - 201.5} width={162} height={403} fill="none" stroke={L} strokeWidth={W} />
       <rect x={3} y={PCY - 91.5} width={53} height={183} fill="none" stroke={L} strokeWidth={W} />
-      <rect x={-14} y={PCY - 37} width={14} height={74} fill="rgba(255,255,255,0.12)" stroke={L} strokeWidth={1.5} />
+      <rect x={-14} y={PCY - 37} width={14} height={74} fill={pitchColor === "white" ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.12)"} stroke={L} strokeWidth={1.5} />
       <circle cx={110} cy={PCY} r={4} fill={L} />
       <path d={`M 165 ${PCY - 73.1} A 91.5 91.5 0 0 1 165 ${PCY + 73.1}`} fill="none" stroke={L} strokeWidth={W} />
       <rect x={PW - 165} y={PCY - 201.5} width={162} height={403} fill="none" stroke={L} strokeWidth={W} />
       <rect x={PW - 56} y={PCY - 91.5} width={53} height={183} fill="none" stroke={L} strokeWidth={W} />
-      <rect x={PW} y={PCY - 37} width={14} height={74} fill="rgba(255,255,255,0.12)" stroke={L} strokeWidth={1.5} />
+      <rect x={PW} y={PCY - 37} width={14} height={74} fill={pitchColor === "white" ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.12)"} stroke={L} strokeWidth={1.5} />
       <circle cx={PW - 110} cy={PCY} r={4} fill={L} />
       <path d={`M ${PW - 165} ${PCY - 73.1} A 91.5 91.5 0 0 0 ${PW - 165} ${PCY + 73.1}`} fill="none" stroke={L} strokeWidth={W} />
       <path d={`M 13 3 A 10 10 0 0 1 3 13`} fill="none" stroke={L} strokeWidth={W} />
@@ -539,6 +582,12 @@ export default function App() {
   const [editingText, setEditingText] = useState<string | null>(null)
   const [bgColor, setBgColor] = useState("#0d1117")
   const [showPitch, setShowPitch] = useState(true)
+  const [canvasMode, setCanvasMode] = useState<"full" | "half" | "blank">("full")
+  const [pitchColor, setPitchColor] = useState<"green" | "white">("green")
+  const [pitchScale, setPitchScale] = useState(1)
+  const [homeColor, setHomeColor] = useState("#fbbf24")
+  const [awayColor, setAwayColor] = useState("#1d4ed8")
+  const [showPlayerLabels, setShowPlayerLabels] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [sideTab, setSideTab] = useState<"tools" | "background">("tools")
@@ -601,7 +650,29 @@ export default function App() {
     localStorage.setItem("tactics-templates", JSON.stringify(t))
   }
 
+  /* ── Workspace mode ── */
+  const [workspaceMode, setWorkspaceMode] = useState<"tactics" | "report" | "brainstorm">("tactics")
+
+  /* ── Zone overlays ── */
+  const [show18Zones, setShow18Zones] = useState(false)
+  const [showLanes, setShowLanes] = useState(false)
+  const [customZones, setCustomZones] = useState<CustomZone[]>([])
+  const [zoneColor, setZoneColor] = useState("#3fb950")
+  const [zoneOpacity, setZoneOpacity] = useState(0.25)
+  const zoneColorRef = useRef("#3fb950")
+  const zoneOpacityRef = useRef(0.25)
+  useEffect(() => { zoneColorRef.current = zoneColor }, [zoneColor])
+  useEffect(() => { zoneOpacityRef.current = zoneOpacity }, [zoneOpacity])
+  const zoneDrawRef = useRef<{ x: number; y: number } | null>(null)
+  const [zoneDraft, setZoneDraft] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  // Keep a ref to pitchScale so mouse handlers always read the latest value
+  const pitchScaleRef = useRef(1)
+  useEffect(() => { pitchScaleRef.current = pitchScale }, [pitchScale])
+
   /* ── Drawing drafts ── */
+  const [arrowDefaultDash, setArrowDefaultDash] = useState<"none" | "dashed" | "dotted">("none")
+  const [arrowDefaultColor, setArrowDefaultColor] = useState("#ffffff")
+  const [arrowDefaultW, setArrowDefaultW] = useState(3)
   const [arrowDraft, setArrowDraft] = useState<{ x1: number; y1: number } | null>(null)
   const [polyDraft, setPolyDraft] = useState<[number, number][] | null>(null)
   const shapeDrawRef = useRef<{ x1: number; y1: number } | null>(null)
@@ -618,7 +689,7 @@ export default function App() {
 
   /* ── Drag refs ── */
   const dragRef = useRef<{
-    kind: "player" | "text" | "image" | "arrowCp" | "arrowP1" | "arrowP2"
+    kind: "player" | "text" | "image" | "arrowCp" | "arrowP1" | "arrowP2" | "resizeShape" | "resizeText" | "resizeImage" | "resizePlayer" | "resizePitch" | "zone"
     id: string; ox: number; oy: number
   } | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
@@ -729,6 +800,35 @@ export default function App() {
     return () => window.removeEventListener("mouseup", handleGlobalMouseUp)
   }, [shapeDraftPreview, shapeKind, shapes.length, snapshot])
 
+  /* ── Global mouseup for zone draw ── */
+  useEffect(() => {
+    const handleZoneMouseUp = () => {
+      if (zoneDrawRef.current && zoneDraft) {
+        const bx = Math.min(zoneDraft.x1, zoneDraft.x2)
+        const by = Math.min(zoneDraft.y1, zoneDraft.y2)
+        const bw = Math.abs(zoneDraft.x2 - zoneDraft.x1)
+        const bh = Math.abs(zoneDraft.y2 - zoneDraft.y1)
+        if (bw > 8 && bh > 8) {
+          const newZ: CustomZone = {
+            id: uid(),
+            x: Math.max(0, bx), y: Math.max(0, by),
+            w: Math.min(bw, PW - Math.max(0, bx)),
+            h: Math.min(bh, PH - Math.max(0, by)),
+            color: zoneColorRef.current,
+            opacity: zoneOpacityRef.current,
+            label: "",
+          }
+          setCustomZones(z => [...z, newZ])
+          setSel({ kind: "zone", id: newZ.id })
+        }
+        zoneDrawRef.current = null
+        setZoneDraft(null)
+      }
+    }
+    window.addEventListener("mouseup", handleZoneMouseUp)
+    return () => window.removeEventListener("mouseup", handleZoneMouseUp)
+  }, [zoneDraft])
+
   /* ── Keyboard shortcuts ── */
   useEffect(() => {
     const del = () => {
@@ -739,6 +839,7 @@ export default function App() {
       else if (sel.kind === "text") setTexts(t => t.filter(x => x.id !== sel.id))
       else if (sel.kind === "shape") setShapes(s => s.filter(x => x.id !== sel.id))
       else if (sel.kind === "image") setImages(i => i.filter(x => x.id !== sel.id))
+      else if (sel.kind === "zone") setCustomZones(z => z.filter(x => x.id !== sel.id))
       setSel(null)
     }
     const handler = (e: KeyboardEvent) => {
@@ -770,6 +871,7 @@ export default function App() {
     else if (sel.kind === "text") setTexts(t => t.filter(x => x.id !== sel.id))
     else if (sel.kind === "shape") setShapes(s => s.filter(x => x.id !== sel.id))
     else if (sel.kind === "image") setImages(i => i.filter(x => x.id !== sel.id))
+    else if (sel.kind === "zone") setCustomZones(z => z.filter(x => x.id !== sel.id))
     setSel(null)
   }, [sel, snapshot])
 
@@ -784,7 +886,7 @@ export default function App() {
         ? PX + pos.x
         : PX + (PW - pos.x)
       const cy = PY + pos.y
-      const colors = team === "home" ? HOME_COLORS : AWAY_COLORS
+      const colors = team === "home" ? { ...HOME_COLORS, bg: homeColor } : { ...AWAY_COLORS, bg: awayColor }
       return {
         id: uid(),
         x: cx,
@@ -792,6 +894,7 @@ export default function App() {
         name: pos.pos,
         num: String(pos.num),
         ...colors,
+        glow: false
       }
     })
     setPlayers(prev => [...prev, ...newPlayers])
@@ -810,6 +913,11 @@ export default function App() {
     if (shapeDrawRef.current && shapeKind !== "polygon") {
       setShapeDraftPreview({ x1: shapeDrawRef.current.x1, y1: shapeDrawRef.current.y1, x2: x, y2: y })
     }
+    if (zoneDrawRef.current) {
+      const px = (x - PX) / pitchScaleRef.current
+      const py = (y - PY) / pitchScaleRef.current
+      setZoneDraft({ x1: zoneDrawRef.current.x, y1: zoneDrawRef.current.y, x2: px, y2: py })
+    }
 
     if (!dragRef.current) return
     const d = dragRef.current
@@ -819,6 +927,29 @@ export default function App() {
     else if (d.kind === "arrowCp") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, cpx: x, cpy: y } : ar))
     else if (d.kind === "arrowP1") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, x1: x, y1: y, cpx: (x + ar.x2) / 2, cpy: (y + ar.y2) / 2 } : ar))
     else if (d.kind === "arrowP2") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, x2: x, y2: y, cpx: (ar.x1 + x) / 2, cpy: (ar.y1 + y) / 2 } : ar))
+    else if (d.kind === "resizeShape") setShapes(s => s.map(sh => sh.id === d.id ? { ...sh, w: Math.max(10, x - sh.x), h: Math.max(10, y - sh.y) } : sh))
+    else if (d.kind === "resizeText") setTexts(t => t.map(tb => {
+      if (tb.id !== d.id) return tb
+      const lH = tb.size * 1.45
+      const autoH = tb.text.split("\n").length * lH + 16
+      return { ...tb, width: Math.max(60, x - tb.x), manualH: Math.max(autoH, y - tb.y) }
+    }))
+    else if (d.kind === "resizePlayer") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, scale: Math.max(0.5, (x - pl.x) / 28) } : pl))
+    else if (d.kind === "resizeImage") setImages(i => i.map(im => im.id === d.id ? { ...im, width: Math.max(20, x - im.x), height: Math.max(20, y - im.y) } : im))
+    else if (d.kind === "zone") {
+      const px = (x - PX) / pitchScaleRef.current
+      const py = (y - PY) / pitchScaleRef.current
+      setCustomZones(z => z.map(zone => zone.id === d.id ? { ...zone, x: px - d.ox, y: py - d.oy } : zone))
+    }
+    else if (d.kind === "resizePitch") {
+      if (d.id === "pitch-tr" || d.id === "pitch-br") {
+        // Right-side corners: scale from left anchor (PX)
+        setPitchScale(Math.max(0.3, Math.min(2.5, (x - PX) / PW)))
+      } else {
+        // Left-side corners: right edge stays fixed, functional update avoids stale closure
+        setPitchScale(prev => Math.max(0.3, Math.min(2.5, (PX + PW * prev - x) / PW)))
+      }
+    }
   }, [svgXY, shapeKind])
 
   const onSVGMouseUp = useCallback(() => {
@@ -832,6 +963,12 @@ export default function App() {
       const { x, y } = svgXY(e)
       shapeDrawRef.current = { x1: x, y1: y }
     }
+    if (tool === "zone") {
+      const { x, y } = svgXY(e)
+      const px = (x - PX) / pitchScaleRef.current
+      const py = (y - PY) / pitchScaleRef.current
+      zoneDrawRef.current = { x: px, y: py }
+    }
   }, [tool, shapeKind, svgXY])
 
   const onSVGClick = useCallback((e: React.MouseEvent) => {
@@ -840,21 +977,23 @@ export default function App() {
 
     if (tool === "homePlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "Player", num: String(players.length + 1), ...HOME_COLORS }
+      const p: Player = { id: uid(), x, y, name: "Player", num: String(players.length + 1), ...HOME_COLORS, bg: homeColor, glow: false, scale: 1 }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id })
     } else if (tool === "awayPlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "Player", num: String(players.length + 1), ...AWAY_COLORS }
+      const p: Player = { id: uid(), x, y, name: "Player", num: String(players.length + 1), ...AWAY_COLORS, bg: awayColor, glow: false, scale: 1 }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id })
     } else if (tool === "arrow") {
       if (!arrowDraft) {
         setArrowDraft({ x1: x, y1: y })
       } else {
         snapshot()
+        const mx = (arrowDraft.x1 + x) / 2
+        const my = (arrowDraft.y1 + y) / 2
         const a: Arrow = {
           id: uid(), x1: arrowDraft.x1, y1: arrowDraft.y1, x2: x, y2: y,
-          cpx: (arrowDraft.x1 + x) / 2, cpy: (arrowDraft.y1 + y) / 2,
-          color: "#ffffff", strokeW: 3, dash: "none", label: "", twoWay: false
+          cpx: mx, cpy: my,
+          color: arrowDefaultColor, strokeW: arrowDefaultW, dash: arrowDefaultDash, label: "", twoWay: false
         }
         setArrows(prev => [...prev, a]); setSel({ kind: "arrow", id: a.id }); setArrowDraft(null)
       }
@@ -862,7 +1001,7 @@ export default function App() {
       snapshot()
       const t: TextBox = {
         id: uid(), x, y, text: "Analysis note",
-        fg: "#ffffff", bg: "rgba(13,17,23,0.85)", border: "#58a6ff",
+        fg: "#ffffff", bg: "transparent", border: "transparent",
         dash: false, size: 14, bold: false, width: 180, layer: textLayer
       }
       setTexts(prev => [...prev, t]); setSel({ kind: "text", id: t.id }); setEditingText(t.id)
@@ -1029,18 +1168,25 @@ export default function App() {
       {/* ── Top Header ── */}
       <header className="flex items-center gap-3 px-3 py-2 border-b flex-shrink-0"
         style={{ borderColor: "rgba(255,255,255,0.08)", background: "#161b22", minHeight: 48 }}>
-        {/* Logo + Title */}
-        <div className="flex items-center gap-2 min-w-0">
+        {/* Logo + Workspace Mode Selector + Title */}
+        <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
           <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
             style={{ background: "#3fb950", color: "#0d1117", fontFamily: "'Barlow Condensed', sans-serif" }}>PS</div>
+          <WorkspaceModeSelector mode={workspaceMode} onChange={m => {
+            setWorkspaceMode(m)
+            if (m === "report") { setCanvasMode("blank"); setBgColor("#f5f5f0"); setShowPitch(false) }
+            else if (m === "brainstorm") { setCanvasMode("blank"); setBgColor("#0d1117"); setShowPitch(false) }
+            else { setCanvasMode("full"); setBgColor("#0d1117"); setShowPitch(true) }
+          }} />
+          <div className="w-px h-5 mx-1 flex-shrink-0" style={{ background: "rgba(255,255,255,0.12)" }} />
           {editingTitle ? (
             <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)}
               onKeyDown={e => { if (e.key === "Enter") setEditingTitle(false) }}
               className="bg-transparent outline-none font-bold text-sm"
-              style={{ borderBottom: "1px solid #3fb950", color: "#e6edf3", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 220 }} />
+              style={{ borderBottom: "1px solid #3fb950", color: "#e6edf3", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 180 }} />
           ) : (
-            <span className="font-bold text-sm cursor-pointer hover:opacity-70 truncate"
+            <span className="font-bold text-sm cursor-pointer hover:opacity-70 truncate max-w-40"
               style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}
               onClick={() => setEditingTitle(true)}>{title}</span>
           )}
@@ -1156,7 +1302,7 @@ export default function App() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left Sidebar ── */}
-        <aside className="w-56 flex flex-col border-r overflow-y-auto flex-shrink-0"
+        <aside className="w-72 flex flex-col border-r overflow-y-auto flex-shrink-0"
           style={{ borderColor: "rgba(255,255,255,0.08)", background: "#161b22" }}>
           {/* Tab bar */}
           <div className="flex border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
@@ -1175,6 +1321,29 @@ export default function App() {
 
           {sideTab === "tools" && (
             <>
+              {/* Global Team Colors */}
+              <div className="p-3 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Team Options</p>
+                <div className="flex gap-4 mb-3">
+                  <div className="flex-1">
+                    <ColorPicker label="Home Color" colors={PALETTE.slice(0, 5)} selected={homeColor} onSelect={c => {
+                      setHomeColor(c)
+                      setPlayers(prev => prev.map(p => p.bg === homeColor || p.bg === HOME_COLORS.bg ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
+                    }} />
+                  </div>
+                  <div className="flex-1">
+                    <ColorPicker label="Away Color" colors={PALETTE.slice(2, 7)} selected={awayColor} onSelect={c => {
+                      setAwayColor(c)
+                      setPlayers(prev => prev.map(p => p.bg === awayColor || p.bg === AWAY_COLORS.bg ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
+                    }} />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="checkbox" checked={showPlayerLabels} onChange={e => setShowPlayerLabels(e.target.checked)} className="accent-green-400" />
+                  <span style={{ color: "#c9d1d9" }}>Show Player Names/Numbers</span>
+                </label>
+              </div>
+
               {/* Tool grid */}
               <div className="p-3 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
                 <div className="grid grid-cols-2 gap-1.5">
@@ -1260,6 +1429,37 @@ export default function App() {
                 <div className="mt-1 opacity-60">Scroll = zoom · Alt+drag = pan</div>
               </div>
 
+              {/* Arrow pre-draw style picker — shown when arrow tool active, nothing drawn yet */}
+              {tool === "arrow" && !sel && (
+                <div className="px-3 py-3 border-b flex flex-col gap-2.5" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                  <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Arrow Style</p>
+                  {/* Line style */}
+                  <div>
+                    <p className="text-xs mb-1.5" style={{ color: "#8b949e" }}>Line</p>
+                    <div className="flex gap-1.5">
+                      {(["none", "dashed", "dotted"] as const).map(d => (
+                        <button key={d} onClick={() => setArrowDefaultDash(d)}
+                          className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
+                          style={{ background: arrowDefaultDash === d ? "#3fb950" : "#21262d", color: arrowDefaultDash === d ? "#0d1117" : "#c9d1d9" }}>
+                          {d === "none" ? "—" : d === "dashed" ? "- -" : "···"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Color */}
+                  <ColorPicker label="Color" colors={PALETTE} selected={arrowDefaultColor} onSelect={setArrowDefaultColor} />
+                  {/* Width */}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs" style={{ color: "#8b949e" }}>Width {arrowDefaultW}px</span>
+                    <input type="range" min={1} max={8} value={arrowDefaultW}
+                      onChange={e => setArrowDefaultW(+e.target.value)} className="w-full accent-green-400" />
+                  </label>
+                  <p className="text-xs" style={{ color: "#8b949e" }}>
+                    {arrowDraft ? "Click to place end point. Drag yellow handle to curve." : "Click on canvas to start drawing."}
+                  </p>
+                </div>
+              )}
+
               {/* Properties */}
               {sel && (
                 <div className="p-3 flex flex-col gap-3">
@@ -1287,7 +1487,11 @@ export default function App() {
                       </label>
                       <ColorPicker label="Kit color" colors={PALETTE} selected={selP.bg}
                         onSelect={c => updP({ bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" })} />
-                      <ColorPicker label="Ring color" colors={PALETTE} selected={selP.ring} onSelect={c => updP({ ring: c })} />
+                      <ColorPicker label="Ring color" colors={PALETTE} selected={selP.ring} onSelect={c => updP({ ring: c })} allowTransparent={true} />
+                      <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
+                        <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
+                        <span style={{ color: "#c9d1d9" }}>Glow Highlight</span>
+                      </label>
                     </div>
                   )}
 
@@ -1308,7 +1512,7 @@ export default function App() {
                             <button key={s} onClick={() => updA({ dash: s })}
                               className="flex-1 py-1 rounded text-xs font-medium transition-colors"
                               style={{ background: selA.dash === s ? "#3fb950" : "#21262d", color: selA.dash === s ? "#0d1117" : "#c9d1d9" }}>
-                              {s === "none" ? "—" : s === "dashed" ? "- -" : "···"}
+                              {s === "none" ? "Solid" : s === "dashed" ? "Dashed" : "Dotted"}
                             </button>
                           ))}
                         </div>
@@ -1318,16 +1522,44 @@ export default function App() {
                         <input type="range" min={1} max={8} value={selA.strokeW}
                           onChange={e => updA({ strokeW: +e.target.value })} className="w-full accent-green-400" />
                       </label>
-                      <label className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input type="checkbox" checked={selA.twoWay} onChange={e => updA({ twoWay: e.target.checked })} className="accent-green-400" />
-                        <span style={{ color: "#c9d1d9" }}>Two-way arrow</span>
-                      </label>
+                      <div className="flex justify-between items-center mt-1">
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input type="checkbox" checked={selA.twoWay} onChange={e => updA({ twoWay: e.target.checked })} className="accent-green-400" />
+                          <span style={{ color: "#c9d1d9" }}>Two-way</span>
+                        </label>
+                        <button onClick={() => {
+                          // offset control point perpendicularly from the midpoint
+                          const mx = (selA.x1 + selA.x2) / 2
+                          const my = (selA.y1 + selA.y2) / 2
+                          const dx = selA.x2 - selA.x1
+                          const dy = selA.y2 - selA.y1
+                          const len = Math.sqrt(dx * dx + dy * dy) || 1
+                          // perpendicular unit vector, offset by 20% of arrow length
+                          const offset = len * 0.25
+                          updA({ cpx: mx - (dy / len) * offset, cpy: my + (dx / len) * offset })
+                        }} className="px-2 py-1 bg-[#21262d] rounded text-xs text-[#c9d1d9] hover:bg-[#3fb950] hover:text-[#0d1117]">
+                          Curve
+                        </button>
+                      </div>
+                      <p className="text-[10px] italic text-[#8b949e] mt-1">Drag the yellow handle on the arrow to curve it manually.</p>
                     </div>
                   )}
 
                   {/* TEXT */}
                   {selT && (
                     <div className="flex flex-col gap-2">
+                      <div className="flex gap-1.5">
+                        <button onClick={() => updT({ noBox: false, bg: "rgba(13,17,23,0.85)", border: "#58a6ff" })}
+                          className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
+                          style={{ background: !selT.noBox ? "#58a6ff" : "#21262d", color: !selT.noBox ? "#0d1117" : "#c9d1d9" }}>
+                          ▣ With Box
+                        </button>
+                        <button onClick={() => updT({ noBox: true, bg: "transparent", border: "transparent" })}
+                          className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
+                          style={{ background: selT.noBox ? "#58a6ff" : "#21262d", color: selT.noBox ? "#0d1117" : "#c9d1d9" }}>
+                          T Free Text
+                        </button>
+                      </div>
                       <label className="flex flex-col gap-1">
                         <span className="text-xs" style={{ color: "#8b949e" }}>Text (dbl-click to edit)</span>
                         <textarea value={selT.text} rows={3} onChange={e => updT({ text: e.target.value })}
@@ -1345,7 +1577,8 @@ export default function App() {
                           onChange={e => updT({ width: +e.target.value })} className="w-full accent-green-400" />
                       </label>
                       <ColorPicker label="Text color" colors={PALETTE} selected={selT.fg} onSelect={c => updT({ fg: c })} />
-                      <ColorPicker label="Border color" colors={PALETTE} selected={selT.border} onSelect={c => updT({ border: c })} />
+                      <ColorPicker label="Background color" colors={PALETTE} selected={selT.bg} onSelect={c => updT({ bg: c })} allowTransparent={true} />
+                      <ColorPicker label="Border color" colors={PALETTE} selected={selT.border} onSelect={c => updT({ border: c })} allowTransparent={true} />
                       <div className="flex gap-2">
                         <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                           <input type="checkbox" checked={selT.bold} onChange={e => updT({ bold: e.target.checked })} className="accent-green-400" />
@@ -1444,6 +1677,120 @@ export default function App() {
                 </div>
               )}
 
+              {/* ── Activate Zones ── */}
+              {!sel && (
+                <div className="p-3 border-t flex flex-col gap-3" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                  <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Activate Zones</p>
+
+                  {/* 18 Zones toggle */}
+                  <button
+                    onClick={() => setShow18Zones(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-xs font-semibold transition-colors"
+                    style={{
+                      background: show18Zones ? "rgba(249,115,22,0.15)" : "#21262d",
+                      borderColor: show18Zones ? "#f97316" : "rgba(255,255,255,0.1)",
+                      color: show18Zones ? "#f97316" : "#c9d1d9",
+                    }}>
+                    <span>⬛ Activate 18 Zones</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded font-bold"
+                      style={{ background: show18Zones ? "#f97316" : "#30363d", color: show18Zones ? "#fff" : "#8b949e", fontSize: 10 }}>
+                      {show18Zones ? "ON" : "OFF"}
+                    </span>
+                  </button>
+
+                  {/* 5 Lanes toggle */}
+                  <button
+                    onClick={() => setShowLanes(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-xs font-semibold transition-colors"
+                    style={{
+                      background: showLanes ? "rgba(249,115,22,0.15)" : "#21262d",
+                      borderColor: showLanes ? "#f97316" : "rgba(255,255,255,0.1)",
+                      color: showLanes ? "#f97316" : "#c9d1d9",
+                    }}>
+                    <span>≡ Activate Lanes</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded font-bold"
+                      style={{ background: showLanes ? "#f97316" : "#30363d", color: showLanes ? "#fff" : "#8b949e", fontSize: 10 }}>
+                      {showLanes ? "ON" : "OFF"}
+                    </span>
+                  </button>
+
+                  {/* Custom zone draw */}
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Custom Zones</p>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"].map(c => (
+                        <button key={c} onClick={() => setZoneColor(c)}
+                          className="w-6 h-6 rounded border-2 transition-transform hover:scale-110 flex-shrink-0"
+                          style={{ background: c, borderColor: zoneColor === c ? "#fff" : "transparent" }} />
+                      ))}
+                    </div>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: "#8b949e" }}>Fill opacity {Math.round(zoneOpacity * 100)}%</span>
+                      <input type="range" min={5} max={80} value={Math.round(zoneOpacity * 100)}
+                        onChange={e => setZoneOpacity(+e.target.value / 100)} className="w-full accent-orange-400" />
+                    </label>
+                    <button
+                      onClick={() => { setTool("zone"); setSel(null) }}
+                      className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-colors"
+                      style={{ background: tool === "zone" ? "#f97316" : "#21262d", color: tool === "zone" ? "#fff" : "#c9d1d9", border: `1px solid ${tool === "zone" ? "#f97316" : "rgba(255,255,255,0.1)"}` }}>
+                      {tool === "zone" ? "🖊 Drawing zone…" : "+ Draw Custom Zone"}
+                    </button>
+                    {tool === "zone" && (
+                      <p className="text-xs text-center" style={{ color: "#8b949e" }}>
+                        Click-drag on the pitch to draw a zone. Press Esc to cancel.
+                      </p>
+                    )}
+                    {customZones.length > 0 && (
+                      <button onClick={() => { setCustomZones([]); setSel(null) }}
+                        className="w-full py-1 rounded text-xs transition-colors hover:bg-red-500/20"
+                        style={{ color: "#f85149" }}>
+                        Clear all zones ({customZones.length})
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Zone properties panel when a zone is selected */}
+              {sel?.kind === "zone" && (() => {
+                const z = customZones.find(x => x.id === sel.id)
+                if (!z) return null
+                const updZ = (patch: Partial<CustomZone>) =>
+                  setCustomZones(zones => zones.map(x => x.id === sel.id ? { ...x, ...patch } : x))
+                return (
+                  <div className="p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Zone Properties</p>
+                      <button onClick={deleteSelected} className="p-1 rounded hover:bg-red-500/20" style={{ color: "#f85149" }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: "#8b949e" }}>Label</span>
+                      <input value={z.label} onChange={e => updZ({ label: e.target.value })}
+                        placeholder="e.g. Press zone"
+                        className="rounded px-2 py-1 text-xs outline-none"
+                        style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
+                    </label>
+                    <div>
+                      <p className="text-xs mb-1.5" style={{ color: "#8b949e" }}>Color</p>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"].map(c => (
+                          <button key={c} onClick={() => updZ({ color: c })}
+                            className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
+                            style={{ background: c, borderColor: z.color === c ? "#fff" : "transparent" }} />
+                        ))}
+                      </div>
+                    </div>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: "#8b949e" }}>Opacity {Math.round(z.opacity * 100)}%</span>
+                      <input type="range" min={5} max={80} value={Math.round(z.opacity * 100)}
+                        onChange={e => updZ({ opacity: +e.target.value / 100 })} className="w-full accent-orange-400" />
+                    </label>
+                  </div>
+                )
+              })()}
+
               {/* Quick formation */}
               {!sel && (
                 <div className="p-3 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
@@ -1508,24 +1855,57 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Show pitch toggle */}
+              {/* Canvas Mode */}
               <div>
-                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Pitch Markings</p>
-                <label className="flex items-center gap-2.5 cursor-pointer">
-                  <div onClick={() => setShowPitch(v => !v)}
-                    className="w-9 h-5 rounded-full relative transition-colors cursor-pointer"
-                    style={{ background: showPitch ? "#3fb950" : "#30363d" }}>
-                    <div className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
-                      style={{ transform: showPitch ? "translateX(18px)" : "translateX(2px)" }} />
-                  </div>
-                  <span className="text-xs" style={{ color: "#c9d1d9" }}>
-                    {showPitch ? "Visible" : "Hidden"}
-                  </span>
-                </label>
-                <p className="text-xs mt-1.5" style={{ color: "#8b949e" }}>
-                  Hide pitch markings when using a background photo.
+                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Canvas Mode</p>
+                <div className="flex flex-col gap-2 mb-3">
+                  {(["full", "half", "blank"] as const).map(mode => (
+                    <button key={mode} onClick={() => setCanvasMode(mode)}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors text-left"
+                      style={{ background: canvasMode === mode ? "#3fb950" : "#21262d", color: canvasMode === mode ? "#0d1117" : "#c9d1d9" }}>
+                      {mode === "full" ? "Full Pitch" : mode === "half" ? "Half Pitch (Vertical)" : "Blank Whiteboard / Custom"}
+                    </button>
+                  ))}
+                </div>
+                {canvasMode !== "blank" && (
+                  <>
+                    <p className="text-xs font-semibold uppercase mb-2 mt-4" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Pitch Color</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setPitchColor("green")}
+                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
+                        style={{ background: pitchColor === "green" ? "#3fb950" : "#21262d", color: pitchColor === "green" ? "#0d1117" : "#c9d1d9" }}>
+                        Green Grass
+                      </button>
+                      <button onClick={() => setPitchColor("white")}
+                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors border"
+                        style={{ background: pitchColor === "white" ? "#ffffff" : "#21262d", color: pitchColor === "white" ? "#0d1117" : "#c9d1d9", borderColor: "rgba(255,255,255,0.1)" }}>
+                        White Lines
+                      </button>
+                    </div>
+                  </>
+                )}
+                <p className="text-xs mt-3" style={{ color: "#8b949e" }}>
+                  Hide pitch markings when using a live game background photo.
                 </p>
               </div>
+
+              {/* Pitch size */}
+              {canvasMode !== "blank" && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Pitch Size</p>
+                    <button onClick={() => setPitchScale(1)}
+                      className="text-xs px-2 py-0.5 rounded hover:bg-white/10 transition-colors"
+                      style={{ color: "#8b949e" }}>Reset</button>
+                  </div>
+                  <input type="range" min={30} max={200} value={Math.round(pitchScale * 100)}
+                    onChange={e => setPitchScale(+e.target.value / 100)}
+                    className="w-full accent-green-400" />
+                  <p className="text-xs mt-1" style={{ color: "#8b949e" }}>
+                    {Math.round(pitchScale * 100)}% — or drag the yellow handles on the pitch edges
+                  </p>
+                </div>
+              )}
 
               {/* Canvas info */}
               <div>
@@ -1571,7 +1951,7 @@ export default function App() {
           ref={canvasRef}
           className="flex-1 overflow-hidden relative flex items-center justify-center"
           style={{
-            background: `radial-gradient(ellipse at 50% 50%, #1c2128 0%, #0d1117 100%)`,
+            background: bgColor,
             cursor: tool === "pan" ? "grab" : panDragRef.current ? "grabbing" : "default",
           }}
           onMouseDown={onCanvasMouseDown}
@@ -1608,15 +1988,93 @@ export default function App() {
                   {bgTexts.map(t => (
                     <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
+                      startResize={(e) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
                       setSel={setSel} tool={tool} updT={updT} />
                   ))}
 
                   {/* 4. Pitch group (translated to canvas offset) */}
-                  {showPitch && (
-                    <g transform={`translate(${PX},${PY})`}>
-                      <PitchSVG />
+                  {canvasMode !== "blank" && (
+                    <g transform={`translate(${PX},${PY}) scale(${pitchScale})`}>
+                      <g style={{ clipPath: canvasMode === "half" ? `url(#half-pitch-clip)` : undefined }}>
+                        <PitchSVG pitchColor={pitchColor} />
+                        {/* ── Zone overlays (pitch-local coords) ── */}
+                        {show18Zones && <EighteenZonesOverlay />}
+                        {showLanes && <LanesOverlay />}
+                        {/* Custom drawn zones */}
+                        {customZones.map(z => {
+                          const isSelZ = sel?.kind === "zone" && sel.id === z.id
+                          return (
+                            <g key={z.id}
+                              style={{ cursor: tool === "select" ? "move" : "default" }}
+                              onClick={e => { e.stopPropagation(); if (tool === "select") setSel({ kind: "zone", id: z.id }) }}
+                              onMouseDown={e => {
+                                if (tool !== "select") return
+                                e.stopPropagation()
+                                const svgPt = svgXY(e)
+                                const px = (svgPt.x - PX) / pitchScaleRef.current
+                                const py = (svgPt.y - PY) / pitchScaleRef.current
+                                dragRef.current = { kind: "zone", id: z.id, ox: px - z.x, oy: py - z.y }
+                                setSel({ kind: "zone", id: z.id })
+                              }}>
+                              <rect x={z.x} y={z.y} width={z.w} height={z.h} rx={4}
+                                fill={z.color} fillOpacity={z.opacity}
+                                stroke={isSelZ ? "#ffffff" : z.color}
+                                strokeWidth={isSelZ ? 2 : 1}
+                                strokeOpacity={isSelZ ? 1 : 0.5}
+                                strokeDasharray={isSelZ ? "6,3" : undefined} />
+                              {z.label && (
+                                <text x={z.x + z.w / 2} y={z.y + z.h / 2}
+                                  textAnchor="middle" dominantBaseline="middle"
+                                  fill="#ffffff" fontSize={14} fontWeight="700"
+                                  style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none", letterSpacing: "0.06em" }}>
+                                  {z.label}
+                                </text>
+                              )}
+                            </g>
+                          )
+                        })}
+                        {/* Zone draw draft preview */}
+                        {zoneDraft && (() => {
+                          const bx = Math.min(zoneDraft.x1, zoneDraft.x2)
+                          const by = Math.min(zoneDraft.y1, zoneDraft.y2)
+                          const bw = Math.abs(zoneDraft.x2 - zoneDraft.x1)
+                          const bh = Math.abs(zoneDraft.y2 - zoneDraft.y1)
+                          return (
+                            <rect x={bx} y={by} width={bw} height={bh} rx={4}
+                              fill={zoneColor} fillOpacity={zoneOpacity * 0.7}
+                              stroke={zoneColor} strokeWidth={1.5} strokeDasharray="8,4"
+                              strokeOpacity={0.9} style={{ pointerEvents: "none" }} />
+                          )
+                        })()}
+                      </g>
                     </g>
                   )}
+
+                  {/* Pitch resize handles — 4 corner squares, only in select mode */}
+                  {canvasMode !== "blank" && showPitch && tool === "select" && (() => {
+                    const pR = PX + PW * pitchScale
+                    const pB = PY + PH * pitchScale
+                    const hS = 10 // handle half-size
+                    const corners = [
+                      { id: "pitch-tl", x: PX,  y: PY,  cursor: "nwse-resize" },
+                      { id: "pitch-tr", x: pR,   y: PY,  cursor: "nesw-resize" },
+                      { id: "pitch-bl", x: PX,   y: pB,  cursor: "nesw-resize" },
+                      { id: "pitch-br", x: pR,   y: pB,  cursor: "nwse-resize" },
+                    ]
+                    return corners.map(c => (
+                      <g key={c.id} style={{ cursor: c.cursor }}
+                        onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
+                        <rect x={c.x - hS} y={c.y - hS} width={hS * 2} height={hS * 2} rx={3}
+                          fill="#fbbf24" stroke="#0d1117" strokeWidth={2} />
+                      </g>
+                    ))
+                  })()}
+
+                  <defs>
+                    <clipPath id="half-pitch-clip">
+                      <rect x={0} y={0} width={PW / 2} height={PH} />
+                    </clipPath>
+                  </defs>
 
                   {/* 5. Shapes */}
                   {shapes.map(s => (
@@ -1649,11 +2107,15 @@ export default function App() {
                           style={{ pointerEvents: "none" }} />
                       )}
                       {sel?.id === s.id && s.kind !== "polygon" && (
-                        <rect
-                          x={s.x - 4} y={s.y - 4}
-                          width={s.w + 8} height={s.h + 8}
-                          fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="4,2" rx={3}
-                          style={{ pointerEvents: "none" }} />
+                        <>
+                          <rect
+                            x={s.x - 4} y={s.y - 4}
+                            width={s.w + 8} height={s.h + 8}
+                            fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="4,2" rx={3}
+                            style={{ pointerEvents: "none" }} />
+                          <circle cx={s.x + s.w} cy={s.y + s.h} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
+                            onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizeShape", id: s.id, ox: 0, oy: 0 } }} />
+                        </>
                       )}
                     </g>
                   ))}
@@ -1725,13 +2187,24 @@ export default function App() {
                     )
                   })}
 
-                  {/* 9. Arrow draft preview */}
+                  {/* 9. Arrow draft preview — shows actual style pre-selected */}
                   {arrowDraft && (
                     <g>
-                      <line x1={arrowDraft.x1} y1={arrowDraft.y1} x2={mouse.x} y2={mouse.y}
-                        stroke="rgba(255,255,255,0.5)" strokeWidth={2} strokeDasharray="8,4" />
+                      {/* Wide invisible hit area */}
+                      <path d={arrowPath(arrowDraft.x1, arrowDraft.y1, mouse.x, mouse.y,
+                        (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2)}
+                        fill="none" stroke="transparent" strokeWidth={16} />
+                      {/* Styled preview path */}
+                      <path d={arrowPath(arrowDraft.x1, arrowDraft.y1, mouse.x, mouse.y,
+                        (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2)}
+                        fill="none" stroke={arrowDefaultColor} strokeWidth={arrowDefaultW}
+                        strokeOpacity={0.65}
+                        strokeDasharray={arrowDefaultDash === "dashed" ? "12,6" : arrowDefaultDash === "dotted" ? "4,4" : undefined}
+                        strokeLinecap="round" />
                       <circle cx={arrowDraft.x1} cy={arrowDraft.y1} r={6} fill="#3fb950" />
-                      <polygon points={arrowHead(mouse.x, mouse.y, arrowDraft.x1, arrowDraft.y1, 14)} fill="rgba(255,255,255,0.5)" />
+                      <polygon points={arrowHead(mouse.x, mouse.y,
+                        (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2, 14)}
+                        fill={arrowDefaultColor} fillOpacity={0.65} />
                     </g>
                   )}
 
@@ -1739,38 +2212,60 @@ export default function App() {
                   {fgTexts.map(t => (
                     <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
+                      startResize={(e) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
                       setSel={setSel} tool={tool} updT={updT} />
                   ))}
 
-                  {/* 11. Players — Brazil-style visible tokens */}
+                  {/* 11. Players */}
                   {players.map(p => {
                     const isSelected = sel?.id === p.id
-                    const r = 28
+                    const s = p.scale || 1
+                    const r = 28 * s
+                    const nameUpper = p.name.toUpperCase()
+                    const pillW = Math.min(Math.max(64, nameUpper.length * 6.8 + 16), 180)
+                    const pillH = 17
+                    const maxChars = Math.floor((pillW - 12) / 6.5)
+                    const displayName = nameUpper.length > maxChars ? nameUpper.slice(0, maxChars - 1) + "…" : nameUpper
+                    const numFontSize = Math.min(15 * s, r * 0.58)
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
                         onMouseDown={e => startDrag(e, "player", p.id, p.x, p.y)}
                         style={{ cursor: tool === "select" ? "grab" : "default" }}>
+                        {p.glow && (
+                          <circle r={r + 15} fill="#fbbf24" fillOpacity={0.4} filter="blur(8px)" />
+                        )}
                         {/* Drop shadow */}
                         <circle r={r + 1} fill="rgba(0,0,0,0.45)" cx={1.5} cy={2.5} />
-                        {/* Selection ring */}
+                        {/* Selection ring + resize handle at bottom-right of circle */}
                         {isSelected && (
-                          <circle r={r + 7} fill="none" stroke="#3fb950" strokeWidth={2.5} strokeDasharray="5,3" />
+                          <>
+                            <circle r={r + 7} fill="none" stroke="#3fb950" strokeWidth={2.5} strokeDasharray="5,3" />
+                            <circle cx={r * 0.707} cy={r * 0.707} r={6}
+                              fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
+                              onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePlayer", id: p.id, ox: 0, oy: 0 } }} />
+                          </>
                         )}
                         {/* Main circle */}
-                        <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={3} />
-                        {/* Number */}
-                        <text textAnchor="middle" dominantBaseline="central" y={-1}
-                          fill={p.fg} fontSize={15} fontWeight="800"
-                          style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none" }}>
-                          {p.num}
-                        </text>
-                        {/* Name pill background */}
-                        <rect x={-32} y={r + 4} width={64} height={17} rx={3} fill="rgba(0,0,0,0.75)" />
-                        {/* Name text */}
-                        <text textAnchor="middle" y={r + 13.5} fill="#ffffff" fontSize={10} fontWeight="700"
-                          style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.06em", pointerEvents: "none" }}>
-                          {p.name.toUpperCase().slice(0, 10)}
-                        </text>
+                        <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={3 * s} />
+                        {/* Number — capped font so it never overflows the circle */}
+                        {showPlayerLabels && (
+                          <text textAnchor="middle" dominantBaseline="central" y={-1}
+                            fill={p.fg} fontSize={numFontSize} fontWeight="800"
+                            style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none" }}>
+                            {p.num.slice(0, 4)}
+                          </text>
+                        )}
+                        {/* Name pill — fixed 10px, pill grows with name, hard-truncated so it NEVER overflows */}
+                        {showPlayerLabels && (
+                          <>
+                            <rect x={-pillW / 2} y={r + 4} width={pillW} height={pillH} rx={3} fill="rgba(0,0,0,0.78)" />
+                            <text textAnchor="middle" x={0} y={r + 4 + pillH * 0.68}
+                              fill="#ffffff" fontSize={10} fontWeight="700"
+                              style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.05em", pointerEvents: "none" }}>
+                              {displayName}
+                            </text>
+                          </>
+                        )}
                       </g>
                     )
                   })}
@@ -1786,13 +2281,19 @@ export default function App() {
 
                   {/* Selected image border */}
                   {selI && (
-                    <rect
-                      x={selI.layer === "background" ? 0 : selI.x}
-                      y={selI.layer === "background" ? 0 : selI.y}
-                      width={selI.layer === "background" ? CW : selI.width}
-                      height={selI.layer === "background" ? CH : selI.height}
-                      fill="none" stroke="#3fb950" strokeWidth={2} strokeDasharray="6,3"
-                      style={{ pointerEvents: "none" }} />
+                    <>
+                      <rect
+                        x={selI.layer === "background" ? 0 : selI.x}
+                        y={selI.layer === "background" ? 0 : selI.y}
+                        width={selI.layer === "background" ? CW : selI.width}
+                        height={selI.layer === "background" ? CH : selI.height}
+                        fill="none" stroke="#3fb950" strokeWidth={2} strokeDasharray="6,3"
+                        style={{ pointerEvents: "none" }} />
+                      {selI.layer !== "background" && (
+                        <circle cx={selI.x + selI.width} cy={selI.y + selI.height} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
+                          onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizeImage", id: selI.id, ox: 0, oy: 0 } }} />
+                      )}
+                    </>
                   )}
 
                   {/* 13. Watermark — always last, always visible */}
@@ -1835,6 +2336,24 @@ export default function App() {
             style={{ background: "rgba(0,0,0,0.45)", color: "rgba(255,255,255,0.4)", zIndex: 10, fontFamily: "monospace" }}>
             {CW}×{CH}
           </div>
+
+          {/* Brainstorm watermark */}
+          {workspaceMode === "brainstorm" && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 1 }}>
+              <p style={{
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontSize: "clamp(28px, 4vw, 52px)",
+                fontWeight: 700,
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                color: "rgba(255,255,255,0.055)",
+                userSelect: "none",
+                whiteSpace: "nowrap",
+              }}>
+                don&apos;t think, just write
+              </p>
+            </div>
+          )}
         </main>
       </div>
 
@@ -2081,14 +2600,208 @@ function MyBoardsModal({ userId, onClose, onLoad }: {
   )
 }
 
+/* ─────────────────────────── Lanes Overlay ─────────────────── */
+// Renders in pitch-local coords (0..PW, 0..PH) — place inside scaled pitch group
+function LanesOverlay() {
+  const laneH = PH / 5
+  const orange = "#f97316"
+  const lanes = [
+    { label: "WIDE AREA",   fill: `rgba(249,115,22,0.08)`,  stroke: orange, y: 0 },
+    { label: "HALF-SPACE",  fill: `rgba(249,115,22,0.18)`,  stroke: orange, y: laneH },
+    { label: "CENTRE",      fill: `rgba(249,115,22,0.04)`,  stroke: orange, y: laneH * 2 },
+    { label: "HALF-SPACE",  fill: `rgba(249,115,22,0.18)`,  stroke: orange, y: laneH * 3 },
+    { label: "WIDE AREA",   fill: `rgba(249,115,22,0.08)`,  stroke: orange, y: laneH * 4 },
+  ]
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {lanes.map((ln, i) => (
+        <g key={i}>
+          <rect x={0} y={ln.y} width={PW} height={laneH}
+            fill={ln.fill} stroke={ln.stroke} strokeWidth={1} strokeOpacity={0.5} />
+          <text x={PW / 2} y={ln.y + laneH / 2}
+            textAnchor="middle" dominantBaseline="middle"
+            fill={orange} fontSize={14} fontWeight="700" fillOpacity={0.75}
+            style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.12em" }}>
+            {ln.label}
+          </text>
+        </g>
+      ))}
+      {/* Orange border around whole pitch */}
+      <rect x={0} y={0} width={PW} height={PH} fill="none" stroke={orange} strokeWidth={2} />
+      {/* Corner marks */}
+      {[[0,0],[PW,0],[0,PH],[PW,PH]].map(([cx,cy], i) => (
+        <g key={i}>
+          <line x1={cx} y1={cy + (cy === 0 ? 30 : -30)} x2={cx} y2={cy} stroke={orange} strokeWidth={2.5} />
+          <line x1={cx + (cx === 0 ? 30 : -30)} y1={cy} x2={cx} y2={cy} stroke={orange} strokeWidth={2.5} />
+        </g>
+      ))}
+    </g>
+  )
+}
+
+/* ──────────────────────── 18 Zones Overlay ─────────────────── */
+function EighteenZonesOverlay() {
+  const cols = 6, rows = 3
+  const cw = PW / cols   // 175
+  const rh = PH / rows   // ≈ 226.67
+  const orange = "#f97316"
+  // Alternating zone shades — (col+row)%2
+  const darkFill  = "rgba(30,30,40,0.55)"
+  const lightFill = "rgba(60,60,75,0.45)"
+  const zones: { zoneNum: number; col: number; row: number }[] = []
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      zones.push({ zoneNum: c * rows + r + 1, col: c, row: r })
+    }
+  }
+  const thirds = [
+    { label: "DEFENSIVE THIRD", x: 0 },
+    { label: "MIDDLE THIRD",    x: cw * 2 },
+    { label: "FINAL THIRD",     x: cw * 4 },
+  ]
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {zones.map(({ zoneNum, col, row }) => {
+        const x = col * cw, y = row * rh
+        const fill = (col + row) % 2 === 0 ? lightFill : darkFill
+        return (
+          <g key={zoneNum}>
+            <rect x={x} y={y} width={cw} height={rh} fill={fill} stroke="rgba(255,255,255,0.08)" strokeWidth={0.5} />
+            <text x={x + 10} y={y + 18}
+              fill="rgba(255,255,255,0.55)" fontSize={16} fontWeight="700"
+              style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
+              {zoneNum}
+            </text>
+          </g>
+        )
+      })}
+      {/* Dashed dividers between thirds */}
+      {[2, 4].map(c => (
+        <line key={c} x1={c * cw} y1={0} x2={c * cw} y2={PH}
+          stroke={orange} strokeWidth={1.5} strokeDasharray="10,6" strokeOpacity={0.8} />
+      ))}
+      {/* Third labels at bottom */}
+      {thirds.map((t, i) => (
+        <text key={i} x={t.x + cw} y={PH - 8}
+          textAnchor="middle" fill={orange} fontSize={11} fontWeight="700" fillOpacity={0.9}
+          style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.08em" }}>
+          {t.label}
+        </text>
+      ))}
+      {/* Orange border */}
+      <rect x={0} y={0} width={PW} height={PH} fill="none" stroke={orange} strokeWidth={2} />
+      {/* Corner marks */}
+      {([[0,0],[PW,0],[0,PH],[PW,PH]] as [number,number][]).map(([cx,cy], i) => (
+        <g key={i}>
+          <line x1={cx} y1={cy + (cy === 0 ? 30 : -30)} x2={cx} y2={cy} stroke={orange} strokeWidth={2.5} />
+          <line x1={cx + (cx === 0 ? 30 : -30)} y1={cy} x2={cx} y2={cy} stroke={orange} strokeWidth={2.5} />
+        </g>
+      ))}
+    </g>
+  )
+}
+
+/* ─────────────────────── Workspace Mode Selector ────────────── */
+const WORKSPACE_MODES = [
+  {
+    id: "tactics" as const,
+    label: "Tactics Board",
+    icon: "⬜",
+    desc: "Full pitch — plan formations, movements & shapes",
+  },
+  {
+    id: "report" as const,
+    label: "Report",
+    icon: "📄",
+    desc: "Clean white canvas — build scouting reports & layouts",
+  },
+  {
+    id: "brainstorm" as const,
+    label: "Brainstorm",
+    icon: "💡",
+    desc: "Empty space — think freely without constraints",
+  },
+]
+
+function WorkspaceModeSelector({
+  mode, onChange,
+}: { mode: "tactics" | "report" | "brainstorm"; onChange: (m: "tactics" | "report" | "brainstorm") => void }) {
+  const [open, setOpen] = useState(false)
+  const current = WORKSPACE_MODES.find(m => m.id === mode)!
+  return (
+    <div className="relative flex-shrink-0">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors border"
+        style={{
+          background: open ? "#21262d" : "#161b22",
+          borderColor: open ? "#3fb950" : "rgba(255,255,255,0.15)",
+          color: "#e6edf3",
+          minWidth: 150,
+        }}
+      >
+        <span>{current.icon}</span>
+        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 13 }}>
+          {current.label.toUpperCase()}
+        </span>
+        <ChevronDown size={11} style={{ marginLeft: "auto", opacity: 0.6, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+      </button>
+
+      {open && (
+        <>
+          {/* backdrop */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            className="absolute left-0 top-full mt-1.5 rounded-xl border shadow-2xl z-50 overflow-hidden flex flex-col"
+            style={{ background: "#1c2128", borderColor: "rgba(255,255,255,0.12)", width: 280 }}
+          >
+            <div className="px-4 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+              <p className="text-xs font-bold uppercase" style={{ color: "#8b949e", letterSpacing: "0.1em" }}>What are you building?</p>
+            </div>
+            {WORKSPACE_MODES.map(m => (
+              <button
+                key={m.id}
+                onClick={() => { onChange(m.id); setOpen(false) }}
+                className="flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5"
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+              >
+                <span style={{ fontSize: 20, lineHeight: 1, marginTop: 1 }}>{m.icon}</span>
+                <div className="flex flex-col gap-0.5 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", color: "#e6edf3" }}>
+                      {m.label.toUpperCase()}
+                    </span>
+                    {mode === m.id && (
+                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#3fb950", color: "#0d1117", fontSize: 9, fontWeight: 700 }}>ACTIVE</span>
+                    )}
+                  </div>
+                  <span className="text-xs leading-snug" style={{ color: "#8b949e" }}>{m.desc}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /* ─────────────────────────── Sub-components ────────────────── */
-function ColorPicker({ label, colors, selected, onSelect }: {
-  label: string; colors: string[]; selected: string; onSelect: (c: string) => void
+function ColorPicker({ label, colors, selected, onSelect, allowTransparent }: {
+  label: string; colors: string[]; selected: string; onSelect: (c: string) => void; allowTransparent?: boolean
 }) {
   return (
     <div>
       <p className="text-xs mb-1.5" style={{ color: "#8b949e" }}>{label}</p>
       <div className="flex flex-wrap gap-1">
+        {allowTransparent && (
+          <button onClick={() => onSelect("transparent")}
+            className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center relative overflow-hidden"
+            style={{ borderColor: selected === "transparent" ? "#3fb950" : "transparent" }}>
+            <div className="absolute inset-0 bg-white" />
+            <div className="absolute inset-0 w-full h-full bg-[repeating-linear-gradient(45deg,transparent,transparent_3px,rgba(255,0,0,0.5)_3px,rgba(255,0,0,0.5)_4px)]" />
+          </button>
+        )}
         {colors.map(c => (
           <button key={c} onClick={() => onSelect(c)}
             className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110"
@@ -2099,10 +2812,11 @@ function ColorPicker({ label, colors, selected, onSelect }: {
   )
 }
 
-function TextSVG({ t, sel, editingText, setEditingText, startDrag, setSel, tool, updT }: {
+function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, setSel, tool, updT }: {
   t: TextBox; sel: Sel; editingText: string | null
   setEditingText: (id: string | null) => void
   startDrag: (e: React.MouseEvent) => void
+  startResize?: (e: React.MouseEvent) => void
   setSel: (s: Sel) => void
   tool: Tool
   updT: (patch: Partial<TextBox>) => void
@@ -2110,14 +2824,31 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, setSel, tool,
   const isSelected = sel?.id === t.id
   const lineH = t.size * 1.45
   const lines = t.text.split("\n")
-  const boxH = lines.length * lineH + 16
+  const autoH = lines.length * lineH + 16
+  const boxH = Math.max(autoH, t.manualH || 0)
+  const noBox = t.noBox === true
   return (
     <g onMouseDown={e => { if (tool === "select") { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) } }}
       onDoubleClick={e => { e.stopPropagation(); setEditingText(t.id) }}
       style={{ cursor: tool === "select" ? "move" : "default" }}>
-      <rect x={t.x} y={t.y} width={t.width} height={boxH}
-        fill={t.bg} stroke={isSelected ? "#3fb950" : t.border}
-        strokeWidth={isSelected ? 2 : 1} strokeDasharray={t.dash ? "6,3" : undefined} rx={4} />
+      {!noBox && (
+        <rect x={t.x} y={t.y} width={t.width} height={boxH}
+          fill={t.bg} stroke={t.border}
+          strokeWidth={t.border === "transparent" ? 0 : 1}
+          strokeDasharray={t.dash ? "6,3" : undefined} rx={4} />
+      )}
+      {isSelected && (
+        <rect x={t.x - 2} y={t.y - 2} width={t.width + 4} height={boxH + 4}
+          fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="5,3" rx={5}
+          style={{ pointerEvents: "none" }} />
+      )}
+      {isSelected && startResize && (
+        <rect
+          x={t.x + t.width - 6} y={t.y + boxH - 6} width={11} height={11} rx={2}
+          fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5}
+          style={{ cursor: "nwse-resize" }}
+          onMouseDown={e => { e.stopPropagation(); startResize(e) }} />
+      )}
       {editingText === t.id ? (
         <foreignObject x={t.x + 6} y={t.y + 6} width={t.width - 12} height={boxH - 12}>
           <textarea autoFocus value={t.text} rows={lines.length}
