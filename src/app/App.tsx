@@ -1000,9 +1000,9 @@ export default function App() {
     } else if (tool === "text") {
       snapshot()
       const t: TextBox = {
-        id: uid(), x, y, text: "Analysis note",
+        id: uid(), x, y, text: "",
         fg: "#ffffff", bg: "transparent", border: "transparent",
-        dash: false, size: 14, bold: false, width: 180, layer: textLayer
+        dash: false, size: 15, bold: false, width: 300, layer: textLayer, noBox: true
       }
       setTexts(prev => [...prev, t]); setSel({ kind: "text", id: t.id }); setEditingText(t.id)
     } else if (tool === "shape" && shapeKind === "polygon") {
@@ -1280,6 +1280,20 @@ export default function App() {
           {/* Undo/Redo */}
           <button onClick={undo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
           <button onClick={redo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
+          {/* Clear All */}
+          <button
+            onClick={() => {
+              if (!window.confirm("Clear everything on the canvas? This cannot be undone.")) return
+              snapshot()
+              setPlayers([]); setArrows([]); setTexts([])
+              setShapes([]); setImages([]); setCustomZones([])
+              setSel(null)
+            }}
+            className="flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium transition-colors hover:bg-red-500/20"
+            style={{ color: "#f85149" }}
+            title="Clear all canvas elements">
+            <Trash2 size={13} /> Clear All
+          </button>
           {/* Export */}
           <div className="relative group">
             <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold"
@@ -2222,10 +2236,10 @@ export default function App() {
                     const s = p.scale || 1
                     const r = 28 * s
                     const nameUpper = p.name.toUpperCase()
-                    const pillW = Math.min(Math.max(64, nameUpper.length * 6.8 + 16), 180)
+                    // Pill always grows to fit the FULL name — no truncation ever
+                    // 6.2 SVG units per char is accurate for Barlow Condensed 10px in this viewBox
+                    const pillW = Math.max(r * 2, nameUpper.length * 6.2 + 14)
                     const pillH = 17
-                    const maxChars = Math.floor((pillW - 12) / 6.5)
-                    const displayName = nameUpper.length > maxChars ? nameUpper.slice(0, maxChars - 1) + "…" : nameUpper
                     const numFontSize = Math.min(15 * s, r * 0.58)
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
@@ -2255,14 +2269,14 @@ export default function App() {
                             {p.num.slice(0, 4)}
                           </text>
                         )}
-                        {/* Name pill — fixed 10px, pill grows with name, hard-truncated so it NEVER overflows */}
+                        {/* Name pill — grows to fit full name, never truncates */}
                         {showPlayerLabels && (
                           <>
                             <rect x={-pillW / 2} y={r + 4} width={pillW} height={pillH} rx={3} fill="rgba(0,0,0,0.78)" />
                             <text textAnchor="middle" x={0} y={r + 4 + pillH * 0.68}
                               fill="#ffffff" fontSize={10} fontWeight="700"
                               style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.05em", pointerEvents: "none" }}>
-                              {displayName}
+                              {nameUpper}
                             </text>
                           </>
                         )}
@@ -2822,52 +2836,119 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   updT: (patch: Partial<TextBox>) => void
 }) {
   const isSelected = sel?.id === t.id
+  const isEditing = editingText === t.id
   const lineH = t.size * 1.45
   const lines = t.text.split("\n")
-  const autoH = lines.length * lineH + 16
+  const autoH = lines.length * lineH + 20
   const boxH = Math.max(autoH, t.manualH || 0)
   const noBox = t.noBox === true
+  // Ref-based focus — autoFocus is unreliable inside SVG foreignObject
+  const taRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (isEditing && taRef.current) {
+      taRef.current.focus()
+      // Place cursor at end
+      const len = taRef.current.value.length
+      taRef.current.setSelectionRange(len, len)
+    }
+  }, [isEditing])
+
+  // Editing area is much larger than the display box so users can type freely
+  const editW = Math.max(t.width, 400)
+  const editH = Math.max(boxH, 300)
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter") {
+      const val = taRef.current?.value ?? t.text
+      const cursorPos = taRef.current?.selectionStart ?? val.length
+      const linesBefore = val.slice(0, cursorPos).split("\n")
+      const currentLine = linesBefore[linesBefore.length - 1]
+      // Auto-continue bullet on Enter
+      if (currentLine.match(/^[•\-]\s/)) {
+        e.preventDefault()
+        const bullet = currentLine.startsWith("•") ? "• " : "- "
+        const before = val.slice(0, cursorPos)
+        const after = val.slice(cursorPos)
+        const newVal = before + "\n" + bullet + after
+        updT({ text: newVal })
+        // Move cursor after inserted bullet
+        setTimeout(() => {
+          if (taRef.current) {
+            const pos = cursorPos + 1 + bullet.length
+            taRef.current.setSelectionRange(pos, pos)
+          }
+        }, 0)
+      }
+    }
+    // Tab inserts spaces
+    if (e.key === "Tab") {
+      e.preventDefault()
+      const val = taRef.current?.value ?? t.text
+      const pos = taRef.current?.selectionStart ?? val.length
+      const newVal = val.slice(0, pos) + "    " + val.slice(pos)
+      updT({ text: newVal })
+      setTimeout(() => { if (taRef.current) taRef.current.setSelectionRange(pos + 4, pos + 4) }, 0)
+    }
+    if (e.key === "Escape") setEditingText(null)
+  }
+
   return (
-    <g onMouseDown={e => { if (tool === "select") { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) } }}
+    <g
+      onMouseDown={e => {
+        if (tool === "select") { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) }
+      }}
       onDoubleClick={e => { e.stopPropagation(); setEditingText(t.id) }}
-      style={{ cursor: tool === "select" ? "move" : "default" }}>
-      {!noBox && (
+      style={{ cursor: tool === "select" ? (isEditing ? "text" : "move") : "default" }}>
+      {/* Background box — hidden in free-text / no-box mode */}
+      {!noBox && !isEditing && (
         <rect x={t.x} y={t.y} width={t.width} height={boxH}
           fill={t.bg} stroke={t.border}
           strokeWidth={t.border === "transparent" ? 0 : 1}
           strokeDasharray={t.dash ? "6,3" : undefined} rx={4} />
       )}
-      {isSelected && (
+      {/* Selection outline */}
+      {isSelected && !isEditing && (
         <rect x={t.x - 2} y={t.y - 2} width={t.width + 4} height={boxH + 4}
           fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="5,3" rx={5}
           style={{ pointerEvents: "none" }} />
       )}
-      {isSelected && startResize && (
-        <rect
-          x={t.x + t.width - 6} y={t.y + boxH - 6} width={11} height={11} rx={2}
+      {/* Resize handle — bottom-right corner */}
+      {isSelected && !isEditing && startResize && (
+        <rect x={t.x + t.width - 6} y={t.y + boxH - 6} width={11} height={11} rx={2}
           fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5}
           style={{ cursor: "nwse-resize" }}
           onMouseDown={e => { e.stopPropagation(); startResize(e) }} />
       )}
-      {editingText === t.id ? (
-        <foreignObject x={t.x + 6} y={t.y + 6} width={t.width - 12} height={boxH - 12}>
-          <textarea autoFocus value={t.text} rows={lines.length}
+      {/* Inline editing — large open area so typing feels unrestricted */}
+      {isEditing ? (
+        <foreignObject x={t.x} y={t.y} width={editW} height={editH}>
+          <textarea
+            ref={taRef}
+            value={t.text}
+            placeholder="Start typing… use - or • for bullets"
             onChange={e => updT({ text: e.target.value })}
             onBlur={() => setEditingText(null)}
+            onKeyDown={handleKeyDown}
             style={{
-              width: "100%", height: "100%", background: "transparent",
+              width: "100%", height: "100%",
+              background: "transparent",
               border: "none", outline: "none", resize: "none",
               color: t.fg, fontSize: t.size,
               fontWeight: t.bold ? "bold" : "normal",
               fontFamily: "'Inter', sans-serif", lineHeight: 1.45,
+              caretColor: t.fg,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              padding: "4px 8px",
             }} />
         </foreignObject>
       ) : (
+        /* Display — render each line as SVG text */
         lines.map((line, i) => (
           <text key={i} x={t.x + 8} y={t.y + 10 + (i + 0.85) * lineH}
             fill={t.fg} fontSize={t.size} fontWeight={t.bold ? "700" : "400"}
-            style={{ fontFamily: "'Inter', sans-serif", pointerEvents: "none" }}>
-            {line}
+            style={{ fontFamily: "'Inter', sans-serif", pointerEvents: "none", whiteSpace: "pre" }}>
+            {line || " "}
           </text>
         ))
       )}
