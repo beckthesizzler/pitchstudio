@@ -641,6 +641,7 @@ export default function App() {
       setTimeout(() => setSaveStatus("idle"), 6000)
     } else {
       setSaveStatus("saved")
+      ;(window as any).posthog?.capture("board_saved")
       setTimeout(() => setSaveStatus("idle"), 2000)
     }
   }
@@ -1110,6 +1111,7 @@ export default function App() {
         pdf.addImage(url, "PNG", 0, 0, img.width, img.height)
         pdf.save("tactics.pdf")
       }
+      ;(window as any).posthog?.capture("board_exported", { format: fmt })
     } catch (err) { console.error(err) }
   }
 
@@ -1842,13 +1844,13 @@ export default function App() {
                   </select>
                   <div className="flex gap-1.5">
                     <button
-                      onClick={() => addFormation(selectedFormation, "home")}
+                      onClick={() => { addFormation(selectedFormation, "home"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
                       className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
                       style={{ background: "#fbbf24", color: "#000000" }}>
                       + Home
                     </button>
                     <button
-                      onClick={() => addFormation(selectedFormation, "away")}
+                      onClick={() => { addFormation(selectedFormation, "away"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
                       className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
                       style={{ background: "#1d4ed8", color: "#ffffff" }}>
                       + Away
@@ -2474,7 +2476,7 @@ function AuthModal({ onClose }: { onClose: () => void }) {
     if (tab === "signup") {
       const { error: e } = await supabase.auth.signUp({ email, password })
       if (e) setError(e.message)
-      else { setMessage("Check your email to confirm your account."); }
+      else { setMessage("Check your email to confirm your account."); (window as any).posthog?.capture("sign_up") }
     } else {
       const { error: e } = await supabase.auth.signInWithPassword({ email, password })
       if (e) setError(e.message)
