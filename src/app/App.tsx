@@ -98,7 +98,7 @@ const AWAY_COLORS = { bg: "#1d4ed8", fg: "#ffffff", ring: "#60a5fa" }
 const PALETTE = ["#ffffff","#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6","#000000"]
 const SHAPE_FILLS = ["#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6"]
 const BG_PRESETS = ["#0d1117","#1a1a2e","#0f2027","#1b2838","#2c2c2c","#f5f5f0","#ffffff","#1a472a"]
-const SNAP_ANGLES = [0,30,45,60,90,120,135,150,180,210,225,240,270,300,315,330,360]
+const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315, 360]
 
 /* ─────────────────────────── Formations ────────────────────── */
 interface FormationPos {
@@ -585,6 +585,11 @@ export default function App() {
   const [canvasMode, setCanvasMode] = useState<"full" | "half" | "blank">("full")
   const [pitchColor, setPitchColor] = useState<"green" | "white">("green")
   const [pitchScale, setPitchScale] = useState(1)
+  const [pitchOffX, setPitchOffX] = useState(0)
+  const [pitchOffY, setPitchOffY] = useState(0)
+  const pitchOffXRef = useRef(0)
+  const pitchOffYRef = useRef(0)
+  const [hoveredPitch, setHoveredPitch] = useState(false)
   const [homeColor, setHomeColor] = useState("#fbbf24")
   const [awayColor, setAwayColor] = useState("#1d4ed8")
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
@@ -668,6 +673,8 @@ export default function App() {
   // Keep a ref to pitchScale so mouse handlers always read the latest value
   const pitchScaleRef = useRef(1)
   useEffect(() => { pitchScaleRef.current = pitchScale }, [pitchScale])
+  useEffect(() => { pitchOffXRef.current = pitchOffX }, [pitchOffX])
+  useEffect(() => { pitchOffYRef.current = pitchOffY }, [pitchOffY])
 
   /* ── Drawing drafts ── */
   const [arrowDefaultDash, setArrowDefaultDash] = useState<"none" | "dashed" | "dotted">("none")
@@ -689,7 +696,7 @@ export default function App() {
 
   /* ── Drag refs ── */
   const dragRef = useRef<{
-    kind: "player" | "text" | "image" | "arrowCp" | "arrowP1" | "arrowP2" | "resizeShape" | "resizeText" | "resizeImage" | "resizePlayer" | "resizePitch" | "zone"
+    kind: "player" | "text" | "image" | "arrowCp" | "arrowP1" | "arrowP2" | "resizeShape" | "resizeText" | "resizeImage" | "resizePlayer" | "resizePitch" | "zone" | "movePitch"
     id: string; ox: number; oy: number
   } | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
@@ -914,8 +921,8 @@ export default function App() {
       setShapeDraftPreview({ x1: shapeDrawRef.current.x1, y1: shapeDrawRef.current.y1, x2: x, y2: y })
     }
     if (zoneDrawRef.current) {
-      const px = (x - PX) / pitchScaleRef.current
-      const py = (y - PY) / pitchScaleRef.current
+      const px = (x - PX - pitchOffXRef.current) / pitchScaleRef.current
+      const py = (y - PY - pitchOffYRef.current) / pitchScaleRef.current
       setZoneDraft({ x1: zoneDrawRef.current.x, y1: zoneDrawRef.current.y, x2: px, y2: py })
     }
 
@@ -937,18 +944,21 @@ export default function App() {
     else if (d.kind === "resizePlayer") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, scale: Math.max(0.5, (x - pl.x) / 28) } : pl))
     else if (d.kind === "resizeImage") setImages(i => i.map(im => im.id === d.id ? { ...im, width: Math.max(20, x - im.x), height: Math.max(20, y - im.y) } : im))
     else if (d.kind === "zone") {
-      const px = (x - PX) / pitchScaleRef.current
-      const py = (y - PY) / pitchScaleRef.current
+      const px = (x - PX - pitchOffXRef.current) / pitchScaleRef.current
+      const py = (y - PY - pitchOffYRef.current) / pitchScaleRef.current
       setCustomZones(z => z.map(zone => zone.id === d.id ? { ...zone, x: px - d.ox, y: py - d.oy } : zone))
     }
     else if (d.kind === "resizePitch") {
+      const offX = pitchOffXRef.current
       if (d.id === "pitch-tr" || d.id === "pitch-br") {
-        // Right-side corners: scale from left anchor (PX)
-        setPitchScale(Math.max(0.3, Math.min(2.5, (x - PX) / PW)))
+        setPitchScale(Math.max(0.3, Math.min(2.5, (x - PX - offX) / PW)))
       } else {
-        // Left-side corners: right edge stays fixed, functional update avoids stale closure
-        setPitchScale(prev => Math.max(0.3, Math.min(2.5, (PX + PW * prev - x) / PW)))
+        setPitchScale(prev => Math.max(0.3, Math.min(2.5, (PX + offX + PW * prev - x) / PW)))
       }
+    }
+    else if (d.kind === "movePitch") {
+      setPitchOffX(x - d.ox - PX)
+      setPitchOffY(y - d.oy - PY)
     }
   }, [svgXY, shapeKind])
 
@@ -965,8 +975,8 @@ export default function App() {
     }
     if (tool === "zone") {
       const { x, y } = svgXY(e)
-      const px = (x - PX) / pitchScaleRef.current
-      const py = (y - PY) / pitchScaleRef.current
+      const px = (x - PX - pitchOffXRef.current) / pitchScaleRef.current
+      const py = (y - PY - pitchOffYRef.current) / pitchScaleRef.current
       zoneDrawRef.current = { x: px, y: py }
     }
   }, [tool, shapeKind, svgXY])
@@ -1005,6 +1015,7 @@ export default function App() {
         dash: false, size: 15, bold: false, width: 300, layer: textLayer, noBox: true
       }
       setTexts(prev => [...prev, t]); setSel({ kind: "text", id: t.id }); setEditingText(t.id)
+      setTool("select") // auto-switch so click-away doesn't spawn another text box
     } else if (tool === "shape" && shapeKind === "polygon") {
       if (e.detail === 2) {
         if (polyDraft && polyDraft.length >= 3) {
@@ -1024,7 +1035,7 @@ export default function App() {
     } else if (tool === "select") {
       setSel(null)
     }
-  }, [tool, shapeKind, players.length, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot])
+  }, [tool, shapeKind, players.length, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot, arrowDefaultDash, arrowDefaultColor, arrowDefaultW])
 
   /* ── Canvas pan (alt+drag or middle mouse or pan tool) ── */
   const onCanvasMouseDown = (e: React.MouseEvent) => {
@@ -1045,7 +1056,8 @@ export default function App() {
   /* ── Element drag starts ── */
   const startDrag = (e: React.MouseEvent, kind: "player" | "text" | "image", id: string, ex: number, ey: number) => {
     e.stopPropagation()
-    if (tool !== "select") return
+    // Text is always draggable regardless of active tool; players/images only in select mode
+    if (kind !== "text" && tool !== "select") return
     const { x, y } = svgXY(e)
     dragRef.current = { kind, id, ox: x - ex, oy: y - ey }
     setSel({ kind: kind === "image" ? "image" : kind, id })
@@ -1178,17 +1190,21 @@ export default function App() {
             else if (m === "brainstorm") { setCanvasMode("blank"); setBgColor("#0d1117"); setShowPitch(false) }
             else { setCanvasMode("full"); setBgColor("#0d1117"); setShowPitch(true) }
           }} />
-          <div className="w-px h-5 mx-1 flex-shrink-0" style={{ background: "rgba(255,255,255,0.12)" }} />
+          <div className="w-px h-5 mx-3 flex-shrink-0" style={{ background: "rgba(255,255,255,0.12)" }} />
           {editingTitle ? (
             <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)}
               onKeyDown={e => { if (e.key === "Enter") setEditingTitle(false) }}
               className="bg-transparent outline-none font-bold text-sm"
-              style={{ borderBottom: "1px solid #3fb950", color: "#e6edf3", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 180 }} />
+              style={{ borderBottom: "1px solid #3fb950", color: "#e6edf3", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 200 }} />
           ) : (
-            <span className="font-bold text-sm cursor-pointer hover:opacity-70 truncate max-w-40"
-              style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}
-              onClick={() => setEditingTitle(true)}>{title}</span>
+            <button onClick={() => setEditingTitle(true)}
+              className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-white/8 transition-colors"
+              title="Click to rename">
+              <span className="font-bold text-sm truncate max-w-44"
+                style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>{title}</span>
+              <span className="text-xs opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: "#3fb950" }}>✏</span>
+            </button>
           )}
         </div>
 
@@ -1198,14 +1214,21 @@ export default function App() {
             <RefreshCw size={13} style={{ color: "#8b949e" }} />
             <input type="range" min={0} max={360} value={rotation}
               onChange={e => handleRotation(+e.target.value)}
-              className="w-24 accent-green-400" style={{ height: 4 }} />
-            <span className="text-xs font-mono w-8 text-right" style={{ color: "#c9d1d9" }}>{Math.round(rotation)}°</span>
-            <button onClick={() => setSnapRot(s => !s)} title="Snap rotation"
-              className="p-0.5 rounded transition-colors"
-              style={{ color: snapRot ? "#fbbf24" : "#8b949e" }}>
-              <Magnet size={13} />
+              className="w-20 accent-green-400" style={{ height: 4 }} />
+            <input
+              type="number" min={0} max={360} value={Math.round(rotation)}
+              onChange={e => handleRotation(+e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
+              className="w-12 rounded px-1 py-0.5 text-xs font-mono text-center outline-none"
+              style={{ background: "#161b22", color: "#c9d1d9", border: "1px solid rgba(255,255,255,0.1)" }}
+              title="Type exact angle" />
+            <span className="text-xs" style={{ color: "#555e6b" }}>°</span>
+            <button onClick={() => setSnapRot(s => !s)} title={snapRot ? "45° snap ON — click to disable" : "Enable 45° snap"}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs transition-colors"
+              style={{ background: snapRot ? "#fbbf2420" : "transparent", color: snapRot ? "#fbbf24" : "#8b949e" }}>
+              <Magnet size={12} />{snapRot && <span style={{ fontSize: 9, fontWeight: 700 }}>45°</span>}
             </button>
-            <button onClick={() => setRotation(0)} title="Reset rotation"
+            <button onClick={() => setRotation(0)} title="Reset to 0°"
               className="p-0.5 rounded hover:bg-white/10 transition-colors"
               style={{ color: "#8b949e" }}>
               <RotateCcw size={13} />
@@ -1488,14 +1511,16 @@ export default function App() {
                   {selP && (
                     <div className="flex flex-col gap-2">
                       <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Name</span>
+                        <span className="text-xs" style={{ color: "#8b949e" }}>Inside circle <span style={{ opacity: 0.55 }}>(name, position, number — anything)</span></span>
                         <input value={selP.name} onChange={e => updP({ name: e.target.value })}
+                          placeholder="e.g. GK, Salah, 9"
                           className="rounded px-2 py-1 text-xs outline-none"
                           style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Number</span>
+                        <span className="text-xs" style={{ color: "#8b949e" }}>Below circle <span style={{ opacity: 0.55 }}>(pill grows to fit)</span></span>
                         <input value={selP.num} onChange={e => updP({ num: e.target.value })}
+                          placeholder="e.g. 11 · M. Salah"
                           className="rounded px-2 py-1 text-xs outline-none"
                           style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
                       </label>
@@ -1691,10 +1716,9 @@ export default function App() {
                 </div>
               )}
 
-              {/* ── Activate Zones ── */}
-              {!sel && (
-                <div className="p-3 border-t flex flex-col gap-3" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                  <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Activate Zones</p>
+              {/* ── Activate Zones — always visible ── */}
+              <div className="p-3 border-t flex flex-col gap-3" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Activate Zones</p>
 
                   {/* 18 Zones toggle */}
                   <button
@@ -1762,8 +1786,7 @@ export default function App() {
                       </button>
                     )}
                   </div>
-                </div>
-              )}
+              </div>
 
               {/* Zone properties panel when a zone is selected */}
               {sel?.kind === "zone" && (() => {
@@ -1805,10 +1828,9 @@ export default function App() {
                 )
               })()}
 
-              {/* Quick formation */}
-              {!sel && (
-                <div className="p-3 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                  <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Quick Add Formation</p>
+              {/* Quick formation — always visible */}
+              <div className="p-3 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Quick Add Formation</p>
                   <select
                     value={selectedFormation}
                     onChange={e => setSelectedFormation(e.target.value)}
@@ -1832,14 +1854,13 @@ export default function App() {
                       + Away
                     </button>
                   </div>
-                  <div className="flex gap-1 mt-1.5">
-                    <ChevronRight size={11} style={{ color: "#8b949e", flexShrink: 0 }} />
-                    <p className="text-xs" style={{ color: "#8b949e" }}>
-                      Elements can be placed anywhere on canvas — in margins too.
-                    </p>
-                  </div>
+                <div className="flex gap-1 mt-1.5">
+                  <ChevronRight size={11} style={{ color: "#8b949e", flexShrink: 0 }} />
+                  <p className="text-xs" style={{ color: "#8b949e" }}>
+                    Elements can be placed anywhere on canvas — in margins too.
+                  </p>
                 </div>
-              )}
+              </div>
             </>
           )}
 
@@ -1903,12 +1924,12 @@ export default function App() {
                 </p>
               </div>
 
-              {/* Pitch size */}
+              {/* Pitch size + position */}
               {canvasMode !== "blank" && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Pitch Size</p>
-                    <button onClick={() => setPitchScale(1)}
+                    <button onClick={() => { setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
                       className="text-xs px-2 py-0.5 rounded hover:bg-white/10 transition-colors"
                       style={{ color: "#8b949e" }}>Reset</button>
                   </div>
@@ -1916,8 +1937,18 @@ export default function App() {
                     onChange={e => setPitchScale(+e.target.value / 100)}
                     className="w-full accent-green-400" />
                   <p className="text-xs mt-1" style={{ color: "#8b949e" }}>
-                    {Math.round(pitchScale * 100)}% — or drag the yellow handles on the pitch edges
+                    {Math.round(pitchScale * 100)}% · hover pitch → yellow corners to resize
                   </p>
+                  <p className="text-xs mt-1.5" style={{ color: "#8b949e" }}>
+                    Hover pitch → green bar at top to drag it anywhere
+                  </p>
+                  {(pitchOffX !== 0 || pitchOffY !== 0) && (
+                    <button onClick={() => { setPitchOffX(0); setPitchOffY(0) }}
+                      className="mt-1.5 w-full py-1 rounded text-xs hover:bg-white/10 transition-colors"
+                      style={{ color: "#8b949e" }}>
+                      Re-center pitch (offset {Math.round(pitchOffX)}, {Math.round(pitchOffY)})
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -2006,9 +2037,11 @@ export default function App() {
                       setSel={setSel} tool={tool} updT={updT} />
                   ))}
 
-                  {/* 4. Pitch group (translated to canvas offset) */}
+                  {/* 4. Pitch group (translated to canvas offset + user drag offset) */}
                   {canvasMode !== "blank" && (
-                    <g transform={`translate(${PX},${PY}) scale(${pitchScale})`}>
+                    <g transform={`translate(${PX + pitchOffX},${PY + pitchOffY}) scale(${pitchScale})`}
+                      onMouseEnter={() => setHoveredPitch(true)}
+                      onMouseLeave={() => setHoveredPitch(false)}>
                       <g style={{ clipPath: canvasMode === "half" ? `url(#half-pitch-clip)` : undefined }}>
                         <PitchSVG pitchColor={pitchColor} />
                         {/* ── Zone overlays (pitch-local coords) ── */}
@@ -2025,8 +2058,8 @@ export default function App() {
                                 if (tool !== "select") return
                                 e.stopPropagation()
                                 const svgPt = svgXY(e)
-                                const px = (svgPt.x - PX) / pitchScaleRef.current
-                                const py = (svgPt.y - PY) / pitchScaleRef.current
+                                const px = (svgPt.x - PX - pitchOffXRef.current) / pitchScaleRef.current
+                                const py = (svgPt.y - PY - pitchOffYRef.current) / pitchScaleRef.current
                                 dragRef.current = { kind: "zone", id: z.id, ox: px - z.x, oy: py - z.y }
                                 setSel({ kind: "zone", id: z.id })
                               }}>
@@ -2064,24 +2097,44 @@ export default function App() {
                     </g>
                   )}
 
-                  {/* Pitch resize handles — 4 corner squares, only in select mode */}
-                  {canvasMode !== "blank" && showPitch && tool === "select" && (() => {
-                    const pR = PX + PW * pitchScale
-                    const pB = PY + PH * pitchScale
-                    const hS = 10 // handle half-size
+                  {/* Pitch handles — only on hover so they don't show in screenshots */}
+                  {canvasMode !== "blank" && tool === "select" && hoveredPitch && (() => {
+                    const ox = PX + pitchOffX
+                    const oy = PY + pitchOffY
+                    const pR = ox + PW * pitchScale
+                    const pB = oy + PH * pitchScale
+                    const hS = 9
+                    const midX = (ox + pR) / 2
                     const corners = [
-                      { id: "pitch-tl", x: PX,  y: PY,  cursor: "nwse-resize" },
-                      { id: "pitch-tr", x: pR,   y: PY,  cursor: "nesw-resize" },
-                      { id: "pitch-bl", x: PX,   y: pB,  cursor: "nesw-resize" },
-                      { id: "pitch-br", x: pR,   y: pB,  cursor: "nwse-resize" },
+                      { id: "pitch-tl", x: ox, y: oy,  cursor: "nwse-resize" },
+                      { id: "pitch-tr", x: pR, y: oy,  cursor: "nesw-resize" },
+                      { id: "pitch-bl", x: ox, y: pB,  cursor: "nesw-resize" },
+                      { id: "pitch-br", x: pR, y: pB,  cursor: "nwse-resize" },
                     ]
-                    return corners.map(c => (
-                      <g key={c.id} style={{ cursor: c.cursor }}
-                        onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
-                        <rect x={c.x - hS} y={c.y - hS} width={hS * 2} height={hS * 2} rx={3}
-                          fill="#fbbf24" stroke="#0d1117" strokeWidth={2} />
-                      </g>
-                    ))
+                    return (
+                      <>
+                        {corners.map(c => (
+                          <g key={c.id} style={{ cursor: c.cursor }}
+                            onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
+                            <rect x={c.x - hS} y={c.y - hS} width={hS * 2} height={hS * 2} rx={3}
+                              fill="#fbbf24" stroke="#0d1117" strokeWidth={2} opacity={0.9} />
+                          </g>
+                        ))}
+                        {/* Move pitch grip — top-centre bar, drag to reposition pitch */}
+                        <g style={{ cursor: "grab" }}
+                          onMouseDown={e => {
+                            e.stopPropagation()
+                            const { x: mx, y: my } = svgXY(e)
+                            dragRef.current = { kind: "movePitch", id: "pitch", ox: mx - pitchOffX - PX, oy: my - pitchOffY - PY }
+                          }}>
+                          <rect x={midX - 30} y={oy - 20} width={60} height={15} rx={7}
+                            fill="#3fb950" stroke="#0d1117" strokeWidth={1.5} opacity={0.92} />
+                          {[-12, -4, 4, 12].map(dx => (
+                            <circle key={dx} cx={midX + dx} cy={oy - 12} r={2} fill="#0d1117" opacity={0.65} />
+                          ))}
+                        </g>
+                      </>
+                    )
                   })()}
 
                   <defs>
@@ -2235,12 +2288,13 @@ export default function App() {
                     const isSelected = sel?.id === p.id
                     const s = p.scale || 1
                     const r = 28 * s
-                    const nameUpper = p.name.toUpperCase()
-                    // Pill always grows to fit the FULL name — no truncation ever
-                    // 6.2 SVG units per char is accurate for Barlow Condensed 10px in this viewBox
-                    const pillW = Math.max(r * 2, nameUpper.length * 6.2 + 14)
+                    // p.name = Position (inside circle), p.num = Name/Number (expanding pill)
+                    const numUpper = p.num.toUpperCase()
+                    const pillW = Math.max(r * 2, numUpper.length * 6.2 + 14)
                     const pillH = 17
-                    const numFontSize = Math.min(15 * s, r * 0.58)
+                    const inCircleText = p.name.toUpperCase()
+                    // Scale font smaller for long text; allow overflow beyond circle edge
+                    const posFontSize = Math.min(15 * s, r * 0.58) * Math.min(1, 4.5 / Math.max(4.5, inCircleText.length))
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
                         onMouseDown={e => startDrag(e, "player", p.id, p.x, p.y)}
@@ -2261,22 +2315,23 @@ export default function App() {
                         )}
                         {/* Main circle */}
                         <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={3 * s} />
-                        {/* Number — capped font so it never overflows the circle */}
+                        {/* Text inside circle — no char limit, font scales for longer text */}
                         {showPlayerLabels && (
                           <text textAnchor="middle" dominantBaseline="central" y={-1}
-                            fill={p.fg} fontSize={numFontSize} fontWeight="800"
+                            fill={p.fg} fontSize={posFontSize} fontWeight="800"
+                            overflow="visible"
                             style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none" }}>
-                            {p.num.slice(0, 4)}
+                            {inCircleText}
                           </text>
                         )}
-                        {/* Name pill — grows to fit full name, never truncates */}
+                        {/* Name/Number pill — grows to fit p.num fully, never truncates */}
                         {showPlayerLabels && (
                           <>
                             <rect x={-pillW / 2} y={r + 4} width={pillW} height={pillH} rx={3} fill="rgba(0,0,0,0.78)" />
                             <text textAnchor="middle" x={0} y={r + 4 + pillH * 0.68}
                               fill="#ffffff" fontSize={10} fontWeight="700"
                               style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.05em", pointerEvents: "none" }}>
-                              {nameUpper}
+                              {numUpper}
                             </text>
                           </>
                         )}
@@ -2895,7 +2950,8 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   return (
     <g
       onMouseDown={e => {
-        if (tool === "select") { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) }
+        // Draggable in any tool — just like iPhone: grab and move without mode switching
+        if (!isEditing) { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) }
       }}
       onDoubleClick={e => { e.stopPropagation(); setEditingText(t.id) }}
       style={{ cursor: tool === "select" ? (isEditing ? "text" : "move") : "default" }}>
