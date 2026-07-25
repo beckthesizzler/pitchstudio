@@ -735,7 +735,7 @@ export default function App() {
   }
 
   /* ── SVG coordinate helper (handles all CSS transforms) ── */
-  const svgXY = useCallback((e: React.MouseEvent | MouseEvent) => {
+  const svgXY = useCallback((e: React.PointerEvent | PointerEvent) => {
     const svg = svgRef.current
     if (!svg) return { x: 0, y: 0 }
     try {
@@ -803,8 +803,8 @@ export default function App() {
         setShapeDraftPreview(null)
       }
     }
-    window.addEventListener("mouseup", handleGlobalMouseUp)
-    return () => window.removeEventListener("mouseup", handleGlobalMouseUp)
+    window.addEventListener("pointerup", handleGlobalMouseUp)
+    return () => window.removeEventListener("pointerup", handleGlobalMouseUp)
   }, [shapeDraftPreview, shapeKind, shapes.length, snapshot])
 
   /* ── Global mouseup for zone draw ── */
@@ -832,8 +832,8 @@ export default function App() {
         setZoneDraft(null)
       }
     }
-    window.addEventListener("mouseup", handleZoneMouseUp)
-    return () => window.removeEventListener("mouseup", handleZoneMouseUp)
+    window.addEventListener("pointerup", handleZoneMouseUp)
+    return () => window.removeEventListener("pointerup", handleZoneMouseUp)
   }, [zoneDraft])
 
   /* ── Keyboard shortcuts ── */
@@ -907,8 +907,8 @@ export default function App() {
     setPlayers(prev => [...prev, ...newPlayers])
   }, [snapshot])
 
-  /* ── SVG mouse events ── */
-  const onSVGMouseMove = useCallback((e: React.MouseEvent) => {
+  /* ── SVG pointer events (unifies mouse, touch, and pen) ── */
+  const onSVGMouseMove = useCallback((e: React.PointerEvent) => {
     const { x, y } = svgXY(e)
     setMouse({ x, y })
 
@@ -966,7 +966,7 @@ export default function App() {
     if (dragRef.current) { snapshot(); dragRef.current = null }
   }, [snapshot])
 
-  const onSVGMouseDown = useCallback((e: React.MouseEvent) => {
+  const onSVGMouseDown = useCallback((e: React.PointerEvent) => {
     mouseDownPosRef.current = { x: e.clientX, y: e.clientY }
     hasDraggedRef.current = false
     if (tool === "shape" && shapeKind !== "polygon") {
@@ -981,7 +981,7 @@ export default function App() {
     }
   }, [tool, shapeKind, svgXY])
 
-  const onSVGClick = useCallback((e: React.MouseEvent) => {
+  const onSVGClick = useCallback((e: React.PointerEvent) => {
     if (hasDraggedRef.current) return
     const { x, y } = svgXY(e)
 
@@ -1037,14 +1037,14 @@ export default function App() {
     }
   }, [tool, shapeKind, players.length, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot, arrowDefaultDash, arrowDefaultColor, arrowDefaultW])
 
-  /* ── Canvas pan (alt+drag or middle mouse or pan tool) ── */
-  const onCanvasMouseDown = (e: React.MouseEvent) => {
+  /* ── Canvas pan (alt+drag, middle-button, or pan tool) ── */
+  const onCanvasMouseDown = (e: React.PointerEvent) => {
     if (e.button === 1 || (e.altKey && e.button === 0) || tool === "pan") {
       e.preventDefault()
       panDragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: panX, startPanY: panY }
     }
   }
-  const onCanvasMouseMove = (e: React.MouseEvent) => {
+  const onCanvasMouseMove = (e: React.PointerEvent) => {
     if (panDragRef.current) {
       const d = panDragRef.current
       setPanX(d.startPanX + (e.clientX - d.startX))
@@ -1054,7 +1054,7 @@ export default function App() {
   const onCanvasMouseUp = () => { panDragRef.current = null }
 
   /* ── Element drag starts ── */
-  const startDrag = (e: React.MouseEvent, kind: "player" | "text" | "image", id: string, ex: number, ey: number) => {
+  const startDrag = (e: React.PointerEvent, kind: "player" | "text" | "image", id: string, ex: number, ey: number) => {
     e.stopPropagation()
     // Text is always draggable regardless of active tool; players/images only in select mode
     if (kind !== "text" && tool !== "select") return
@@ -1999,9 +1999,9 @@ export default function App() {
             background: bgColor,
             cursor: tool === "pan" ? "grab" : panDragRef.current ? "grabbing" : "default",
           }}
-          onMouseDown={onCanvasMouseDown}
-          onMouseMove={onCanvasMouseMove}
-          onMouseUp={onCanvasMouseUp}
+          onPointerDown={onCanvasMouseDown}
+          onPointerMove={onCanvasMouseMove}
+          onPointerUp={onCanvasMouseUp}
         >
           {/* Pitch + all layers */}
           <div style={{ transform: pitchTransform, transformOrigin: "center center" }}>
@@ -2011,10 +2011,10 @@ export default function App() {
                   ref={svgRef}
                   viewBox={`0 0 ${CW} ${CH}`}
                   width={SVG_DISPLAY_W}
-                  style={{ display: "block", userSelect: "none", aspectRatio: `${CW}/${CH}` }}
-                  onMouseMove={onSVGMouseMove}
-                  onMouseUp={onSVGMouseUp}
-                  onMouseDown={onSVGMouseDown}
+                  style={{ display: "block", userSelect: "none", aspectRatio: `${CW}/${CH}`, touchAction: "none" }}
+                  onPointerMove={onSVGMouseMove}
+                  onPointerUp={onSVGMouseUp}
+                  onPointerDown={onSVGMouseDown}
                   onClick={onSVGClick}
                 >
                   {/* 1. Canvas background */}
@@ -2025,7 +2025,7 @@ export default function App() {
                     <image key={img.id} href={img.src}
                       x={0} y={0} width={CW} height={CH}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid slice"
-                      onMouseDown={e => startDrag(e, "image", img.id, img.x, img.y)}
+                      onPointerDown={e => startDrag(e, "image", img.id, img.x, img.y)}
                       style={{ cursor: tool === "select" ? "move" : "default" }} />
                   ))}
 
@@ -2033,7 +2033,7 @@ export default function App() {
                   {bgTexts.map(t => (
                     <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
-                      startResize={(e) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
+                      startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
                       setSel={setSel} tool={tool} updT={updT} />
                   ))}
 
@@ -2054,7 +2054,7 @@ export default function App() {
                             <g key={z.id}
                               style={{ cursor: tool === "select" ? "move" : "default" }}
                               onClick={e => { e.stopPropagation(); if (tool === "select") setSel({ kind: "zone", id: z.id }) }}
-                              onMouseDown={e => {
+                              onPointerDown={e => {
                                 if (tool !== "select") return
                                 e.stopPropagation()
                                 const svgPt = svgXY(e)
@@ -2115,14 +2115,14 @@ export default function App() {
                       <>
                         {corners.map(c => (
                           <g key={c.id} style={{ cursor: c.cursor }}
-                            onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
+                            onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
                             <rect x={c.x - hS} y={c.y - hS} width={hS * 2} height={hS * 2} rx={3}
                               fill="#fbbf24" stroke="#0d1117" strokeWidth={2} opacity={0.9} />
                           </g>
                         ))}
                         {/* Move pitch grip — top-centre bar, drag to reposition pitch */}
                         <g style={{ cursor: "grab" }}
-                          onMouseDown={e => {
+                          onPointerDown={e => {
                             e.stopPropagation()
                             const { x: mx, y: my } = svgXY(e)
                             dragRef.current = { kind: "movePitch", id: "pitch", ox: mx - pitchOffX - PX, oy: my - pitchOffY - PY }
@@ -2181,7 +2181,7 @@ export default function App() {
                             fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="4,2" rx={3}
                             style={{ pointerEvents: "none" }} />
                           <circle cx={s.x + s.w} cy={s.y + s.h} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
-                            onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizeShape", id: s.id, ox: 0, oy: 0 } }} />
+                            onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizeShape", id: s.id, ox: 0, oy: 0 } }} />
                         </>
                       )}
                     </g>
@@ -2243,11 +2243,11 @@ export default function App() {
                             <line x1={a.x1} y1={a.y1} x2={a.cpx} y2={a.cpy} stroke="#3fb950" strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
                             <line x1={a.x2} y1={a.y2} x2={a.cpx} y2={a.cpy} stroke="#3fb950" strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
                             <circle cx={a.x1} cy={a.y1} r={7} fill="#3fb950" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "grab" }}
-                              onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowP1", id: a.id, ox: 0, oy: 0 } }} />
+                              onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowP1", id: a.id, ox: 0, oy: 0 } }} />
                             <circle cx={a.x2} cy={a.y2} r={7} fill="#3fb950" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "grab" }}
-                              onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowP2", id: a.id, ox: 0, oy: 0 } }} />
+                              onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowP2", id: a.id, ox: 0, oy: 0 } }} />
                             <circle cx={a.cpx} cy={a.cpy} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "grab" }}
-                              onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowCp", id: a.id, ox: 0, oy: 0 } }} />
+                              onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowCp", id: a.id, ox: 0, oy: 0 } }} />
                           </>
                         )}
                       </g>
@@ -2279,7 +2279,7 @@ export default function App() {
                   {fgTexts.map(t => (
                     <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
-                      startResize={(e) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
+                      startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
                       setSel={setSel} tool={tool} updT={updT} />
                   ))}
 
@@ -2297,7 +2297,7 @@ export default function App() {
                     const posFontSize = Math.min(15 * s, r * 0.58) * Math.min(1, 4.5 / Math.max(4.5, inCircleText.length))
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
-                        onMouseDown={e => startDrag(e, "player", p.id, p.x, p.y)}
+                        onPointerDown={e => startDrag(e, "player", p.id, p.x, p.y)}
                         style={{ cursor: tool === "select" ? "grab" : "default" }}>
                         {p.glow && (
                           <circle r={r + 15} fill="#fbbf24" fillOpacity={0.4} filter="blur(8px)" />
@@ -2310,7 +2310,7 @@ export default function App() {
                             <circle r={r + 7} fill="none" stroke="#3fb950" strokeWidth={2.5} strokeDasharray="5,3" />
                             <circle cx={r * 0.707} cy={r * 0.707} r={6}
                               fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
-                              onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePlayer", id: p.id, ox: 0, oy: 0 } }} />
+                              onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePlayer", id: p.id, ox: 0, oy: 0 } }} />
                           </>
                         )}
                         {/* Main circle */}
@@ -2344,7 +2344,7 @@ export default function App() {
                     <image key={img.id} href={img.src}
                       x={img.x} y={img.y} width={img.width} height={img.height}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid meet"
-                      onMouseDown={e => startDrag(e, "image", img.id, img.x, img.y)}
+                      onPointerDown={e => startDrag(e, "image", img.id, img.x, img.y)}
                       style={{ cursor: tool === "select" ? "move" : "default" }} />
                   ))}
 
@@ -2360,7 +2360,7 @@ export default function App() {
                         style={{ pointerEvents: "none" }} />
                       {selI.layer !== "background" && (
                         <circle cx={selI.x + selI.width} cy={selI.y + selI.height} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
-                          onMouseDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizeImage", id: selI.id, ox: 0, oy: 0 } }} />
+                          onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizeImage", id: selI.id, ox: 0, oy: 0 } }} />
                       )}
                     </>
                   )}
@@ -2884,8 +2884,8 @@ function ColorPicker({ label, colors, selected, onSelect, allowTransparent }: {
 function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, setSel, tool, updT }: {
   t: TextBox; sel: Sel; editingText: string | null
   setEditingText: (id: string | null) => void
-  startDrag: (e: React.MouseEvent) => void
-  startResize?: (e: React.MouseEvent) => void
+  startDrag: (e: React.PointerEvent) => void
+  startResize?: (e: React.PointerEvent) => void
   setSel: (s: Sel) => void
   tool: Tool
   updT: (patch: Partial<TextBox>) => void
@@ -2949,7 +2949,7 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
 
   return (
     <g
-      onMouseDown={e => {
+      onPointerDown={e => {
         // Draggable in any tool — just like iPhone: grab and move without mode switching
         if (!isEditing) { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) }
       }}
@@ -2973,7 +2973,7 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
         <rect x={t.x + t.width - 6} y={t.y + boxH - 6} width={11} height={11} rx={2}
           fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5}
           style={{ cursor: "nwse-resize" }}
-          onMouseDown={e => { e.stopPropagation(); startResize(e) }} />
+          onPointerDown={e => { e.stopPropagation(); startResize(e) }} />
       )}
       {/* Inline editing — large open area so typing feels unrestricted */}
       {isEditing ? (
