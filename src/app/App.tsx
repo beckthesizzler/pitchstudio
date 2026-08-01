@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from "react"
+import { useState, useRef, useCallback, useEffect, Component } from "react"
+import type { ReactNode } from "react"
 import { toPng, toJpeg } from "html-to-image"
 import jsPDF from "jspdf"
 import {
@@ -3509,6 +3510,72 @@ function HubPage() {
   )
 }
 
+/* ─────────────────────────── Error Boundary ────────────────── */
+const CHUNK_RELOAD_KEY = "ps_chunk_reload_attempted"
+
+function isChunkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const msg = err.message ?? ""
+  const name = (err as any).name ?? ""
+  return (
+    msg.includes("Failed to fetch dynamically imported module") ||
+    msg.includes("Importing a module script failed") ||
+    msg.includes("Unable to preload CSS") ||
+    name === "ChunkLoadError" ||
+    /Loading chunk \d+ failed/.test(msg)
+  )
+}
+
+class AppErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error) {
+    if (isChunkError(error)) {
+      if (!sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
+        sessionStorage.setItem(CHUNK_RELOAD_KEY, "1")
+        window.location.reload()
+        return
+      }
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          width: "100vw", height: "100vh", background: "#0d1117",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          gap: 16, fontFamily: "'Inter', sans-serif",
+        }}>
+          <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 15, margin: 0 }}>
+            Something went wrong. Please reload.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "9px 22px", borderRadius: 8,
+              background: "#3fb950", color: "#0d1117",
+              fontSize: 14, fontWeight: 600, border: "none", cursor: "pointer",
+            }}>
+            Reload
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 /* ─────────────────────────── Root (entry) ───────────────────── */
 export default function Root() {
   const [authUser, setAuthUser] = useState<import("@supabase/supabase-js").User | null>(null)
@@ -3530,12 +3597,14 @@ export default function Root() {
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={authUser ? <TacticsBoard /> : <LandingPage />} />
-        <Route path="/hub" element={<HubPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <AppErrorBoundary>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={authUser ? <TacticsBoard /> : <LandingPage />} />
+          <Route path="/hub" element={<HubPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AppErrorBoundary>
   )
 }
