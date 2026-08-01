@@ -561,6 +561,8 @@ function TemplateModal({
 
 /* ─────────────────────────── Tactics Board ─────────────────── */
 function TacticsBoard() {
+  const navigateBoard = useNavigate()
+
   /* ── Canvas elements ── */
   const [players, setPlayers] = useState<Player[]>([])
   const [arrows, setArrows] = useState<Arrow[]>([])
@@ -615,6 +617,18 @@ function TacticsBoard() {
       setAuthUser(session?.user ?? null)
     })
     return () => subscription.unsubscribe()
+  }, [])
+
+  // Brainstorm deep-link: set by HubPage before navigating to "/"
+  useEffect(() => {
+    const mode = localStorage.getItem("ps_initial_mode")
+    if (mode === "brainstorm") {
+      localStorage.removeItem("ps_initial_mode")
+      setWorkspaceMode("brainstorm")
+      setCanvasMode("blank")
+      setBgColor("#0d1117")
+      setShowPitch(false)
+    }
   }, [])
 
   const [saveError, setSaveError] = useState("")
@@ -1179,7 +1193,9 @@ function TacticsBoard() {
         {/* Logo + Workspace Mode Selector + Title */}
         <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
           <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
-            style={{ background: "#3fb950", color: "#0d1117", fontFamily: "'Barlow Condensed', sans-serif" }}>PS</div>
+            title="Back to Hub"
+            onClick={() => navigateBoard("/hub")}
+            style={{ background: "#3fb950", color: "#0d1117", fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
           <WorkspaceModeSelector mode={workspaceMode} onChange={m => {
             setWorkspaceMode(m)
             if (m === "report") { setCanvasMode("blank"); setBgColor("#f5f5f0"); setShowPitch(false) }
@@ -3098,6 +3114,46 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   )
 }
 
+/* ─────────────────────────── Pitch Background ──────────────── */
+function PitchBackground() {
+  return (
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+      <style>{`
+        @keyframes pitchSweep {
+          0%   { transform: translateX(-140%) skewX(-18deg); opacity: 0; }
+          12%  { opacity: 1; }
+          88%  { opacity: 1; }
+          100% { transform: translateX(240%) skewX(-18deg); opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .pitch-sweep { animation: none !important; opacity: 0 !important; }
+        }
+      `}</style>
+      {/* Mowed stripe background */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: "repeating-linear-gradient(-50deg, #0d1117 0px, #0d1117 44px, #0e1810 44px, #0e1810 88px)",
+      }} />
+      {/* SVG pitch markings */}
+      <svg viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+        <rect x="130" y="50" width="740" height="540" fill="none" stroke="white" strokeWidth="2" opacity="0.35" />
+        <line x1="500" y1="50" x2="500" y2="590" stroke="white" strokeWidth="2" opacity="0.35" />
+        <circle cx="500" cy="320" r="80" fill="none" stroke="white" strokeWidth="2" opacity="0.35" />
+        <circle cx="500" cy="320" r="4" fill="white" opacity="0.35" />
+      </svg>
+      {/* Diagonal light sweep */}
+      <div className="pitch-sweep" style={{
+        position: "absolute", top: 0, left: 0,
+        width: "30%", height: "100%",
+        background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.055) 50%, transparent 100%)",
+        animation: "pitchSweep 6s ease-in-out infinite alternate",
+        pointerEvents: "none",
+      }} />
+    </div>
+  )
+}
+
 /* ─────────────────────────── Landing Page ──────────────────── */
 function LandingPage() {
   const navigate = useNavigate()
@@ -3117,50 +3173,7 @@ function LandingPage() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", overflow: "hidden", position: "relative", background: "#0d1117" }}>
-      {/* Mowed stripe background */}
-      <div style={{
-        position: "absolute",
-        inset: 0,
-        background: "repeating-linear-gradient(-50deg, #0d1117 0px, #0d1117 44px, #0e1810 44px, #0e1810 88px)",
-      }} />
-
-      {/* SVG pitch markings — low opacity backdrop */}
-      <svg
-        viewBox="0 0 1000 640"
-        preserveAspectRatio="xMidYMid meet"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-        {/* outer boundary */}
-        <rect x="130" y="50" width="740" height="540" fill="none" stroke="white" strokeWidth="2" opacity="0.35" />
-        {/* center line */}
-        <line x1="500" y1="50" x2="500" y2="590" stroke="white" strokeWidth="2" opacity="0.35" />
-        {/* center circle */}
-        <circle cx="500" cy="320" r="80" fill="none" stroke="white" strokeWidth="2" opacity="0.35" />
-        {/* center spot */}
-        <circle cx="500" cy="320" r="4" fill="white" opacity="0.35" />
-      </svg>
-
-      {/* Diagonal light sweep */}
-      <style>{`
-        @keyframes pitchSweep {
-          0%   { transform: translateX(-140%) skewX(-18deg); opacity: 0; }
-          12%  { opacity: 1; }
-          88%  { opacity: 1; }
-          100% { transform: translateX(240%) skewX(-18deg); opacity: 0; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .pitch-sweep { animation: none !important; opacity: 0 !important; }
-        }
-      `}</style>
-      <div className="pitch-sweep" style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: "30%",
-        height: "100%",
-        background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.055) 50%, transparent 100%)",
-        animation: "pitchSweep 6s ease-in-out infinite alternate",
-        pointerEvents: "none",
-      }} />
+      <PitchBackground />
 
       {/* Sign In — top right */}
       <button
@@ -3260,22 +3273,238 @@ function LandingPage() {
   )
 }
 
-/* ─────────────────────────── Hub Page ──────────────────────── */
-function HubPage() {
+/* ─────────────────────────── Hub Menu Item ─────────────────── */
+function HubMenuItem({ label, onClick, isLast }: { label: string; onClick: () => void; isLast: boolean }) {
+  const [hovered, setHovered] = useState(false)
+  const [pressed, setPressed] = useState(false)
   return (
-    <div style={{
-      width: "100vw", height: "100vh",
-      background: "#0d1117",
-      display: "flex", alignItems: "center", justifyContent: "center",
-    }}>
-      <p style={{
-        color: "rgba(255,255,255,0.3)",
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: 52,
+        width: "100%",
+        background: pressed ? "rgba(255,255,255,0.12)" : hovered ? "rgba(255,255,255,0.08)" : "transparent",
+        color: hovered || pressed ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.85)",
+        fontSize: 18,
+        fontWeight: 500,
         fontFamily: "'Inter', sans-serif",
-        fontSize: 14,
-        letterSpacing: "0.04em",
+        border: "none",
+        borderBottom: isLast ? "none" : "1px solid rgba(255,255,255,0.08)",
+        cursor: "pointer",
+        transition: "background 0.12s, color 0.12s",
+        textAlign: "center",
+        padding: "0 16px",
+        letterSpacing: "0.01em",
       }}>
-        Hub — coming soon
-      </p>
+      {label}
+    </button>
+  )
+}
+
+/* ─────────────────────────── Hub Page ──────────────────────── */
+const HUB_MENU_ITEMS = [
+  "Tactical Board",
+  "Live Game Analysis",
+  "Creating Match Report",
+  "Creating Player Report",
+  "Braindump your ideas!",
+  "Archive Closet",
+] as const
+
+function HubPage() {
+  const navigate = useNavigate()
+  const [displayName, setDisplayName] = useState("")
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user) return
+      const { data } = await supabase
+        .from("profiles")
+        .select("handle")
+        .eq("id", session.user.id)
+        .maybeSingle()
+      setDisplayName(data?.handle || session.user.email?.split("@")[0] || "")
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!toastMsg) return
+    const t = setTimeout(() => setToastMsg(null), 3000)
+    return () => clearTimeout(t)
+  }, [toastMsg])
+
+  const handleMenuClick = (label: string) => {
+    if (label === "Tactical Board") {
+      navigate("/")
+      return
+    }
+    if (label === "Braindump your ideas!") {
+      localStorage.setItem("ps_initial_mode", "brainstorm")
+      navigate("/")
+      return
+    }
+    ;(window as any).posthog?.capture("coming_soon_click", { feature: label })
+    setToastMsg(`${label} — coming soon`)
+  }
+
+  const HEADER_GRADIENT = "linear-gradient(135deg, #7F77DD 0%, #3C3489 100%)"
+
+  return (
+    <div style={{ display: "flex", width: "100vw", height: "100vh", overflow: "hidden", position: "relative" }}>
+      <style>{`
+        @media (max-width: 767px) {
+          .hub-right-area { display: none !important; }
+          .hub-left-panel { width: 100% !important; min-width: unset !important; }
+        }
+      `}</style>
+
+      {/* ── Left panel ── */}
+      <div className="hub-left-panel" style={{
+        width: "40%",
+        minWidth: 300,
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+        position: "relative",
+        zIndex: 1,
+      }}>
+        {/* Header zone — 30% */}
+        <div style={{
+          height: "30%",
+          background: HEADER_GRADIENT,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          position: "relative",
+          overflow: "hidden",
+        }}>
+          {/* Decorative circle — behind content */}
+          <div style={{
+            position: "absolute",
+            top: -90,
+            left: -90,
+            width: 280,
+            height: 280,
+            borderRadius: "50%",
+            background: "radial-gradient(circle at center, rgba(236,72,153,0.55) 0%, rgba(236,72,153,0.1) 50%, transparent 72%)",
+            zIndex: 0,
+            pointerEvents: "none",
+          }} />
+          <div style={{ position: "relative", zIndex: 1, textAlign: "center", padding: "0 28px" }}>
+            <h1 style={{
+              fontSize: 28,
+              fontWeight: 700,
+              color: "#ffffff",
+              margin: 0,
+              fontFamily: "'Inter', sans-serif",
+              lineHeight: 1.25,
+            }}>
+              Welcome back, {displayName || "…"}!
+            </h1>
+            <p style={{
+              fontSize: 16,
+              fontWeight: 500,
+              color: "rgba(255,255,255,0.82)",
+              margin: "8px 0 0",
+              fontFamily: "'Inter', sans-serif",
+            }}>
+              What do you want to work on today?
+            </p>
+          </div>
+        </div>
+
+        {/* Menu zone — 55% */}
+        <div style={{
+          height: "55%",
+          background: "#1a1440",
+          display: "flex",
+          flexDirection: "column",
+          paddingTop: 20,
+          overflow: "hidden",
+        }}>
+          <p style={{
+            textAlign: "center",
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: "1px",
+            color: "rgba(255,255,255,0.6)",
+            textTransform: "uppercase",
+            margin: "0 0 12px",
+            fontFamily: "'Inter', sans-serif",
+            flexShrink: 0,
+          }}>
+            CREATOR HUB
+          </p>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            {HUB_MENU_ITEMS.map((item, i) => (
+              <HubMenuItem
+                key={item}
+                label={item}
+                onClick={() => handleMenuClick(item)}
+                isLast={i === HUB_MENU_ITEMS.length - 1}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Footer zone — 15% */}
+        <div style={{
+          height: "15%",
+          background: HEADER_GRADIENT,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 28px",
+        }}>
+          <p style={{
+            fontSize: 14,
+            fontWeight: 500,
+            color: "rgba(255,255,255,0.82)",
+            textAlign: "center",
+            margin: 0,
+            fontFamily: "'Inter', sans-serif",
+          }}>
+            Together, we can make a difference.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Right area — pitch background, desktop only ── */}
+      <div className="hub-right-area" style={{ flex: 1, position: "relative", height: "100%", overflow: "hidden" }}>
+        <PitchBackground />
+      </div>
+
+      {/* ── Coming-soon toast ── */}
+      {toastMsg && (
+        <div style={{
+          position: "fixed",
+          bottom: 28,
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: "#1a1440",
+          color: "rgba(255,255,255,0.92)",
+          padding: "11px 22px",
+          borderRadius: 8,
+          fontSize: 14,
+          fontFamily: "'Inter', sans-serif",
+          border: "1px solid rgba(127,119,221,0.4)",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.55)",
+          zIndex: 200,
+          whiteSpace: "nowrap",
+          pointerEvents: "none",
+        }}>
+          {toastMsg}
+        </div>
+      )}
     </div>
   )
 }
