@@ -435,15 +435,15 @@ function TemplateModal({
   const mine = templates.filter(t => !t.published)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)" }}
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.7)" }}
       onClick={onClose}>
-      <div className="relative w-[640px] max-h-[80vh] flex flex-col rounded-lg border overflow-hidden"
-        style={{ background: "#161b22", borderColor: "rgba(255,255,255,0.1)" }}
+      <div className="relative w-full max-h-[80vh] flex flex-col rounded-lg border overflow-hidden"
+        style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", maxWidth: 640 }}
         onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
           <div className="flex items-center gap-2">
-            <BookOpen size={16} style={{ color: "#3fb950" }} />
+            <BookOpen size={16} style={{ color: ACCENT_SOLID }} />
             <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
               TEMPLATE LIBRARY
             </span>
@@ -451,7 +451,7 @@ function TemplateModal({
           <div className="flex items-center gap-2">
             <button onClick={onAdminToggle}
               className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors"
-              style={{ background: isAdmin ? "#fbbf24" : "#21262d", color: isAdmin ? "#0d1117" : "#8b949e" }}>
+              style={{ background: isAdmin ? ACCENT_GRADIENT : SURFACE_2, color: isAdmin ? "#ffffff" : TEXT_MUTED }}>
               {isAdmin ? <Lock size={12} /> : <Lock size={12} />}
               {isAdmin ? "Admin" : "Viewer"}
             </button>
@@ -466,8 +466,8 @@ function TemplateModal({
               className="px-5 py-2.5 text-xs font-semibold uppercase transition-colors"
               style={{
                 letterSpacing: "0.08em",
-                borderBottom: tab === t ? "2px solid #3fb950" : "2px solid transparent",
-                color: tab === t ? "#3fb950" : "#8b949e",
+                borderBottom: tab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent",
+                color: tab === t ? ACCENT_SOLID : TEXT_MUTED,
               }}>
               {t === "library" ? `Published Library (${published.length})` : `My Templates (${mine.length})`}
             </button>
@@ -491,7 +491,7 @@ function TemplateModal({
                       <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>
                         {t.name}
                       </span>
-                      <Star size={12} style={{ color: "#fbbf24", flexShrink: 0 }} />
+                      <Star size={12} style={{ color: ACCENT_SOLID, flexShrink: 0 }} />
                     </div>
                     <p className="text-xs" style={{ color: "#8b949e" }}>
                       {t.data.players.length} players · {t.data.arrows.length} arrows · {t.data.shapes.length} shapes
@@ -499,7 +499,7 @@ function TemplateModal({
                     <div className="flex gap-1.5 mt-1">
                       <button onClick={() => onLoad(t)}
                         className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                        style={{ background: "#3fb950", color: "#0d1117" }}>
+                        style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
                         Use Template
                       </button>
                       {isAdmin && (
@@ -528,7 +528,7 @@ function TemplateModal({
                 />
                 <button onClick={() => { if (newName.trim()) { onSave(newName.trim()); setNewName("") } }}
                   className="px-3 py-1.5 rounded text-sm font-medium transition-colors"
-                  style={{ background: "#3fb950", color: "#0d1117" }}>
+                  style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
                   Save Current
                 </button>
               </div>
@@ -549,13 +549,13 @@ function TemplateModal({
                     <div className="flex gap-1.5 mt-1">
                       <button onClick={() => onLoad(t)}
                         className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                        style={{ background: "#58a6ff", color: "#0d1117" }}>
+                        style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
                         Load
                       </button>
                       {isAdmin && (
                         <button onClick={() => onTogglePublish(t.id)}
                           className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors"
-                          style={{ background: "#fbbf2420", color: "#fbbf24" }}>
+                          style={{ background: `${ACCENT_SOLID}20`, color: ACCENT_SOLID }}>
                           <Star size={11} /> Publish
                         </button>
                       )}
