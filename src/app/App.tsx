@@ -102,6 +102,22 @@ const SHAPE_FILLS = ["#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c"
 const BG_PRESETS = ["#0d1117","#1a1a2e","#0f2027","#1b2838","#2c2c2c","#f5f5f0","#ffffff","#1a472a"]
 const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315, 360]
 
+/* ── Design tokens ──────────────────────────────────────────────
+   Fonts (do not mix roles):
+   · Cormorant Garamond — PITCHSTUDIO wordmark only
+   · Barlow Condensed   — logo badges, chrome labels, uppercase UI
+   · Inter              — all body text, inputs, and buttons
+──────────────────────────────────────────────────────────────── */
+const SURFACE_BASE    = "#0d1117"
+const SURFACE_1       = "#161b22"
+const SURFACE_2       = "#21262d"
+const ACCENT_GRADIENT = "linear-gradient(135deg, #7F77DD, #3C3489)"
+const ACCENT_SOLID    = "#7F77DD"
+const TEXT_PRIMARY    = "#e6edf3"
+const TEXT_MUTED      = "#8b949e"
+const DS_ERROR        = "#f85149"
+const DS_BORDER       = "rgba(255,255,255,0.08)"
+
 /* ─────────────────────────── Formations ────────────────────── */
 interface FormationPos {
   x: number; y: number   // pitch-local coords
@@ -608,6 +624,7 @@ function TacticsBoard() {
   const [showAuth, setShowAuth] = useState(false)
   const [authInitialTab, setAuthInitialTab] = useState<"signin" | "signup">("signin")
   const [showMyBoards, setShowMyBoards] = useState(false)
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
 
   useEffect(() => {
@@ -1196,7 +1213,7 @@ function TacticsBoard() {
           <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
             title="Back to Hub"
             onClick={() => navigateBoard("/hub")}
-            style={{ background: "#3fb950", color: "#0d1117", fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
+            style={{ background: ACCENT_SOLID, color: "#ffffff", fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
           <WorkspaceModeSelector mode={workspaceMode} onChange={m => {
             setWorkspaceMode(m)
             if (m === "report") { setCanvasMode("blank"); setBgColor("#f5f5f0"); setShowPitch(false) }
@@ -1209,14 +1226,14 @@ function TacticsBoard() {
               onBlur={() => setEditingTitle(false)}
               onKeyDown={e => { if (e.key === "Enter") setEditingTitle(false) }}
               className="bg-transparent outline-none font-bold text-sm"
-              style={{ borderBottom: "1px solid #3fb950", color: "#e6edf3", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 200 }} />
+              style={{ borderBottom: `1px solid ${ACCENT_SOLID}`, color: TEXT_PRIMARY, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 200 }} />
           ) : (
             <button onClick={() => setEditingTitle(true)}
               className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-white/8 transition-colors"
               title="Click to rename">
               <span className="font-bold text-sm truncate max-w-44"
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>{title}</span>
-              <span className="text-xs opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: "#3fb950" }}>✏</span>
+              <span className="text-xs opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: ACCENT_SOLID }}>✏</span>
             </button>
           )}
         </div>
@@ -1251,7 +1268,7 @@ function TacticsBoard() {
           {/* 3D toggle */}
           <button onClick={() => setView3d(v => !v)}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
-            style={{ background: view3d ? "#3fb950" : "#21262d", color: view3d ? "#0d1117" : "#c9d1d9" }}>
+            style={{ background: view3d ? ACCENT_SOLID : SURFACE_2, color: view3d ? "#ffffff" : "#c9d1d9" }}>
             <Layers size={13} />
             {view3d ? "3D" : "2D"}
           </button>
@@ -1277,7 +1294,7 @@ function TacticsBoard() {
             <button onClick={saveBoard}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
               style={{
-                background: saveStatus === "saved" ? "#3fb950" : saveStatus === "error" ? "#f85149" : "#238636",
+                background: saveStatus === "error" ? DS_ERROR : ACCENT_GRADIENT,
                 color: "#ffffff",
                 opacity: saveStatus === "saving" ? 0.7 : 1,
               }}>
@@ -1298,7 +1315,7 @@ function TacticsBoard() {
                 <ChevronDown size={11} />
               </button>
               <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 hidden group-hover:flex flex-col"
-                style={{ background: "#1c2128", borderColor: "rgba(255,255,255,0.1)" }}>
+                style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
                 <button onClick={() => supabase.auth.signOut()}
                   className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left"
                   style={{ color: "#f85149" }}>
@@ -1316,17 +1333,11 @@ function TacticsBoard() {
           {/* Undo/Redo */}
           <button onClick={undo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
           <button onClick={redo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
-          {/* Clear All */}
+          {/* Clear All — separated with extra left margin so it reads as destructive/distinct */}
           <button
-            onClick={() => {
-              if (!window.confirm("Clear everything on the canvas? This cannot be undone.")) return
-              snapshot()
-              setPlayers([]); setArrows([]); setTexts([])
-              setShapes([]); setImages([]); setCustomZones([])
-              setSel(null)
-            }}
-            className="flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium transition-colors hover:bg-red-500/20"
-            style={{ color: "#f85149" }}
+            onClick={() => setShowClearConfirm(true)}
+            className="flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium transition-colors hover:bg-red-500/20 ml-2"
+            style={{ color: DS_ERROR }}
             title="Clear all canvas elements">
             <Trash2 size={13} /> Clear All
           </button>
@@ -1337,7 +1348,7 @@ function TacticsBoard() {
               <Download size={13} /> Export <ChevronDown size={11} />
             </button>
             <div className="absolute right-0 top-full mt-1 w-28 rounded shadow-xl border z-50 hidden group-hover:flex flex-col"
-              style={{ background: "#1c2128", borderColor: "rgba(255,255,255,0.1)" }}>
+              style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
               {(["png", "jpeg", "pdf"] as const).map(f => (
                 <button key={f} onClick={() => doExport(f)}
                   className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left uppercase font-semibold"
@@ -1361,8 +1372,8 @@ function TacticsBoard() {
                 className="flex-1 py-2 text-xs font-semibold uppercase transition-colors"
                 style={{
                   letterSpacing: "0.07em",
-                  borderBottom: sideTab === t ? "2px solid #3fb950" : "2px solid transparent",
-                  color: sideTab === t ? "#3fb950" : "#8b949e",
+                  borderBottom: sideTab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent",
+                  color: sideTab === t ? ACCENT_SOLID : TEXT_MUTED,
                 }}>
                 {t}
               </button>
@@ -1407,7 +1418,7 @@ function TacticsBoard() {
                   ] as { id: Tool; icon: React.ReactNode; label: string }[]).map(t => (
                     <button key={t.id} onClick={() => { setTool(t.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
                       className="flex flex-col items-center gap-1 py-2 rounded text-xs font-medium transition-colors"
-                      style={{ background: tool === t.id ? "#3fb950" : "#21262d", color: tool === t.id ? "#0d1117" : "#c9d1d9" }}>
+                      style={{ background: tool === t.id ? ACCENT_GRADIENT : SURFACE_2, color: tool === t.id ? "#ffffff" : "#c9d1d9" }}>
                       {t.icon}<span>{t.label}</span>
                     </button>
                   ))}
@@ -1417,7 +1428,7 @@ function TacticsBoard() {
                 <div className="mt-1.5">
                   <button onClick={() => { setTool("shape"); setArrowDraft(null); setPolyDraft(null) }}
                     className="w-full flex items-center justify-center gap-1.5 py-2 rounded text-xs font-medium transition-colors"
-                    style={{ background: tool === "shape" ? "#3fb950" : "#21262d", color: tool === "shape" ? "#0d1117" : "#c9d1d9" }}>
+                    style={{ background: tool === "shape" ? ACCENT_GRADIENT : SURFACE_2, color: tool === "shape" ? "#ffffff" : "#c9d1d9" }}>
                     <Pentagon size={15} /> Shapes
                   </button>
                   {tool === "shape" && (
@@ -1430,7 +1441,7 @@ function TacticsBoard() {
                       ]).map(({ k, icon, tip }) => (
                         <button key={k} onClick={() => setShapeKind(k)} title={tip}
                           className="flex-1 flex items-center justify-center py-1.5 rounded text-xs transition-colors"
-                          style={{ background: shapeKind === k ? "#fbbf24" : "#2d333b", color: shapeKind === k ? "#0d1117" : "#c9d1d9" }}>
+                          style={{ background: shapeKind === k ? ACCENT_GRADIENT : SURFACE_2, color: shapeKind === k ? "#ffffff" : "#c9d1d9" }}>
                           {icon}
                         </button>
                       ))}
@@ -1457,7 +1468,7 @@ function TacticsBoard() {
                     {(["foreground", "background"] as const).map(l => (
                       <button key={l} onClick={() => setTextLayer(l)}
                         className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                        style={{ background: textLayer === l ? "#58a6ff" : "#21262d", color: textLayer === l ? "#0d1117" : "#c9d1d9" }}>
+                        style={{ background: textLayer === l ? ACCENT_GRADIENT : SURFACE_2, color: textLayer === l ? "#ffffff" : "#c9d1d9" }}>
                         {l === "foreground" ? "In Front" : "Behind Pitch"}
                       </button>
                     ))}
@@ -1490,7 +1501,7 @@ function TacticsBoard() {
                       {(["none", "dashed", "dotted"] as const).map(d => (
                         <button key={d} onClick={() => setArrowDefaultDash(d)}
                           className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                          style={{ background: arrowDefaultDash === d ? "#3fb950" : "#21262d", color: arrowDefaultDash === d ? "#0d1117" : "#c9d1d9" }}>
+                          style={{ background: arrowDefaultDash === d ? ACCENT_GRADIENT : SURFACE_2, color: arrowDefaultDash === d ? "#ffffff" : TEXT_MUTED }}>
                           {d === "none" ? "—" : d === "dashed" ? "- -" : "···"}
                         </button>
                       ))}
@@ -1563,7 +1574,7 @@ function TacticsBoard() {
                           {(["none","dashed","dotted"] as const).map(s => (
                             <button key={s} onClick={() => updA({ dash: s })}
                               className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                              style={{ background: selA.dash === s ? "#3fb950" : "#21262d", color: selA.dash === s ? "#0d1117" : "#c9d1d9" }}>
+                              style={{ background: selA.dash === s ? ACCENT_GRADIENT : SURFACE_2, color: selA.dash === s ? "#ffffff" : TEXT_MUTED }}>
                               {s === "none" ? "Solid" : s === "dashed" ? "Dashed" : "Dotted"}
                             </button>
                           ))}
@@ -1589,7 +1600,8 @@ function TacticsBoard() {
                           // perpendicular unit vector, offset by 20% of arrow length
                           const offset = len * 0.25
                           updA({ cpx: mx - (dy / len) * offset, cpy: my + (dx / len) * offset })
-                        }} className="px-2 py-1 bg-[#21262d] rounded text-xs text-[#c9d1d9] hover:bg-[#3fb950] hover:text-[#0d1117]">
+                        }} className="px-2 py-1 rounded text-xs transition-colors hover:brightness-110"
+                          style={{ background: SURFACE_2, color: TEXT_MUTED }}>
                           Curve
                         </button>
                       </div>
@@ -1601,14 +1613,14 @@ function TacticsBoard() {
                   {selT && (
                     <div className="flex flex-col gap-2">
                       <div className="flex gap-1.5">
-                        <button onClick={() => updT({ noBox: false, bg: "rgba(13,17,23,0.85)", border: "#58a6ff" })}
+                        <button onClick={() => updT({ noBox: false, bg: "rgba(13,17,23,0.85)", border: ACCENT_SOLID })}
                           className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                          style={{ background: !selT.noBox ? "#58a6ff" : "#21262d", color: !selT.noBox ? "#0d1117" : "#c9d1d9" }}>
+                          style={{ background: !selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: !selT.noBox ? "#ffffff" : TEXT_MUTED }}>
                           ▣ With Box
                         </button>
                         <button onClick={() => updT({ noBox: true, bg: "transparent", border: "transparent" })}
                           className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                          style={{ background: selT.noBox ? "#58a6ff" : "#21262d", color: selT.noBox ? "#0d1117" : "#c9d1d9" }}>
+                          style={{ background: selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: selT.noBox ? "#ffffff" : TEXT_MUTED }}>
                           T Free Text
                         </button>
                       </div>
@@ -1647,7 +1659,7 @@ function TacticsBoard() {
                           {(["foreground","background"] as const).map(l => (
                             <button key={l} onClick={() => updT({ layer: l })}
                               className="flex-1 py-1 rounded text-xs transition-colors"
-                              style={{ background: selT.layer === l ? "#58a6ff" : "#21262d", color: selT.layer === l ? "#0d1117" : "#c9d1d9" }}>
+                              style={{ background: selT.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selT.layer === l ? "#ffffff" : TEXT_MUTED }}>
                               {l === "foreground" ? "Front" : "Behind"}
                             </button>
                           ))}
@@ -1713,7 +1725,7 @@ function TacticsBoard() {
                               }
                             }}
                               className="flex-1 py-1 rounded text-xs transition-colors"
-                              style={{ background: selI.layer === l ? "#58a6ff" : "#21262d", color: selI.layer === l ? "#0d1117" : "#c9d1d9" }}>
+                              style={{ background: selI.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selI.layer === l ? "#ffffff" : TEXT_MUTED }}>
                               {l === "background" ? "Behind Pitch" : "Over Pitch"}
                             </button>
                           ))}
@@ -1744,7 +1756,7 @@ function TacticsBoard() {
                     }}>
                     <span>⬛ Activate 18 Zones</span>
                     <span className="text-xs px-1.5 py-0.5 rounded font-bold"
-                      style={{ background: show18Zones ? "#f97316" : "#30363d", color: show18Zones ? "#fff" : "#8b949e", fontSize: 10 }}>
+                      style={{ background: show18Zones ? "#f97316" : SURFACE_2, color: show18Zones ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
                       {show18Zones ? "ON" : "OFF"}
                     </span>
                   </button>
@@ -1760,7 +1772,7 @@ function TacticsBoard() {
                     }}>
                     <span>≡ Activate Lanes</span>
                     <span className="text-xs px-1.5 py-0.5 rounded font-bold"
-                      style={{ background: showLanes ? "#f97316" : "#30363d", color: showLanes ? "#fff" : "#8b949e", fontSize: 10 }}>
+                      style={{ background: showLanes ? "#f97316" : SURFACE_2, color: showLanes ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
                       {showLanes ? "ON" : "OFF"}
                     </span>
                   </button>
@@ -1898,7 +1910,7 @@ function TacticsBoard() {
                   {BG_PRESETS.map(c => (
                     <button key={c} onClick={() => setBgColor(c)}
                       className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
-                      style={{ background: c, borderColor: bgColor === c ? "#3fb950" : "rgba(255,255,255,0.15)" }} />
+                      style={{ background: c, borderColor: bgColor === c ? ACCENT_SOLID : "rgba(255,255,255,0.15)" }} />
                   ))}
                 </div>
               </div>
@@ -1910,7 +1922,7 @@ function TacticsBoard() {
                   {(["full", "half", "blank"] as const).map(mode => (
                     <button key={mode} onClick={() => setCanvasMode(mode)}
                       className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors text-left"
-                      style={{ background: canvasMode === mode ? "#3fb950" : "#21262d", color: canvasMode === mode ? "#0d1117" : "#c9d1d9" }}>
+                      style={{ background: canvasMode === mode ? ACCENT_GRADIENT : SURFACE_2, color: canvasMode === mode ? "#ffffff" : TEXT_MUTED }}>
                       {mode === "full" ? "Full Pitch" : mode === "half" ? "Half Pitch (Vertical)" : "Blank Whiteboard / Custom"}
                     </button>
                   ))}
@@ -1921,12 +1933,12 @@ function TacticsBoard() {
                     <div className="flex gap-2">
                       <button onClick={() => setPitchColor("green")}
                         className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
-                        style={{ background: pitchColor === "green" ? "#3fb950" : "#21262d", color: pitchColor === "green" ? "#0d1117" : "#c9d1d9" }}>
+                        style={{ background: pitchColor === "green" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "green" ? "#ffffff" : TEXT_MUTED }}>
                         Green Grass
                       </button>
                       <button onClick={() => setPitchColor("white")}
                         className="flex-1 py-1.5 rounded text-xs font-medium transition-colors border"
-                        style={{ background: pitchColor === "white" ? "#ffffff" : "#21262d", color: pitchColor === "white" ? "#0d1117" : "#c9d1d9", borderColor: "rgba(255,255,255,0.1)" }}>
+                        style={{ background: pitchColor === "white" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "white" ? "#ffffff" : TEXT_MUTED, borderColor: "rgba(255,255,255,0.1)" }}>
                         White Lines
                       </button>
                     </div>
@@ -2469,6 +2481,20 @@ function TacticsBoard() {
           }}
         />
       )}
+
+      {/* ── Clear All confirmation ── */}
+      {showClearConfirm && (
+        <ClearConfirmModal
+          onCancel={() => setShowClearConfirm(false)}
+          onConfirm={() => {
+            snapshot()
+            setPlayers([]); setArrows([]); setTexts([])
+            setShapes([]); setImages([]); setCustomZones([])
+            setSel(null)
+            setShowClearConfirm(false)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -2505,7 +2531,6 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
         if (!email || !password) { setError("Please fill in all fields."); setLoading(false); return }
         setStep(2); setLoading(false); return
       }
-      // Step 2: create account + update profile
       if (!handle.trim()) { setError("Please enter a display name."); setLoading(false); return }
       if (!identity) { setError("Please choose how you see yourself on the pitch."); setLoading(false); return }
 
@@ -2531,35 +2556,27 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
       return
     }
 
-    // Sign in
     const { error: e } = await supabase.auth.signInWithPassword({ email, password })
     if (e) { setError(e.message) }
     else { onSignedIn?.(); onClose() }
     setLoading(false)
   }
 
-  const signInWithGoogle = async () => {
-    setError("")
-    const { error: e } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    })
-    if (e) setError(e.message)
-  }
-
   const showStep1 = tab === "signin" || step === 1
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.75)" }}
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(0,0,0,0.75)" }}
       onClick={onClose}>
-      <div className="relative w-[400px] rounded-xl border overflow-hidden flex flex-col"
-        style={{ background: "#161b22", borderColor: "rgba(255,255,255,0.12)" }}
+      <div className="relative rounded-xl border overflow-hidden flex flex-col w-full"
+        style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.12)", maxWidth: 400 }}
         onClick={e => e.stopPropagation()}>
+
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: DS_BORDER }}>
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold"
-              style={{ background: "#3fb950", color: "#0d1117", fontFamily: "'Barlow Condensed', sans-serif" }}>PS</div>
+              style={{ background: ACCENT_SOLID, color: "#ffffff", fontFamily: "'Barlow Condensed', sans-serif" }}>PS</div>
             <span className="font-semibold text-sm" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em" }}>
               PITCHSTUDIO ACCOUNT
             </span>
@@ -2568,57 +2585,51 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+        <div className="flex border-b" style={{ borderColor: DS_BORDER }}>
           {(["signin", "signup"] as const).map(t => (
             <button key={t} onClick={() => switchTab(t)}
               className="flex-1 py-2.5 text-xs font-semibold uppercase transition-colors"
               style={{
                 letterSpacing: "0.08em",
-                borderBottom: tab === t ? "2px solid #3fb950" : "2px solid transparent",
-                color: tab === t ? "#3fb950" : "#8b949e",
+                borderBottom: tab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent",
+                color: tab === t ? ACCENT_SOLID : TEXT_MUTED,
               }}>
               {t === "signin" ? "Sign In" : "Create Account"}
             </button>
           ))}
         </div>
 
+        {/* Step indicator — sign-up only */}
+        {tab === "signup" && (
+          <div className="flex items-center justify-center gap-2 pt-3 pb-0">
+            {([1, 2] as const).map(s => (
+              <span key={s} style={{
+                display: "inline-block",
+                width: 7, height: 7, borderRadius: "50%",
+                background: step >= s ? ACCENT_SOLID : "rgba(255,255,255,0.18)",
+                transition: "background 0.2s",
+              }} />
+            ))}
+          </div>
+        )}
+
         <div className="p-5 flex flex-col gap-3">
           {showStep1 ? (
             <>
-              {/* Google */}
-              <button onClick={signInWithGoogle}
-                className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-lg border text-sm font-medium transition-colors hover:bg-white/5"
-                style={{ borderColor: "rgba(255,255,255,0.15)", color: "#e6edf3" }}>
-                <svg width="16" height="16" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                </svg>
-                Continue with Google
-              </button>
-
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.1)" }} />
-                <span className="text-xs" style={{ color: "#8b949e" }}>or</span>
-                <div className="flex-1 h-px" style={{ background: "rgba(255,255,255,0.1)" }} />
-              </div>
-
               <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)}
                 className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
-                style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }}
+                style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}
                 onKeyDown={e => e.key === "Enter" && submit()} />
 
               <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)}
                 className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
-                style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }}
+                style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}
                 onKeyDown={e => e.key === "Enter" && submit()} />
             </>
           ) : (
             <>
-              {/* Step 2: handle + identity */}
               <div>
-                <label className="block text-xs mb-1.5 font-medium" style={{ color: "#8b949e" }}>
+                <label className="block text-xs mb-1.5 font-medium" style={{ color: TEXT_MUTED }}>
                   What should we call you?
                 </label>
                 <input
@@ -2627,14 +2638,14 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
                   value={handle}
                   onChange={e => setHandle(e.target.value)}
                   className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
-                  style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }}
+                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}
                   onKeyDown={e => e.key === "Enter" && submit()}
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="block text-xs mb-2 font-medium" style={{ color: "#8b949e" }}>
+                <label className="block text-xs mb-2 font-medium" style={{ color: TEXT_MUTED }}>
                   How do you see yourself on the pitch?
                 </label>
                 <div className="grid grid-cols-2 gap-2">
@@ -2643,9 +2654,9 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
                       onClick={() => setIdentity(opt.value)}
                       className="py-2 px-3 rounded-lg text-xs font-medium text-center transition-all"
                       style={{
-                        background: identity === opt.value ? "#3fb950" : "#21262d",
-                        color: identity === opt.value ? "#0d1117" : "#c9d1d9",
-                        border: `1px solid ${identity === opt.value ? "#3fb950" : "rgba(255,255,255,0.1)"}`,
+                        background: identity === opt.value ? ACCENT_GRADIENT : SURFACE_2,
+                        color: identity === opt.value ? "#ffffff" : "#c9d1d9",
+                        border: `1px solid ${identity === opt.value ? ACCENT_SOLID : DS_BORDER}`,
                       }}>
                       {opt.label}
                     </button>
@@ -2655,14 +2666,15 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
 
               <button onClick={() => { setStep(1); setError("") }}
                 className="text-xs self-start transition-colors hover:underline"
-                style={{ color: "#8b949e" }}>
+                style={{ color: TEXT_MUTED }}>
                 ← Back
               </button>
             </>
           )}
 
           {error && (
-            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: "#f8514920", color: "#f85149" }}>
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+              style={{ background: `${DS_ERROR}20`, color: DS_ERROR }}>
               <AlertCircle size={13} /> {error}
             </div>
           )}
@@ -2671,11 +2683,11 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
             onClick={submit}
             disabled={loading || (showStep1 && (!email || !password))}
             className="w-full py-2.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
-            style={{ background: "#3fb950", color: "#0d1117" }}>
+            style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
             {loading ? "Please wait…" : tab === "signin" ? "Sign In" : step === 1 ? "Next →" : "Create Account"}
           </button>
 
-          <p className="text-center text-xs" style={{ color: "#8b949e" }}>
+          <p className="text-center text-xs" style={{ color: TEXT_MUTED }}>
             Save boards to your account and access them anywhere.
           </p>
         </div>
@@ -2726,7 +2738,7 @@ function MyBoardsModal({ userId, onClose, onLoad }: {
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
           <div className="flex items-center gap-2">
-            <FolderOpen size={16} style={{ color: "#58a6ff" }} />
+            <FolderOpen size={16} style={{ color: ACCENT_SOLID }} />
             <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
               MY BOARDS
             </span>
@@ -2759,7 +2771,7 @@ function MyBoardsModal({ userId, onClose, onLoad }: {
                 </div>
                 <button
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors flex-shrink-0 ml-3"
-                  style={{ background: loadingId === b.id ? "#21262d" : "#58a6ff", color: loadingId === b.id ? "#8b949e" : "#0d1117" }}
+                  style={{ background: loadingId === b.id ? SURFACE_2 : ACCENT_GRADIENT, color: loadingId === b.id ? TEXT_MUTED : "#ffffff" }}
                   disabled={loadingId === b.id}>
                   {loadingId === b.id ? "Loading…" : "Load"}
                 </button>
@@ -2907,7 +2919,7 @@ function WorkspaceModeSelector({
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors border"
         style={{
           background: open ? "#21262d" : "#161b22",
-          borderColor: open ? "#3fb950" : "rgba(255,255,255,0.15)",
+          borderColor: open ? ACCENT_SOLID : "rgba(255,255,255,0.15)",
           color: "#e6edf3",
           minWidth: 150,
         }}
@@ -2925,7 +2937,7 @@ function WorkspaceModeSelector({
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
             className="absolute left-0 top-full mt-1.5 rounded-xl border shadow-2xl z-50 overflow-hidden flex flex-col"
-            style={{ background: "#1c2128", borderColor: "rgba(255,255,255,0.12)", width: 280 }}
+            style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.12)", width: 280 }}
           >
             <div className="px-4 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
               <p className="text-xs font-bold uppercase" style={{ color: "#8b949e", letterSpacing: "0.1em" }}>What are you building?</p>
@@ -2944,7 +2956,7 @@ function WorkspaceModeSelector({
                       {m.label.toUpperCase()}
                     </span>
                     {mode === m.id && (
-                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#3fb950", color: "#0d1117", fontSize: 9, fontWeight: 700 }}>ACTIVE</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: ACCENT_SOLID, color: "#ffffff", fontSize: 9, fontWeight: 700 }}>ACTIVE</span>
                     )}
                   </div>
                   <span className="text-xs leading-snug" style={{ color: "#8b949e" }}>{m.desc}</span>
@@ -3356,7 +3368,7 @@ function HubPage() {
     setToastMsg(`${label} — coming soon`)
   }
 
-  const HEADER_GRADIENT = "linear-gradient(135deg, #7F77DD 0%, #3C3489 100%)"
+  const HEADER_GRADIENT = ACCENT_GRADIENT
 
   return (
     <div style={{ display: "flex", width: "100vw", height: "100vh", overflow: "hidden", position: "relative" }}>
@@ -3506,6 +3518,40 @@ function HubPage() {
           {toastMsg}
         </div>
       )}
+    </div>
+  )
+}
+
+/* ────────────────────────── Clear Confirm Modal ────────────── */
+function ClearConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(0,0,0,0.7)" }}
+      onClick={onCancel}>
+      <div className="rounded-xl border flex flex-col gap-5 p-6 w-full"
+        style={{ background: SURFACE_1, borderColor: DS_BORDER, maxWidth: 360 }}
+        onClick={e => e.stopPropagation()}>
+        <div>
+          <p style={{ color: TEXT_PRIMARY, fontSize: 15, fontWeight: 600, margin: 0, fontFamily: "'Inter', sans-serif" }}>
+            Clear everything on the canvas?
+          </p>
+          <p style={{ color: TEXT_MUTED, fontSize: 13, margin: "6px 0 0", fontFamily: "'Inter', sans-serif" }}>
+            This cannot be undone.
+          </p>
+        </div>
+        <div className="flex gap-3 justify-end">
+          <button onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:brightness-110"
+            style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm}
+            className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:brightness-110"
+            style={{ background: DS_ERROR, color: "#ffffff" }}>
+            Clear All
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
