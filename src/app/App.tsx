@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, Component } from "react"
 import type { ReactNode } from "react"
+import React from "react"
 import { toPng, toJpeg } from "html-to-image"
 import jsPDF from "jspdf"
 import {
@@ -8,7 +9,8 @@ import {
   ChevronDown, FileImage, Move,
   ImagePlus, Square, Circle, Minus, Plus, BookOpen,
   Lock, Star, X, RefreshCw, Magnet, ChevronRight,
-  Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock
+  Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock,
+  LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive
 } from "lucide-react"
 import { createClient } from "@supabase/supabase-js"
 import { projectId, publicAnonKey } from "../../utils/supabase/info"
@@ -637,15 +639,30 @@ function TacticsBoard() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Brainstorm deep-link: set by HubPage before navigating to "/"
+  // Deep-link handlers: set by HubPage before navigating to "/"
   useEffect(() => {
     const mode = localStorage.getItem("ps_initial_mode")
     if (mode === "brainstorm") {
       localStorage.removeItem("ps_initial_mode")
       setWorkspaceMode("brainstorm")
       setCanvasMode("blank")
-      setBgColor("#0d1117")
+      setBgColor("#08080A")
       setShowPitch(false)
+      return
+    }
+    const preload = localStorage.getItem("ps_preload_board")
+    if (preload) {
+      localStorage.removeItem("ps_preload_board")
+      try {
+        const { canvas_data, title: t } = JSON.parse(preload)
+        setPlayers(canvas_data.players ?? [])
+        setArrows(canvas_data.arrows ?? [])
+        setTexts(canvas_data.texts ?? [])
+        setShapes(canvas_data.shapes ?? [])
+        setImages(canvas_data.images ?? [])
+        setTitle(t ?? "")
+        setSel(null)
+      } catch { /* malformed, ignore */ }
     }
   }, [])
 
@@ -3287,64 +3304,187 @@ function LandingPage() {
 }
 
 /* ─────────────────────────── Hub Menu Item ─────────────────── */
-function HubMenuItem({ label, onClick, isLast }: { label: string; onClick: () => void; isLast: boolean }) {
+/* ─────────────────────────── Hub Page ──────────────────────── */
+
+function stripHandleSuffix(name: string): string {
+  return name.replace(/_[A-Za-z0-9]{4}$/, "")
+}
+
+function hubRelTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const diffMin = Math.floor(diffMs / 60000)
+  if (diffMin < 2) return "just now"
+  if (diffMin < 60) return `${diffMin} minutes ago`
+  const diffH = Math.floor(diffMin / 60)
+  if (diffH < 24) return `${diffH} hour${diffH > 1 ? "s" : ""} ago`
+  const diffD = Math.floor(diffH / 24)
+  if (diffD < 30) return `${diffD} day${diffD > 1 ? "s" : ""} ago`
+  const diffMo = Math.floor(diffD / 30)
+  return `${diffMo} month${diffMo > 1 ? "s" : ""} ago`
+}
+
+interface HubRecentBoard { id: string; title: string; updated_at: string }
+
+interface HubCardDef {
+  id: string
+  title: string
+  desc: string
+  icon: React.ReactNode
+  available: boolean
+  primary?: boolean
+  span2?: boolean
+}
+
+function HubPitchSVG() {
+  const stripe = (i: number) => (
+    <rect key={i} x={0} y={i * 13} width={160} height={13}
+      fill={i % 2 === 0 ? "#2C7A48" : "#27703F"} />
+  )
+  const mkLine = (x1: number, y1: number, x2: number, y2: number) => (
+    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="white" strokeWidth={1.2} opacity={0.55} />
+  )
+  // 4-3-3 positions (y=0 top, y=230 bottom; GK at bottom)
+  const players: [number, number][] = [
+    // GK
+    [80, 210],
+    // Back 4
+    [28, 178], [60, 172], [100, 172], [132, 178],
+    // Mid 3
+    [38, 132], [80, 124], [122, 132],
+    // Front 3
+    [38, 74], [80, 62], [122, 74],
+  ]
+  return (
+    <svg viewBox="0 0 160 230" style={{ width: "100%", borderRadius: 6, display: "block" }}>
+      <style>{`
+        @keyframes hubPlayers {
+          0%, 100% { transform: translateY(0px); }
+          50%       { transform: translateY(-12px); }
+        }
+        .hub-players-g { animation: hubPlayers 6s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .hub-players-g { animation: none; }
+        }
+      `}</style>
+      {/* Mowed stripes — 18 bands of 13px each = 234px, covers 230 */}
+      {Array.from({ length: 18 }, (_, i) => stripe(i))}
+      {/* Pitch markings */}
+      <g fill="none" stroke="white" strokeWidth={1.2} opacity={0.55}>
+        {/* Outer boundary */}
+        <rect x={10} y={12} width={140} height={206} />
+        {/* Halfway line */}
+        {mkLine(10, 115, 150, 115)}
+        {/* Centre circle */}
+        <circle cx={80} cy={115} r={22} />
+        {/* Centre spot */}
+        <circle cx={80} cy={115} r={1.5} fill="white" />
+        {/* Top penalty box */}
+        <rect x={38} y={12} width={84} height={38} />
+        {/* Bottom penalty box */}
+        <rect x={38} y={180} width={84} height={38} />
+        {/* Top goal */}
+        <rect x={60} y={12} width={40} height={10} />
+        {/* Bottom goal */}
+        <rect x={60} y={208} width={40} height={10} />
+      </g>
+      {/* Players */}
+      <g className="hub-players-g">
+        {players.map(([cx, cy], i) => (
+          <circle key={i} cx={cx} cy={cy} r={6.5} fill="#F5F5F7" />
+        ))}
+      </g>
+    </svg>
+  )
+}
+
+function HubCard({ card, onClick }: { card: HubCardDef; onClick: () => void }) {
   const [hovered, setHovered] = useState(false)
-  const [pressed, setPressed] = useState(false)
+  const isAvail = card.available
+  const isPrimary = card.primary
+
+  const borderColor = isPrimary
+    ? hovered ? ACCENT_SOLID : `${ACCENT_SOLID}80`
+    : isAvail
+      ? hovered ? `${ACCENT_SOLID}80` : DS_BORDER
+      : DS_BORDER
+
   return (
     <button
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false) }}
-      onMouseDown={() => setPressed(true)}
-      onMouseUp={() => setPressed(false)}
       style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: 52,
-        width: "100%",
-        background: pressed ? "rgba(255,255,255,0.12)" : hovered ? "rgba(255,255,255,0.08)" : "transparent",
-        color: hovered || pressed ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.85)",
-        fontSize: 18,
-        fontWeight: 500,
-        fontFamily: "'Inter', sans-serif",
-        border: "none",
-        borderBottom: isLast ? "none" : "1px solid rgba(255,255,255,0.08)",
-        cursor: "pointer",
-        transition: "background 0.12s, color 0.12s",
-        textAlign: "center",
-        padding: "0 16px",
-        letterSpacing: "0.01em",
-      }}>
-      {label}
+        gridColumn: card.span2 ? "span 2" : "span 1",
+        textAlign: "left", border: `1px solid ${borderColor}`,
+        cursor: isAvail ? "pointer" : "not-allowed",
+        background: SURFACE_1,
+        borderRadius: 10, padding: 16, minHeight: 72,
+        transform: isAvail && hovered ? "translateY(-2px)" : "none",
+        transition: "transform 0.15s, border-color 0.15s",
+        opacity: isAvail ? 1 : 0.55,
+        position: "relative", fontFamily: "'Inter', sans-serif",
+        outline: "none",
+      }}
+      onClick={onClick}
+      aria-disabled={!isAvail ? true : undefined}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
+      onBlur={() => setHovered(false)}
+      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() } }}>
+      {/* Primary card gradient overlay */}
+      {isPrimary && (
+        <div style={{
+          position: "absolute", inset: 0, borderRadius: 9,
+          background: ACCENT_GRADIENT, opacity: 0.18, pointerEvents: "none",
+        }} />
+      )}
+      {/* SOON badge */}
+      {!isAvail && (
+        <span style={{
+          position: "absolute", top: 12, right: 12,
+          fontSize: 9, letterSpacing: 0.5, textTransform: "uppercase",
+          color: TEXT_MUTED, border: "1px solid rgba(255,255,255,0.2)",
+          borderRadius: 999, padding: "2px 8px", fontFamily: "'Inter', sans-serif",
+        }}>
+          SOON
+        </span>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: TEXT_PRIMARY, position: "relative" }}>
+        <span style={{ flexShrink: 0 }}>{card.icon}</span>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>{card.title}</span>
+      </div>
+      <p style={{ margin: "4px 0 0", fontSize: 12, color: TEXT_MUTED, lineHeight: 1.4, position: "relative" }}>
+        {card.desc}
+      </p>
     </button>
   )
 }
 
-/* ─────────────────────────── Hub Page ──────────────────────── */
-const HUB_MENU_ITEMS = [
-  "Tactical Board",
-  "Live Game Analysis",
-  "Creating Match Report",
-  "Creating Player Report",
-  "Braindump your ideas!",
-  "Archive Closet",
-] as const
-
 function HubPage() {
   const navigate = useNavigate()
   const [displayName, setDisplayName] = useState("")
+  const [userId, setUserId] = useState<string | null>(null)
+  const [recentBoards, setRecentBoards] = useState<HubRecentBoard[] | null>(null)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user) return
-      const { data } = await supabase
+      const uid = session.user.id
+      setUserId(uid)
+      const { data: profile } = await supabase
         .from("profiles")
-        .select("handle")
-        .eq("id", session.user.id)
+        .select("display_name, handle")
+        .eq("id", uid)
         .maybeSingle()
-      setDisplayName(data?.handle || session.user.email?.split("@")[0] || "")
+      const raw = (profile as any)?.display_name || (profile as any)?.handle || session.user.email?.split("@")[0] || ""
+      setDisplayName(stripHandleSuffix(raw))
+      const { data: boards } = await supabase
+        .from("boards")
+        .select("id, title, updated_at")
+        .eq("user_id", uid)
+        .order("updated_at", { ascending: false })
+        .limit(3)
+      setRecentBoards((boards ?? []) as HubRecentBoard[])
     })
   }, [])
 
@@ -3354,166 +3494,186 @@ function HubPage() {
     return () => clearTimeout(t)
   }, [toastMsg])
 
-  const handleMenuClick = (label: string) => {
-    if (label === "Tactical Board") {
-      navigate("/")
-      return
-    }
-    if (label === "Braindump your ideas!") {
-      localStorage.setItem("ps_initial_mode", "brainstorm")
-      navigate("/")
-      return
-    }
-    ;(window as any).posthog?.capture("coming_soon_click", { feature: label })
-    setToastMsg(`${label} — coming soon`)
+  const handleRecentClick = async (board: HubRecentBoard) => {
+    const { data } = await supabase.from("boards").select("canvas_data, title").eq("id", board.id).single()
+    if (data) localStorage.setItem("ps_preload_board", JSON.stringify({ canvas_data: data.canvas_data, title: data.title }))
+    navigate("/")
   }
 
-  const HEADER_GRADIENT = ACCENT_GRADIENT
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    navigate("/")
+  }
+
+  const fireComingSoon = (title: string) => {
+    ;(window as any).posthog?.capture("coming_soon_click", { feature: title })
+    setToastMsg(`${title} — coming soon`)
+  }
+
+  const HUB_CARDS: HubCardDef[] = [
+    { id: "tactical",  title: "Tactical Board",       desc: "Build formations, arrows and zones on a full pitch.",  icon: <LayoutGrid size={18} />,  available: true,  primary: true, span2: true },
+    { id: "braindump", title: "Braindump",             desc: "A blank space to think — no pitch, no rules.",         icon: <StickyNote size={18} />,  available: true },
+    { id: "live",      title: "Live Game Analysis",    desc: "Annotate real match stills and screenshots.",          icon: <Video size={18} />,       available: false },
+    { id: "match",     title: "Match Report",          desc: "Publish an editorial-style match breakdown.",          icon: <FileText size={18} />,    available: false },
+    { id: "player",    title: "Player Report",         desc: "Profile a single player in depth.",                   icon: <UserSquare size={18} />,  available: false },
+    { id: "archive",   title: "Archive Closet",        desc: "Everything you've made, in one place.",               icon: <Archive size={18} />,     available: false, span2: true },
+  ]
+
+  const handleCardClick = (card: HubCardDef) => {
+    if (!card.available) { fireComingSoon(card.title); return }
+    if (card.id === "tactical") { navigate("/"); return }
+    if (card.id === "braindump") { localStorage.setItem("ps_initial_mode", "brainstorm"); navigate("/"); return }
+  }
+
+  const hPad = { base: 32, sm: 20 }
 
   return (
-    <div style={{ display: "flex", width: "100vw", height: "100vh", overflow: "hidden", position: "relative" }}>
+    <div style={{ display: "flex", width: "100vw", height: "100vh", overflow: "hidden", background: SURFACE_BASE, fontFamily: "'Inter', sans-serif", color: TEXT_PRIMARY, position: "relative" }}>
       <style>{`
-        @media (max-width: 767px) {
-          .hub-right-area { display: none !important; }
-          .hub-left-panel { width: 100% !important; min-width: unset !important; }
+        .hub-right { display: flex; }
+        .hub-left { width: 58%; }
+        @media (max-width: 1023px) {
+          .hub-right { display: none !important; }
+          .hub-left { width: 100% !important; }
+        }
+        .hub-user-chip:hover { filter: brightness(1.1); }
+        @media (max-width: 639px) {
+          .hub-greeting { font-size: 24px !important; }
+          .hub-grid { grid-template-columns: 1fr !important; }
+          .hub-card-span2 { grid-column: span 1 !important; }
+          .hub-section-pad { padding-left: ${hPad.sm}px !important; padding-right: ${hPad.sm}px !important; }
+          .hub-recent-row { flex-direction: column !important; }
         }
       `}</style>
 
-      {/* ── Left panel ── */}
-      <div className="hub-left-panel" style={{
-        width: "40%",
-        minWidth: 300,
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        flexShrink: 0,
-        position: "relative",
-        zIndex: 1,
-      }}>
-        {/* Header zone — 30% */}
-        <div style={{
-          height: "30%",
-          background: HEADER_GRADIENT,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          position: "relative",
-          overflow: "hidden",
+      {/* ── Left content area ── */}
+      <div className="hub-left" style={{ height: "100%", display: "flex", flexDirection: "column", overflowY: "auto", flexShrink: 0 }}>
+
+        {/* Top bar */}
+        <div className="hub-section-pad" style={{
+          height: 56, display: "flex", alignItems: "center", justifyContent: "space-between",
+          borderBottom: `1px solid ${DS_BORDER}`, flexShrink: 0, paddingLeft: hPad.base, paddingRight: hPad.base,
         }}>
-          {/* Decorative circle — behind content */}
-          <div style={{
-            position: "absolute",
-            top: -90,
-            left: -90,
-            width: 280,
-            height: 280,
-            borderRadius: "50%",
-            background: "radial-gradient(circle at center, rgba(236,72,153,0.55) 0%, rgba(236,72,153,0.1) 50%, transparent 72%)",
-            zIndex: 0,
-            pointerEvents: "none",
-          }} />
-          <div style={{ position: "relative", zIndex: 1, textAlign: "center", padding: "0 28px" }}>
-            <h1 style={{
-              fontSize: 28,
-              fontWeight: 700,
-              color: "#ffffff",
-              margin: 0,
-              fontFamily: "'Inter', sans-serif",
-              lineHeight: 1.25,
-            }}>
-              Welcome back, {displayName || "…"}!
-            </h1>
-            <p style={{
-              fontSize: 16,
-              fontWeight: 500,
-              color: "rgba(255,255,255,0.82)",
-              margin: "8px 0 0",
-              fontFamily: "'Inter', sans-serif",
-            }}>
-              What do you want to work on today?
+          <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, letterSpacing: 1, color: TEXT_PRIMARY, userSelect: "none" }}>
+            PITCHSTUDIO
+          </span>
+          <div style={{ position: "relative" }}>
+            <button
+              className="hub-user-chip"
+              onClick={() => setUserMenuOpen(v => !v)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                background: SURFACE_2, borderRadius: 999, padding: "6px 12px",
+                border: "none", cursor: "pointer", transition: "filter 0.15s",
+              }}>
+              <div style={{ width: 24, height: 24, borderRadius: "50%", background: ACCENT_GRADIENT, flexShrink: 0 }} />
+              <span style={{ fontSize: 13, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
+                {displayName || "…"}
+              </span>
+            </button>
+            {userMenuOpen && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setUserMenuOpen(false)} />
+                <div style={{
+                  position: "absolute", top: "calc(100% + 8px)", right: 0,
+                  background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 8,
+                  zIndex: 100, minWidth: 140, overflow: "hidden",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                }}>
+                  <button
+                    onClick={handleSignOut}
+                    style={{
+                      display: "block", width: "100%", textAlign: "left",
+                      padding: "10px 16px", background: "none", border: "none",
+                      color: DS_ERROR, fontSize: 13, cursor: "pointer",
+                      fontFamily: "'Inter', sans-serif",
+                      transition: "background 0.12s",
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.1)" }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "none" }}>
+                    Sign out
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Greeting */}
+        <div className="hub-section-pad" style={{ paddingLeft: hPad.base, paddingRight: hPad.base, paddingTop: 36 }}>
+          <h1 className="hub-greeting" style={{
+            margin: 0, fontSize: 32, fontWeight: 700, color: TEXT_PRIMARY,
+            letterSpacing: "-0.5px", whiteSpace: "nowrap", overflow: "hidden",
+            textOverflow: "ellipsis", maxWidth: "100%", fontFamily: "'Inter', sans-serif",
+          }}>
+            Welcome back, {displayName || "…"}
+          </h1>
+          <p style={{ margin: "6px 0 0", fontSize: 15, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
+            What do you want to work on today?
+          </p>
+        </div>
+
+        {/* Recent work strip */}
+        {recentBoards !== null && recentBoards.length > 0 && (
+          <div className="hub-section-pad" style={{ paddingLeft: hPad.base, paddingRight: hPad.base, paddingTop: 24 }}>
+            <p style={{ margin: "0 0 10px", fontSize: 10, letterSpacing: 1, color: TEXT_MUTED, textTransform: "uppercase", fontFamily: "'Inter', sans-serif" }}>
+              PICK UP WHERE YOU LEFT OFF
             </p>
+            <div className="hub-recent-row" style={{ display: "flex", gap: 10 }}>
+              {recentBoards.map(board => (
+                <button
+                  key={board.id}
+                  className="hub-recent-card"
+                  onClick={() => handleRecentClick(board)}
+                  style={{
+                    flex: 1, textAlign: "left", background: SURFACE_1,
+                    border: `1px solid ${DS_BORDER}`, borderRadius: 8, padding: 12,
+                    cursor: "pointer", transition: "border-color 0.15s, transform 0.15s",
+                    fontFamily: "'Inter', sans-serif",
+                  }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: TEXT_PRIMARY, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {board.title}
+                  </p>
+                  <p style={{ margin: "4px 0 0", fontSize: 11, color: TEXT_MUTED }}>
+                    {hubRelTime(board.updated_at)}
+                  </p>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Menu zone — 55% */}
-        <div style={{
-          height: "55%",
-          background: "#1a1440",
-          display: "flex",
-          flexDirection: "column",
-          paddingTop: 20,
-          overflow: "hidden",
+        {/* Card grid */}
+        <div className="hub-section-pad hub-grid" style={{
+          paddingLeft: hPad.base, paddingRight: hPad.base, paddingTop: 24, paddingBottom: 40,
+          display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12,
         }}>
-          <p style={{
-            textAlign: "center",
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: "1px",
-            color: "rgba(255,255,255,0.6)",
-            textTransform: "uppercase",
-            margin: "0 0 12px",
-            fontFamily: "'Inter', sans-serif",
-            flexShrink: 0,
-          }}>
-            CREATOR HUB
-          </p>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-            {HUB_MENU_ITEMS.map((item, i) => (
-              <HubMenuItem
-                key={item}
-                label={item}
-                onClick={() => handleMenuClick(item)}
-                isLast={i === HUB_MENU_ITEMS.length - 1}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Footer zone — 15% */}
-        <div style={{
-          height: "15%",
-          background: HEADER_GRADIENT,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "0 28px",
-        }}>
-          <p style={{
-            fontSize: 14,
-            fontWeight: 500,
-            color: "rgba(255,255,255,0.82)",
-            textAlign: "center",
-            margin: 0,
-            fontFamily: "'Inter', sans-serif",
-          }}>
-            Together, we can make a difference.
-          </p>
+          {HUB_CARDS.map(card => (
+            <HubCard key={card.id} card={card} onClick={() => handleCardClick(card)} />
+          ))}
         </div>
       </div>
 
-      {/* ── Right area — pitch background, desktop only ── */}
-      <div className="hub-right-area" style={{ flex: 1, position: "relative", height: "100%", overflow: "hidden" }}>
-        <PitchBackground />
+      {/* ── Right pitch panel — desktop only ── */}
+      <div className="hub-right" style={{
+        width: "42%", flexShrink: 0, height: "100%",
+        background: SURFACE_BASE, borderLeft: `1px solid ${DS_BORDER}`,
+        padding: 20, alignItems: "center", justifyContent: "center",
+        pointerEvents: "none",
+      }}>
+        <div style={{ width: "100%", maxWidth: 320 }}>
+          <HubPitchSVG />
+        </div>
       </div>
 
       {/* ── Coming-soon toast ── */}
       {toastMsg && (
         <div style={{
-          position: "fixed",
-          bottom: 28,
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "#1a1440",
-          color: "rgba(255,255,255,0.92)",
-          padding: "11px 22px",
-          borderRadius: 8,
-          fontSize: 14,
-          fontFamily: "'Inter', sans-serif",
-          border: "1px solid rgba(127,119,221,0.4)",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.55)",
-          zIndex: 200,
-          whiteSpace: "nowrap",
-          pointerEvents: "none",
+          position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)",
+          background: SURFACE_1, color: TEXT_PRIMARY, padding: "11px 22px",
+          borderRadius: 8, fontSize: 14, fontFamily: "'Inter', sans-serif",
+          border: `1px solid ${DS_BORDER}`, boxShadow: "0 8px 32px rgba(0,0,0,0.55)",
+          zIndex: 200, whiteSpace: "nowrap", pointerEvents: "none",
         }}>
           {toastMsg}
         </div>
