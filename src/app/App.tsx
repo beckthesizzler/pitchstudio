@@ -108,13 +108,13 @@ const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315, 360]
    · Barlow Condensed   — logo badges, chrome labels, uppercase UI
    · Inter              — all body text, inputs, and buttons
 ──────────────────────────────────────────────────────────────── */
-const SURFACE_BASE    = "#0d1117"
-const SURFACE_1       = "#161b22"
-const SURFACE_2       = "#21262d"
-const ACCENT_GRADIENT = "linear-gradient(135deg, #7F77DD, #3C3489)"
-const ACCENT_SOLID    = "#7F77DD"
-const TEXT_PRIMARY    = "#e6edf3"
-const TEXT_MUTED      = "#8b949e"
+const SURFACE_BASE    = "#08080A"
+const SURFACE_1       = "#121215"
+const SURFACE_2       = "#1C1C21"
+const ACCENT_GRADIENT = "linear-gradient(135deg, #7C5CFF, #B14AED)"
+const ACCENT_SOLID    = "#7C5CFF"
+const TEXT_PRIMARY    = "#F5F5F7"
+const TEXT_MUTED      = "#8A8A94"
 const DS_ERROR        = "#f85149"
 const DS_BORDER       = "rgba(255,255,255,0.08)"
 
@@ -1203,7 +1203,7 @@ function TacticsBoard() {
   /* ─────────── RENDER ─────────── */
   return (
     <div className="flex flex-col h-screen overflow-hidden select-none"
-      style={{ fontFamily: "'Inter', sans-serif", background: "#0d1117", color: "#e6edf3" }}>
+      style={{ fontFamily: "'Inter', sans-serif", background: SURFACE_BASE, color: TEXT_PRIMARY }}>
 
       {/* ── Top Header ── */}
       <header className="flex items-center gap-3 px-3 py-2 border-b flex-shrink-0"
@@ -3145,7 +3145,7 @@ function PitchBackground() {
       {/* Mowed stripe background */}
       <div style={{
         position: "absolute", inset: 0,
-        background: "repeating-linear-gradient(-50deg, #0d1117 0px, #0d1117 44px, #0e1810 44px, #0e1810 88px)",
+        background: `repeating-linear-gradient(-50deg, ${SURFACE_BASE} 0px, ${SURFACE_BASE} 44px, #0C140E 44px, #0C140E 88px)`,
       }} />
       {/* SVG pitch markings */}
       <svg viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"
@@ -3185,7 +3185,7 @@ function LandingPage() {
   }
 
   return (
-    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", position: "relative", background: "#0d1117" }}>
+    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", position: "relative", background: SURFACE_BASE }}>
       <PitchBackground />
 
       {/* Sign In — top right */}
@@ -3599,7 +3599,7 @@ class AppErrorBoundary extends Component<
     if (this.state.hasError) {
       return (
         <div style={{
-          width: "100vw", height: "100vh", background: "#0d1117",
+          width: "100vw", height: "100vh", background: SURFACE_BASE,
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
           gap: 16, fontFamily: "'Inter', sans-serif",
         }}>
@@ -3610,7 +3610,7 @@ class AppErrorBoundary extends Component<
             onClick={() => window.location.reload()}
             style={{
               padding: "9px 22px", borderRadius: 8,
-              background: "#3fb950", color: "#0d1117",
+              background: ACCENT_SOLID, color: "#ffffff",
               fontSize: 14, fontWeight: 600, border: "none", cursor: "pointer",
             }}>
             Reload
@@ -3639,7 +3639,7 @@ export default function Root() {
   }, [])
 
   if (authLoading) {
-    return <div style={{ width: "100vw", height: "100vh", background: "#0d1117" }} />
+    return <div style={{ width: "100vw", height: "100vh", background: SURFACE_BASE }} />
   }
 
   return (
