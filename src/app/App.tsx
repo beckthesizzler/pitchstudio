@@ -599,7 +599,7 @@ function TacticsBoard() {
   const [zoom, setZoom] = useState(1)
   const [panX, setPanX] = useState(0)
   const [panY, setPanY] = useState(0)
-  const [title, setTitle] = useState("TACTICAL ANALYSIS")
+  const [title, setTitle] = useState("Untitled board")
   const [editingTitle, setEditingTitle] = useState(false)
   const [editingText, setEditingText] = useState<string | null>(null)
   const [bgColor, setBgColor] = useState("#0d1117")
@@ -628,6 +628,7 @@ function TacticsBoard() {
   const [showMyBoards, setShowMyBoards] = useState(false)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
+  const [currentBoardId, setCurrentBoardId] = useState<string | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -654,7 +655,7 @@ function TacticsBoard() {
     if (preload) {
       localStorage.removeItem("ps_preload_board")
       try {
-        const { canvas_data, title: t } = JSON.parse(preload)
+        const { canvas_data, title: t, id } = JSON.parse(preload)
         setPlayers(canvas_data.players ?? [])
         setArrows(canvas_data.arrows ?? [])
         setTexts(canvas_data.texts ?? [])
@@ -662,30 +663,52 @@ function TacticsBoard() {
         setImages(canvas_data.images ?? [])
         setTitle(t ?? "")
         setSel(null)
+        setCurrentBoardId(id ?? null)
       } catch { /* malformed, ignore */ }
     }
   }, [])
 
   const [saveError, setSaveError] = useState("")
+  const [showSaveMenu, setShowSaveMenu] = useState(false)
 
-  const saveBoard = async () => {
+  const saveBoard = async (forceNew = false) => {
     if (!authUser) { setShowAuth(true); return }
-    setSaveStatus("saving"); setSaveError("")
+    setSaveStatus("saving"); setSaveError(""); setShowSaveMenu(false)
     const canvasData = { players, arrows, texts, shapes, images }
-    const { error } = await supabase.from("boards").insert({
-      user_id: authUser.id,
-      title,
-      canvas_data: canvasData,
-    })
-    if (error) {
-      console.error("Save board error:", error)
-      setSaveError(error.message)
-      setSaveStatus("error")
-      setTimeout(() => setSaveStatus("idle"), 6000)
+
+    if (currentBoardId && !forceNew) {
+      // UPDATE existing board
+      const { error } = await supabase.from("boards")
+        .update({ title, canvas_data: canvasData, updated_at: new Date().toISOString() })
+        .eq("id", currentBoardId)
+        .eq("user_id", authUser.id)
+      if (error) {
+        console.error("Save board error:", error)
+        setSaveError(error.message)
+        setSaveStatus("error")
+        setTimeout(() => setSaveStatus("idle"), 6000)
+      } else {
+        setSaveStatus("saved")
+        ;(window as any).posthog?.capture("board_saved")
+        setTimeout(() => setSaveStatus("idle"), 2000)
+      }
     } else {
-      setSaveStatus("saved")
-      ;(window as any).posthog?.capture("board_saved")
-      setTimeout(() => setSaveStatus("idle"), 2000)
+      // INSERT new board
+      const { data, error } = await supabase.from("boards")
+        .insert({ user_id: authUser.id, title, canvas_data: canvasData })
+        .select("id")
+        .single()
+      if (error) {
+        console.error("Save board error:", error)
+        setSaveError(error.message)
+        setSaveStatus("error")
+        setTimeout(() => setSaveStatus("idle"), 6000)
+      } else {
+        if (data?.id) setCurrentBoardId(data.id)
+        setSaveStatus("saved")
+        ;(window as any).posthog?.capture("board_saved")
+        setTimeout(() => setSaveStatus("idle"), 2000)
+      }
     }
   }
 
@@ -1308,16 +1331,49 @@ function TacticsBoard() {
           )}
           {/* Save */}
           <div className="flex flex-col items-end gap-1">
-            <button onClick={saveBoard}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
-              style={{
-                background: saveStatus === "error" ? DS_ERROR : ACCENT_GRADIENT,
-                color: "#ffffff",
-                opacity: saveStatus === "saving" ? 0.7 : 1,
-              }}>
-              {saveStatus === "saved" ? <Check size={13} /> : saveStatus === "error" ? <AlertCircle size={13} /> : <Save size={13} />}
-              {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved!" : saveStatus === "error" ? "Save failed" : "Save"}
-            </button>
+            <div className="flex items-stretch">
+              <button onClick={() => saveBoard()}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold transition-colors"
+                style={{
+                  background: saveStatus === "error" ? DS_ERROR : ACCENT_GRADIENT,
+                  color: "#ffffff",
+                  opacity: saveStatus === "saving" ? 0.7 : 1,
+                  borderRadius: currentBoardId ? "6px 0 0 6px" : 6,
+                }}>
+                {saveStatus === "saved" ? <Check size={13} /> : saveStatus === "error" ? <AlertCircle size={13} /> : <Save size={13} />}
+                {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved!" : saveStatus === "error" ? "Save failed" : "Save"}
+              </button>
+              {currentBoardId && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowSaveMenu(v => !v)}
+                    className="flex items-center px-1.5 py-1.5 text-xs font-semibold transition-colors"
+                    style={{
+                      background: saveStatus === "error" ? DS_ERROR : ACCENT_GRADIENT,
+                      color: "#ffffff",
+                      borderLeft: "1px solid rgba(255,255,255,0.25)",
+                      borderRadius: "0 6px 6px 0",
+                    }}
+                    title="Save as new board">
+                    <ChevronDown size={12} />
+                  </button>
+                  {showSaveMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowSaveMenu(false)} />
+                      <div className="absolute right-0 top-full mt-1 rounded-lg border shadow-xl z-50 overflow-hidden"
+                        style={{ background: SURFACE_1, borderColor: DS_BORDER, minWidth: 148 }}>
+                        <button
+                          onClick={() => saveBoard(true)}
+                          className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                          style={{ color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
+                          <Save size={12} /> Save as new board
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
             {saveStatus === "error" && saveError && (
               <span className="text-xs max-w-48 text-right" style={{ color: "#f85149" }}>{saveError}</span>
             )}
@@ -2484,8 +2540,9 @@ function TacticsBoard() {
       {showMyBoards && authUser && (
         <MyBoardsModal
           userId={authUser.id}
+          currentBoardId={currentBoardId}
           onClose={() => setShowMyBoards(false)}
-          onLoad={(canvasData, boardTitle) => {
+          onLoad={(canvasData, boardTitle, boardId) => {
             snapshot()
             setPlayers(canvasData.players ?? [])
             setArrows(canvasData.arrows ?? [])
@@ -2494,7 +2551,11 @@ function TacticsBoard() {
             setImages(canvasData.images ?? [])
             setTitle(boardTitle)
             setSel(null)
+            setCurrentBoardId(boardId)
             setShowMyBoards(false)
+          }}
+          onBoardDeleted={(id) => {
+            if (id === currentBoardId) setCurrentBoardId(null)
           }}
         />
       )}
@@ -2508,6 +2569,7 @@ function TacticsBoard() {
             setPlayers([]); setArrows([]); setTexts([])
             setShapes([]); setImages([]); setCustomZones([])
             setSel(null)
+            setCurrentBoardId(null)
             setShowClearConfirm(false)
           }}
         />
@@ -2716,29 +2778,44 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
 /* ─────────────────────────── My Boards Modal ───────────────── */
 interface BoardRow { id: string; title: string; created_at: string }
 
-function MyBoardsModal({ userId, onClose, onLoad }: {
+function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted }: {
   userId: string
+  currentBoardId: string | null
   onClose: () => void
-  onLoad: (canvasData: { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[] }, title: string) => void
+  onLoad: (canvasData: { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[] }, title: string, id: string) => void
+  onBoardDeleted: (id: string) => void
 }) {
   const [boards, setBoards] = useState<BoardRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingId, setLoadingId] = useState<string | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  useEffect(() => {
+  const fetchBoards = () => {
     supabase
       .from("boards")
       .select("id, title, created_at")
       .eq("user_id", userId)
-      .order("created_at", { ascending: false })
+      .order("updated_at", { ascending: false })
       .then(({ data }) => { setBoards(data ?? []); setLoading(false) })
-  }, [userId])
+  }
+
+  useEffect(() => { fetchBoards() }, [userId])
 
   const loadBoard = async (b: BoardRow) => {
     setLoadingId(b.id)
     const { data } = await supabase.from("boards").select("canvas_data, title").eq("id", b.id).single()
-    if (data) onLoad(data.canvas_data, data.title)
+    if (data) onLoad(data.canvas_data, data.title, b.id)
     setLoadingId(null)
+  }
+
+  const deleteBoard = async (id: string) => {
+    setDeleting(true)
+    await supabase.from("boards").delete().eq("id", id).eq("user_id", userId)
+    setDeleting(false)
+    setConfirmDeleteId(null)
+    onBoardDeleted(id)
+    setBoards(prev => prev.filter(b => b.id !== id))
   }
 
   const fmt = (iso: string) => {
@@ -2747,13 +2824,15 @@ function MyBoardsModal({ userId, onClose, onLoad }: {
       d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
   }
 
+  const boardToDelete = boards.find(b => b.id === confirmDeleteId)
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.75)" }}
       onClick={onClose}>
-      <div className="relative w-[560px] max-h-[75vh] flex flex-col rounded-xl border overflow-hidden"
-        style={{ background: "#161b22", borderColor: "rgba(255,255,255,0.12)" }}
+      <div className="relative w-full max-h-[75vh] flex flex-col rounded-xl border overflow-hidden"
+        style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.12)", maxWidth: 560 }}
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: DS_BORDER }}>
           <div className="flex items-center gap-2">
             <FolderOpen size={16} style={{ color: ACCENT_SOLID }} />
             <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
@@ -2765,38 +2844,91 @@ function MyBoardsModal({ userId, onClose, onLoad }: {
 
         <div className="flex-1 overflow-y-auto p-4">
           {loading && (
-            <div className="flex items-center justify-center py-12 gap-2 text-sm" style={{ color: "#8b949e" }}>
+            <div className="flex items-center justify-center py-12 gap-2 text-sm" style={{ color: TEXT_MUTED }}>
               <Clock size={14} className="animate-spin" /> Loading boards…
             </div>
           )}
           {!loading && boards.length === 0 && (
-            <div className="text-center py-12 text-sm" style={{ color: "#8b949e" }}>
+            <div className="text-center py-12 text-sm" style={{ color: TEXT_MUTED }}>
               No saved boards yet. Use the Save button to save your work.
             </div>
           )}
           <div className="flex flex-col gap-2">
             {boards.map(b => (
               <div key={b.id}
-                className="flex items-center justify-between rounded-lg px-4 py-3 border transition-colors cursor-pointer hover:border-white/20"
-                style={{ background: "#21262d", borderColor: "rgba(255,255,255,0.08)" }}
-                onClick={() => loadBoard(b)}>
-                <div className="flex flex-col gap-0.5 min-w-0">
+                className="flex items-center justify-between rounded-lg px-4 py-3 border transition-colors"
+                style={{ background: SURFACE_2, borderColor: b.id === currentBoardId ? `${ACCENT_SOLID}60` : DS_BORDER }}>
+                <div className="flex flex-col gap-0.5 min-w-0 flex-1 cursor-pointer" onClick={() => loadBoard(b)}>
                   <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.04em" }}>
-                    {b.title || "Untitled Board"}
+                    {b.title || "Untitled board"}
+                    {b.id === currentBoardId && (
+                      <span className="ml-2 text-xs font-normal" style={{ color: ACCENT_SOLID, fontFamily: "'Inter', sans-serif", letterSpacing: 0 }}>
+                        (open)
+                      </span>
+                    )}
                   </span>
-                  <span className="text-xs" style={{ color: "#8b949e" }}>{fmt(b.created_at)}</span>
+                  <span className="text-xs" style={{ color: TEXT_MUTED }}>{fmt(b.created_at)}</span>
                 </div>
-                <button
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors flex-shrink-0 ml-3"
-                  style={{ background: loadingId === b.id ? SURFACE_2 : ACCENT_GRADIENT, color: loadingId === b.id ? TEXT_MUTED : "#ffffff" }}
-                  disabled={loadingId === b.id}>
-                  {loadingId === b.id ? "Loading…" : "Load"}
-                </button>
+                <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                  <button
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors"
+                    style={{ background: loadingId === b.id ? SURFACE_2 : ACCENT_GRADIENT, color: loadingId === b.id ? TEXT_MUTED : "#ffffff" }}
+                    disabled={loadingId === b.id}
+                    onClick={() => loadBoard(b)}>
+                    {loadingId === b.id ? "Loading…" : "Load"}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(b.id)}
+                    className="p-1.5 rounded transition-colors hover:bg-red-500/20"
+                    style={{ color: DS_ERROR }}
+                    title="Delete board">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         </div>
       </div>
+
+      {/* Delete confirmation */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.6)" }}
+          onClick={() => setConfirmDeleteId(null)}>
+          <div className="rounded-xl border flex flex-col gap-5 p-6 w-full"
+            style={{ background: SURFACE_1, borderColor: DS_BORDER, maxWidth: 360 }}
+            onClick={e => e.stopPropagation()}>
+            <div>
+              <p style={{ color: TEXT_PRIMARY, fontSize: 15, fontWeight: 600, margin: 0, fontFamily: "'Inter', sans-serif" }}>
+                Delete this board?
+              </p>
+              {boardToDelete && (
+                <p style={{ color: ACCENT_SOLID, fontSize: 13, margin: "4px 0 0", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.04em" }}>
+                  {boardToDelete.title || "Untitled board"}
+                </p>
+              )}
+              <p style={{ color: TEXT_MUTED, fontSize: 13, margin: "6px 0 0", fontFamily: "'Inter', sans-serif" }}>
+                This cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setConfirmDeleteId(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:brightness-110"
+                style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => confirmDeleteId && deleteBoard(confirmDeleteId)}
+                disabled={deleting}
+                className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:brightness-110 disabled:opacity-60"
+                style={{ background: DS_ERROR, color: "#ffffff" }}>
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -3496,7 +3628,7 @@ function HubPage() {
 
   const handleRecentClick = async (board: HubRecentBoard) => {
     const { data } = await supabase.from("boards").select("canvas_data, title").eq("id", board.id).single()
-    if (data) localStorage.setItem("ps_preload_board", JSON.stringify({ canvas_data: data.canvas_data, title: data.title }))
+    if (data) localStorage.setItem("ps_preload_board", JSON.stringify({ canvas_data: data.canvas_data, title: data.title, id: board.id }))
     navigate("/")
   }
 
