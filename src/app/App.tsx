@@ -10,7 +10,8 @@ import {
   ImagePlus, Square, Circle, Minus, Plus, BookOpen,
   Lock, Star, X, RefreshCw, Magnet, ChevronRight,
   Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock,
-  LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive
+  LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive,
+  Settings, ArrowLeft
 } from "lucide-react"
 import { createClient } from "@supabase/supabase-js"
 import { projectId, publicAnonKey } from "../../utils/supabase/info"
@@ -1194,7 +1195,7 @@ function TacticsBoard() {
     const d = { ...t.data }
     setPlayers(d.players ?? []); setArrows(d.arrows ?? [])
     setTexts(d.texts ?? []); setShapes(d.shapes ?? [])
-    setImages(d.images ?? []); setTitle(d.title ?? "TACTICAL ANALYSIS")
+    setImages(d.images ?? []); setTitle(d.title ?? "Untitled board")
     setBgColor(d.bgColor ?? "#0d1117"); setShowPitch(d.showPitch ?? true)
     setSel(null); setShowTemplates(false)
   }
@@ -3648,13 +3649,15 @@ function HubPage() {
     { id: "live",      title: "Live Game Analysis",    desc: "Annotate real match stills and screenshots.",          icon: <Video size={18} />,       available: false },
     { id: "match",     title: "Match Report",          desc: "Publish an editorial-style match breakdown.",          icon: <FileText size={18} />,    available: false },
     { id: "player",    title: "Player Report",         desc: "Profile a single player in depth.",                   icon: <UserSquare size={18} />,  available: false },
-    { id: "archive",   title: "Archive Closet",        desc: "Everything you've made, in one place.",               icon: <Archive size={18} />,     available: false, span2: true },
+    { id: "archive",   title: "Archive Closet",        desc: "Everything you've made, in one place.",               icon: <Archive size={18} />,     available: false },
+    { id: "profile",   title: "Creator Profile",        desc: "Your name, club, country and colours.",               icon: <Settings size={18} />,    available: true },
   ]
 
   const handleCardClick = (card: HubCardDef) => {
     if (!card.available) { fireComingSoon(card.title); return }
     if (card.id === "tactical") { navigate("/"); return }
     if (card.id === "braindump") { localStorage.setItem("ps_initial_mode", "brainstorm"); navigate("/"); return }
+    if (card.id === "profile") { navigate("/profile"); return }
   }
 
   const hPad = { base: 32, sm: 20 }
@@ -3814,6 +3817,364 @@ function HubPage() {
   )
 }
 
+/* ─────────────────────────── Creator Profile Page ──────────── */
+const WORLD_COUNTRIES = [
+  "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia","Australia",
+  "Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin",
+  "Bhutan","Bolivia","Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi",
+  "Cabo Verde","Cambodia","Cameroon","Canada","Central African Republic","Chad","Chile","China","Colombia",
+  "Comoros","Congo (DRC)","Congo (Republic)","Costa Rica","Croatia","Cuba","Cyprus","Czech Republic","Denmark",
+  "Djibouti","Dominica","Dominican Republic","Ecuador","Egypt","El Salvador","Equatorial Guinea","Eritrea",
+  "Estonia","Eswatini","Ethiopia","Fiji","Finland","France","Gabon","Gambia","Georgia","Germany","Ghana",
+  "Greece","Grenada","Guatemala","Guinea","Guinea-Bissau","Guyana","Haiti","Honduras","Hungary","Iceland",
+  "India","Indonesia","Iran","Iraq","Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya",
+  "Kiribati","Kosovo","Kuwait","Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya",
+  "Liechtenstein","Lithuania","Luxembourg","Madagascar","Malawi","Malaysia","Maldives","Mali","Malta",
+  "Marshall Islands","Mauritania","Mauritius","Mexico","Micronesia","Moldova","Monaco","Mongolia","Montenegro",
+  "Morocco","Mozambique","Myanmar","Namibia","Nauru","Nepal","Netherlands","New Zealand","Nicaragua","Niger",
+  "Nigeria","North Korea","North Macedonia","Norway","Oman","Pakistan","Palau","Palestine","Panama",
+  "Papua New Guinea","Paraguay","Peru","Philippines","Poland","Portugal","Qatar","Romania","Russia","Rwanda",
+  "Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Samoa","San Marino",
+  "Sao Tome and Principe","Saudi Arabia","Senegal","Serbia","Seychelles","Sierra Leone","Singapore","Slovakia",
+  "Slovenia","Solomon Islands","Somalia","South Africa","South Korea","South Sudan","Spain","Sri Lanka","Sudan",
+  "Suriname","Sweden","Switzerland","Syria","Taiwan","Tajikistan","Tanzania","Thailand","Timor-Leste","Togo",
+  "Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Tuvalu","Uganda","Ukraine",
+  "United Arab Emirates","United Kingdom","United States","Uruguay","Uzbekistan","Vanuatu","Vatican City",
+  "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe",
+]
+
+const PROFILE_ACCENT_COLORS = ["#7C5CFF","#B14AED","#3FB950","#FBBF24","#58A6FF","#F85149"]
+
+const IDENTITY_CHIPS = [
+  { label: "Content Creator", value: "creator" },
+  { label: "Coach",           value: "coach" },
+  { label: "Analyst",         value: "analyst" },
+  { label: "Just Here to Play", value: "fan" },
+]
+
+const inputStyle: React.CSSProperties = {
+  width: "100%", background: SURFACE_2, border: `1px solid ${DS_BORDER}`,
+  borderRadius: 6, padding: "10px 12px", color: TEXT_PRIMARY, fontSize: 14,
+  fontFamily: "'Inter', sans-serif", outline: "none", boxSizing: "border-box",
+  transition: "border-color 0.15s",
+}
+
+function ProfileInput({
+  id, label, value, onChange, type = "text", prefix, maxLength, rows, hint,
+  onFocus, onBlur, focusedId,
+}: {
+  id: string; label: string; value: string; onChange: (v: string) => void;
+  type?: string; prefix?: string; maxLength?: number; rows?: number; hint?: string;
+  onFocus?: () => void; onBlur?: () => void; focusedId?: string | null;
+}) {
+  const focused = focusedId === id
+  const style: React.CSSProperties = { ...inputStyle, borderColor: focused ? ACCENT_SOLID : DS_BORDER }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <label htmlFor={id} style={{ fontSize: 12, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
+        {label}
+      </label>
+      <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+        {prefix && (
+          <span style={{
+            position: "absolute", left: 12, color: TEXT_MUTED, fontSize: 14,
+            fontFamily: "'Inter', sans-serif", pointerEvents: "none", userSelect: "none",
+          }}>{prefix}</span>
+        )}
+        {rows ? (
+          <textarea
+            id={id} value={value} onChange={e => onChange(e.target.value)}
+            rows={rows} maxLength={maxLength}
+            onFocus={onFocus} onBlur={onBlur}
+            style={{ ...style, resize: "none", lineHeight: 1.5 }}
+          />
+        ) : (
+          <input
+            id={id} type={type} value={value} onChange={e => onChange(e.target.value)}
+            maxLength={maxLength}
+            onFocus={onFocus} onBlur={onBlur}
+            style={{ ...style, paddingLeft: prefix ? 24 : 12 }}
+          />
+        )}
+      </div>
+      {hint && <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>{hint}</span>}
+    </div>
+  )
+}
+
+function ProfilePage() {
+  const navigate = useNavigate()
+  const [userId, setUserId] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  const [displayName, setDisplayName] = useState("")
+  const [handle, setHandle] = useState("")
+  const [bio, setBio] = useState("")
+  const [country, setCountry] = useState("")
+  const [favoriteClub, setFavoriteClub] = useState("")
+  const [favoritePlayer, setFavoritePlayer] = useState("")
+  const [identity, setIdentity] = useState("")
+  const [accentColor, setAccentColor] = useState(PROFILE_ACCENT_COLORS[0])
+
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<"saved" | "error" | null>(null)
+  const [handleError, setHandleError] = useState("")
+  const [focusedId, setFocusedId] = useState<string | null>(null)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.user) { navigate("/"); return }
+      setUserId(session.user.id)
+      const { data } = await supabase
+        .from("profiles")
+        .select("display_name, handle, bio, country, favorite_club, favorite_player, identity, accent_color")
+        .eq("id", session.user.id)
+        .maybeSingle()
+      if (data) {
+        setDisplayName((data as any).display_name ?? "")
+        setHandle((data as any).handle ?? "")
+        setBio((data as any).bio ?? "")
+        setCountry((data as any).country ?? "")
+        setFavoriteClub((data as any).favorite_club ?? "")
+        setFavoritePlayer((data as any).favorite_player ?? "")
+        setIdentity((data as any).identity ?? "")
+        setAccentColor((data as any).accent_color ?? PROFILE_ACCENT_COLORS[0])
+      }
+      setLoaded(true)
+    })
+  }, [])
+
+  const sanitizeHandle = (h: string) =>
+    h.toLowerCase().replace(/\s/g, "").replace(/[^a-z0-9_-]/g, "")
+
+  const handleSave = async () => {
+    if (!userId) return
+    setSaving(true); setHandleError(""); setSaveMsg(null)
+    const cleanHandle = sanitizeHandle(handle)
+    setHandle(cleanHandle)
+    const { error } = await supabase.from("profiles").update({
+      display_name: displayName,
+      handle: cleanHandle,
+      bio,
+      country,
+      favorite_club: favoriteClub,
+      favorite_player: favoritePlayer,
+      identity,
+      accent_color: accentColor,
+    }).eq("id", userId)
+    setSaving(false)
+    if (error) {
+      if ((error as any).code === "23505") {
+        setHandleError("That handle's already taken. Try another.")
+      } else {
+        setSaveMsg("error")
+        setTimeout(() => setSaveMsg(null), 3000)
+      }
+    } else {
+      setSaveMsg("saved")
+      ;(window as any).posthog?.capture("profile_updated")
+      setTimeout(() => setSaveMsg(null), 2000)
+    }
+  }
+
+  if (!loaded) return <div style={{ width: "100vw", height: "100vh", background: SURFACE_BASE }} />
+
+  const sectionLabel = (text: string): React.ReactNode => (
+    <p style={{
+      margin: "32px 0 12px", fontSize: 11, letterSpacing: 1,
+      color: TEXT_MUTED, textTransform: "uppercase",
+      fontFamily: "'Inter', sans-serif", fontWeight: 600,
+    }}>{text}</p>
+  )
+
+  const focusProps = (id: string) => ({
+    onFocus: () => setFocusedId(id),
+    onBlur: () => setFocusedId(null),
+    focusedId,
+  })
+
+  return (
+    <div style={{ minHeight: "100vh", background: SURFACE_BASE, fontFamily: "'Inter', sans-serif", color: TEXT_PRIMARY }}>
+      <style>{`
+        .profile-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .profile-3col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+        @media (max-width: 639px) {
+          .profile-2col { grid-template-columns: 1fr !important; }
+          .profile-3col { grid-template-columns: 1fr !important; }
+          .profile-pad { padding-left: 20px !important; padding-right: 20px !important; }
+          .profile-topbar { padding-left: 20px !important; padding-right: 20px !important; }
+        }
+        .profile-select:focus { border-color: ${ACCENT_SOLID} !important; outline: none; }
+        .profile-input-focus:focus { border-color: ${ACCENT_SOLID} !important; outline: none; }
+      `}</style>
+
+      {/* Top bar */}
+      <div className="profile-topbar" style={{
+        height: 56, display: "flex", alignItems: "center", justifyContent: "space-between",
+        borderBottom: `1px solid ${DS_BORDER}`, paddingLeft: 32, paddingRight: 32, flexShrink: 0,
+      }}>
+        <button
+          onClick={() => navigate("/hub")}
+          style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "none", border: "none", cursor: "pointer",
+            color: TEXT_MUTED, fontSize: 13, fontFamily: "'Inter', sans-serif",
+            padding: "4px 0", transition: "color 0.15s",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED }}>
+          <ArrowLeft size={16} /> Back to hub
+        </button>
+        <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, letterSpacing: 1, color: TEXT_PRIMARY, userSelect: "none" }}>
+          PITCHSTUDIO
+        </span>
+      </div>
+
+      {/* Content */}
+      <div className="profile-pad" style={{ maxWidth: 720, margin: "0 auto", paddingLeft: 32, paddingRight: 32, paddingBottom: 80 }}>
+
+        {/* Heading */}
+        <div style={{ marginTop: 32 }}>
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
+            Creator Profile
+          </h1>
+          <p style={{ margin: "4px 0 0", fontSize: 14, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
+            How you show up in the studio.
+          </p>
+        </div>
+
+        {/* IDENTITY */}
+        {sectionLabel("IDENTITY")}
+        <div className="profile-2col">
+          <ProfileInput id="displayName" label="Display name" value={displayName} onChange={setDisplayName} {...focusProps("displayName")} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label htmlFor="handle" style={{ fontSize: 12, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>Handle</label>
+            <div style={{ position: "relative" }}>
+              <span style={{
+                position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
+                color: TEXT_MUTED, fontSize: 14, fontFamily: "'Inter', sans-serif",
+                pointerEvents: "none", userSelect: "none",
+              }}>@</span>
+              <input
+                id="handle"
+                type="text"
+                value={handle}
+                onChange={e => { setHandle(e.target.value); setHandleError("") }}
+                onFocus={() => setFocusedId("handle")}
+                onBlur={() => setFocusedId(null)}
+                className="profile-input-focus"
+                style={{ ...inputStyle, paddingLeft: 24, borderColor: handleError ? DS_ERROR : focusedId === "handle" ? ACCENT_SOLID : DS_BORDER }}
+              />
+            </div>
+            {handleError && <span style={{ fontSize: 12, color: DS_ERROR, fontFamily: "'Inter', sans-serif" }}>{handleError}</span>}
+          </div>
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <ProfileInput
+            id="bio" label="Bio" value={bio} onChange={setBio}
+            rows={3} maxLength={160}
+            hint={`${bio.length}/160`}
+            {...focusProps("bio")}
+          />
+        </div>
+
+        {/* FOOTBALL */}
+        {sectionLabel("FOOTBALL")}
+        <div className="profile-3col">
+          {/* Country select */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label htmlFor="country" style={{ fontSize: 12, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>Country</label>
+            <select
+              id="country"
+              value={country}
+              onChange={e => setCountry(e.target.value)}
+              className="profile-select"
+              style={{ ...inputStyle, borderColor: focusedId === "country" ? ACCENT_SOLID : DS_BORDER, appearance: "none", cursor: "pointer" }}
+              onFocus={() => setFocusedId("country")}
+              onBlur={() => setFocusedId(null)}>
+              <option value="">Select country</option>
+              {WORLD_COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <ProfileInput id="favoriteClub" label="Favourite club" value={favoriteClub} onChange={setFavoriteClub} {...focusProps("favoriteClub")} />
+          <ProfileInput id="favoritePlayer" label="Favourite player" value={favoritePlayer} onChange={setFavoritePlayer} {...focusProps("favoritePlayer")} />
+        </div>
+
+        {/* Identity chips */}
+        <div style={{ marginTop: 20 }}>
+          <p style={{ margin: "0 0 8px", fontSize: 13, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>You are a…</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {IDENTITY_CHIPS.map(chip => {
+              const active = identity === chip.value
+              return (
+                <button
+                  key={chip.value}
+                  aria-pressed={active}
+                  onClick={() => setIdentity(active ? "" : chip.value)}
+                  style={{
+                    padding: "8px 16px", borderRadius: 999, border: "none", cursor: "pointer",
+                    background: active ? ACCENT_GRADIENT : SURFACE_2,
+                    color: active ? "#ffffff" : TEXT_MUTED,
+                    fontSize: 13, fontFamily: "'Inter', sans-serif", fontWeight: active ? 600 : 400,
+                    transition: "background 0.15s, color 0.15s",
+                  }}>
+                  {chip.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* APPEARANCE */}
+        {sectionLabel("APPEARANCE")}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {PROFILE_ACCENT_COLORS.map(color => {
+            const active = accentColor === color
+            return (
+              <button
+                key={color}
+                aria-pressed={active}
+                onClick={() => setAccentColor(color)}
+                style={{
+                  width: 28, height: 28, borderRadius: "50%",
+                  background: color, border: "none", cursor: "pointer",
+                  outline: active ? `2px solid ${TEXT_PRIMARY}` : "2px solid transparent",
+                  outlineOffset: 2, transition: "outline-color 0.15s",
+                }}
+                title={color}
+              />
+            )
+          })}
+        </div>
+
+        {/* Save row */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 16, marginTop: 32 }}>
+          {saveMsg === "saved" && (
+            <span style={{ fontSize: 14, color: ACCENT_SOLID, fontFamily: "'Inter', sans-serif", fontWeight: 500 }}>Saved</span>
+          )}
+          {saveMsg === "error" && (
+            <span style={{ fontSize: 14, color: DS_ERROR, fontFamily: "'Inter', sans-serif" }}>Something went wrong. Try again.</span>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{
+              padding: "10px 24px", borderRadius: 8,
+              background: saving ? SURFACE_2 : ACCENT_GRADIENT,
+              color: saving ? TEXT_MUTED : "#ffffff",
+              fontSize: 14, fontWeight: 600, border: "none", cursor: saving ? "not-allowed" : "pointer",
+              fontFamily: "'Inter', sans-serif", transition: "opacity 0.15s",
+              opacity: saving ? 0.7 : 1,
+            }}>
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ────────────────────────── Clear Confirm Modal ────────────── */
 function ClearConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
   return (
@@ -3940,6 +4301,7 @@ export default function Root() {
         <Routes>
           <Route path="/" element={authUser ? <TacticsBoard /> : <LandingPage />} />
           <Route path="/hub" element={<HubPage />} />
+          <Route path="/profile" element={authUser ? <ProfilePage /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
