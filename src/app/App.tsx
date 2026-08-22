@@ -2389,33 +2389,32 @@ function TacticsBoard() {
                     const r = 28 * s
                     // p.name = Position (inside circle), p.num = Name/Number (expanding pill)
                     const numUpper = p.num.toUpperCase()
-                    const pillW = Math.max(r * 2, numUpper.length * 6.2 + 14)
-                    const pillH = 17
+                    const pillH = 17 * s
+                    const pillW = Math.max(r * 2, numUpper.length * 6.2 * s + 14 * s)
                     const inCircleText = p.name.toUpperCase()
-                    // Scale font smaller for long text; allow overflow beyond circle edge
-                    const posFontSize = Math.min(15 * s, r * 0.58) * Math.min(1, 4.5 / Math.max(4.5, inCircleText.length))
+                    const posFontSize = Math.max(9 * s, Math.min(15 * s, r * 0.58) * Math.min(1, 6 / Math.max(6, inCircleText.length)))
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
                         onPointerDown={e => startDrag(e, "player", p.id, p.x, p.y)}
                         style={{ cursor: tool === "select" ? "grab" : "default" }}>
                         {p.glow && (
-                          <circle r={r + 15} fill="#fbbf24" fillOpacity={0.4} filter="blur(8px)" />
+                          <circle r={r + 15} fill={p.bg} fillOpacity={0.4} filter="blur(8px)" />
                         )}
                         {/* Drop shadow */}
                         <circle r={r + 1} fill="rgba(0,0,0,0.45)" cx={1.5} cy={2.5} />
                         {/* Selection ring + resize handle at bottom-right of circle */}
                         {isSelected && (
                           <>
-                            <circle r={r + 7} fill="none" stroke="#3fb950" strokeWidth={2.5} strokeDasharray="5,3" />
+                            <circle r={r + 7} fill="none" stroke={ACCENT_SOLID} strokeWidth={2.5} strokeDasharray="5,3" />
                             <circle cx={r * 0.707} cy={r * 0.707} r={6}
-                              fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
+                              fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
                               onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePlayer", id: p.id, ox: 0, oy: 0 } }} />
                           </>
                         )}
                         {/* Main circle */}
                         <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={3 * s} />
-                        {/* Text inside circle — no char limit, font scales for longer text */}
-                        {showPlayerLabels && (
+                        {/* Text inside circle — floor at 9*s, allow slight overflow for long labels */}
+                        {showPlayerLabels && inCircleText.trim() !== "" && (
                           <text textAnchor="middle" dominantBaseline="central" y={-1}
                             fill={p.fg} fontSize={posFontSize} fontWeight="800"
                             overflow="visible"
@@ -2423,12 +2422,12 @@ function TacticsBoard() {
                             {inCircleText}
                           </text>
                         )}
-                        {/* Name/Number pill — grows to fit p.num fully, never truncates */}
-                        {showPlayerLabels && (
+                        {/* Name/Number pill — scales with s, hidden when empty */}
+                        {showPlayerLabels && numUpper.trim() !== "" && (
                           <>
-                            <rect x={-pillW / 2} y={r + 4} width={pillW} height={pillH} rx={3} fill="rgba(0,0,0,0.78)" />
-                            <text textAnchor="middle" x={0} y={r + 4 + pillH * 0.68}
-                              fill="#ffffff" fontSize={10} fontWeight="700"
+                            <rect x={-pillW / 2} y={r + 4 * s} width={pillW} height={pillH} rx={3 * s} fill="rgba(0,0,0,0.78)" />
+                            <text textAnchor="middle" x={0} y={r + 4 * s + pillH * 0.68}
+                              fill="#ffffff" fontSize={10 * s} fontWeight="700"
                               style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.05em", pointerEvents: "none" }}>
                               {numUpper}
                             </text>
