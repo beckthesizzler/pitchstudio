@@ -6,7 +6,7 @@ import jsPDF from "jspdf"
 import {
   MousePointer2, UserPlus, ArrowUpRight, Type, Pentagon,
   Trash2, Download, Layers, RotateCcw, RotateCw,
-  ChevronDown, FileImage, Move,
+  ChevronDown, FileImage, Move, Hand, PanelLeftClose, PanelLeftOpen,
   ImagePlus, Square, Circle, Minus, Plus, BookOpen,
   Lock, Star, X, RefreshCw, Magnet, ChevronRight,
   Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock,
@@ -618,7 +618,9 @@ function TacticsBoard() {
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
-  const [sideTab, setSideTab] = useState<"tools" | "background">("tools")
+  const [sideTab, setSideTab] = useState<"selected" | "board">("selected")
+  const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
+  const [boardGroups, setBoardGroups] = useState({ formation: true, teams: true, zones: false, pitch: false, canvas: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [selectedFormation, setSelectedFormation] = useState("4-3-3")
 
@@ -917,9 +919,15 @@ function TacticsBoard() {
       else if (sel.kind === "zone") setCustomZones(z => z.filter(x => x.id !== sel.id))
       setSel(null)
     }
+    const sw = (t: Tool) => { setTool(t); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }
     const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === "INPUT" || tag === "TEXTAREA") return
+      const el = e.target as HTMLElement
+      const tag = el.tagName
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable
+      if (tag === "INPUT" || tag === "TEXTAREA") {
+        if (e.key === "Escape") el.blur()
+        return
+      }
       if (e.key === "Delete" || e.key === "Backspace") del()
       if (e.key === "Escape") {
         setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null
@@ -931,6 +939,16 @@ function TacticsBoard() {
       if (e.key === "+" || e.key === "=") applyZoom(1.15)
       if (e.key === "-") applyZoom(0.87)
       if (e.key === "0") fitToView()
+      if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === "v" || e.key === "V") sw("select")
+        if (e.key === "h" || e.key === "H") sw("pan")
+        if (e.key === "1") sw("homePlayer")
+        if (e.key === "2") sw("awayPlayer")
+        if (e.key === "a" || e.key === "A") sw("arrow")
+        if (e.key === "t" || e.key === "T") sw("text")
+        if (e.key === "s" || e.key === "S") sw("shape")
+        if (e.key === "i" || e.key === "I") fileInputRef.current?.click()
+      }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
@@ -1436,30 +1454,448 @@ function TacticsBoard() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* ── Left Sidebar ── */}
-        <aside className="w-72 flex flex-col border-r overflow-y-auto flex-shrink-0"
-          style={{ borderColor: "rgba(255,255,255,0.08)", background: "#161b22" }}>
-          {/* Tab bar */}
-          <div className="flex border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-            {(["tools", "background"] as const).map(t => (
+        {/* ── Icon Rail ── */}
+        <div style={{ width: 52, flexShrink: 0, height: "100%", background: SURFACE_1, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 8, paddingBottom: 8 }}>
+          <style>{`
+            .rl-wrap { position: relative; width: 100%; display: flex; justify-content: center; margin-bottom: 2px; }
+            .rl-tip { display: none; position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 6px; padding: 5px 9px; font-size: 11px; color: ${TEXT_PRIMARY}; white-space: nowrap; z-index: 200; pointer-events: none; font-family: 'Inter', sans-serif; }
+            .rl-wrap:hover .rl-tip { display: block; }
+          `}</style>
+
+          {([
+            { id: "select" as Tool, ic: <MousePointer2 size={17} />, lbl: "Select", sc: "V", tint: TEXT_MUTED as string },
+            { id: "pan" as Tool, ic: <Hand size={17} />, lbl: "Pan", sc: "H", tint: TEXT_MUTED as string },
+          ]).map(btn => (
+            <div key={btn.id} className="rl-wrap">
+              <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
+                onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
+                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? "#fff" : btn.tint, transition: "background 0.12s, color 0.12s" }}
+                onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
+                onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = btn.tint } }}>
+                {btn.ic}
+              </button>
+              <div className="rl-tip">{btn.lbl} <span style={{ opacity: 0.5 }}>{btn.sc}</span></div>
+            </div>
+          ))}
+
+          <div style={{ width: 24, height: 1, background: DS_BORDER, margin: "6px auto" }} />
+
+          {([
+            { id: "homePlayer" as Tool, ic: <UserPlus size={17} />, lbl: "Home player", sc: "1", tint: homeColor },
+            { id: "awayPlayer" as Tool, ic: <UserPlus size={17} />, lbl: "Away player", sc: "2", tint: awayColor },
+          ]).map(btn => (
+            <div key={btn.id} className="rl-wrap">
+              <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
+                onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
+                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? "#fff" : btn.tint, transition: "background 0.12s, color 0.12s" }}
+                onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
+                onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = btn.tint } }}>
+                {btn.ic}
+              </button>
+              <div className="rl-tip">{btn.lbl} <span style={{ opacity: 0.5 }}>{btn.sc}</span></div>
+            </div>
+          ))}
+
+          <div style={{ width: 24, height: 1, background: DS_BORDER, margin: "6px auto" }} />
+
+          {([
+            { id: "arrow" as Tool, ic: <ArrowUpRight size={17} />, lbl: "Arrow", sc: "A" },
+            { id: "text" as Tool, ic: <Type size={17} />, lbl: "Text", sc: "T" },
+            { id: "shape" as Tool, ic: <Pentagon size={17} />, lbl: "Shapes", sc: "S" },
+          ]).map(btn => (
+            <div key={btn.id} className="rl-wrap">
+              <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
+                onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
+                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? "#fff" : TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
+                onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
+                onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED } }}>
+                {btn.ic}
+              </button>
+              <div className="rl-tip">{btn.lbl} <span style={{ opacity: 0.5 }}>{btn.sc}</span></div>
+            </div>
+          ))}
+
+          <div style={{ width: 24, height: 1, background: DS_BORDER, margin: "6px auto" }} />
+
+          <div className="rl-wrap">
+            <button aria-label="Upload image"
+              onClick={() => fileInputRef.current?.click()}
+              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED }}>
+              <ImagePlus size={17} />
+            </button>
+            <div className="rl-tip">Upload image <span style={{ opacity: 0.5 }}>I</span></div>
+          </div>
+          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
+
+          <div style={{ flex: 1 }} />
+
+          <div className="rl-wrap" style={{ marginBottom: 0 }}>
+            <button aria-label={panelOpen ? "Collapse panel" : "Expand panel"}
+              onClick={() => setPanelOpen(v => !v)}
+              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED }}>
+              {panelOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+            </button>
+            <div className="rl-tip">{panelOpen ? "Collapse panel" : "Expand panel"}</div>
+          </div>
+        </div>
+
+        {panelOpen && (
+        <aside style={{ width: 230, flexShrink: 0, height: "100%", background: SURFACE_BASE, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ display: "flex", borderBottom: `1px solid ${DS_BORDER}`, flexShrink: 0 }}>
+            {(["selected", "board"] as const).map(t => (
               <button key={t} onClick={() => setSideTab(t)}
-                className="flex-1 py-2 text-xs font-semibold uppercase transition-colors"
-                style={{
-                  letterSpacing: "0.07em",
-                  borderBottom: sideTab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent",
-                  color: sideTab === t ? ACCENT_SOLID : TEXT_MUTED,
-                }}>
+                style={{ flex: 1, height: 36, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", border: "none", cursor: "pointer", background: "transparent", color: sideTab === t ? TEXT_PRIMARY : TEXT_MUTED, borderBottom: sideTab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent", fontFamily: "'Inter', sans-serif", transition: "color 0.12s" }}>
                 {t}
               </button>
             ))}
           </div>
 
-          {sideTab === "tools" && (
-            <>
-              {/* Global Team Colors */}
-              <div className="p-3 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Team Options</p>
-                <div className="flex gap-4 mb-3">
+          {/* ── SELECTED TAB ── */}
+          <div style={{ flex: 1, overflowY: "auto", display: sideTab === "selected" ? "flex" : "none", flexDirection: "column" }}>
+            {sel ? (
+              <div className="p-3 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>
+                    {selP ? "Player" : selA ? "Arrow" : selT ? "Text" : selS ? "Shape" : selI ? "Image" : sel.kind === "zone" ? "Zone" : "Element"}
+                  </p>
+                  <button onClick={deleteSelected} className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: DS_ERROR }}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+
+                {selP && (
+                  <div className="flex flex-col gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Inside circle <span style={{ opacity: 0.55 }}>(name, position, number)</span></span>
+                      <input value={selP.name} onChange={e => updP({ name: e.target.value })}
+                        placeholder="e.g. GK, Salah, 9"
+                        className="rounded px-2 py-1 text-xs outline-none"
+                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Below circle <span style={{ opacity: 0.55 }}>(pill grows to fit)</span></span>
+                      <input value={selP.num} onChange={e => updP({ num: e.target.value })}
+                        placeholder="e.g. 11 · M. Salah"
+                        className="rounded px-2 py-1 text-xs outline-none"
+                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    <ColorPicker label="Kit color" colors={PALETTE} selected={selP.bg}
+                      onSelect={c => updP({ bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" })} />
+                    <ColorPicker label="Ring color" colors={PALETTE} selected={selP.ring} onSelect={c => updP({ ring: c })} allowTransparent={true} />
+                    <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
+                      <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
+                      <span style={{ color: TEXT_PRIMARY }}>Glow Highlight</span>
+                    </label>
+                  </div>
+                )}
+
+                {selA && (
+                  <div className="flex flex-col gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Label</span>
+                      <input value={selA.label} onChange={e => updA({ label: e.target.value })}
+                        className="rounded px-2 py-1 text-xs outline-none"
+                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    <ColorPicker label="Color" colors={PALETTE} selected={selA.color} onSelect={c => updA({ color: c })} />
+                    <div>
+                      <p className="text-xs mb-1" style={{ color: TEXT_MUTED }}>Style</p>
+                      <div className="flex gap-1">
+                        {(["none","dashed","dotted"] as const).map(s => (
+                          <button key={s} onClick={() => updA({ dash: s })}
+                            className="flex-1 py-1 rounded text-xs font-medium transition-colors"
+                            style={{ background: selA.dash === s ? ACCENT_GRADIENT : SURFACE_2, color: selA.dash === s ? "#fff" : TEXT_MUTED }}>
+                            {s === "none" ? "Solid" : s === "dashed" ? "Dashed" : "Dotted"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Width {selA.strokeW}px</span>
+                      <input type="range" min={1} max={8} value={selA.strokeW}
+                        onChange={e => updA({ strokeW: +e.target.value })} className="w-full accent-green-400" />
+                    </label>
+                    <div className="flex justify-between items-center mt-1">
+                      <label className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input type="checkbox" checked={selA.twoWay} onChange={e => updA({ twoWay: e.target.checked })} className="accent-green-400" />
+                        <span style={{ color: TEXT_PRIMARY }}>Two-way</span>
+                      </label>
+                      <button onClick={() => {
+                        const mx = (selA.x1 + selA.x2) / 2; const my = (selA.y1 + selA.y2) / 2
+                        const dx = selA.x2 - selA.x1; const dy = selA.y2 - selA.y1
+                        const len = Math.sqrt(dx * dx + dy * dy) || 1
+                        updA({ cpx: mx - (dy / len) * len * 0.25, cpy: my + (dx / len) * len * 0.25 })
+                      }} className="px-2 py-1 rounded text-xs hover:brightness-110"
+                        style={{ background: SURFACE_2, color: TEXT_MUTED }}>Curve</button>
+                    </div>
+                    <p className="text-[10px] italic mt-1" style={{ color: TEXT_MUTED }}>Drag the handle on the arrow to curve manually.</p>
+                  </div>
+                )}
+
+                {selT && (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-1.5">
+                      <button onClick={() => updT({ noBox: false, bg: "rgba(13,17,23,0.85)", border: ACCENT_SOLID })}
+                        className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
+                        style={{ background: !selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: !selT.noBox ? "#fff" : TEXT_MUTED }}>
+                        ▣ With Box
+                      </button>
+                      <button onClick={() => updT({ noBox: true, bg: "transparent", border: "transparent" })}
+                        className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
+                        style={{ background: selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: selT.noBox ? "#fff" : TEXT_MUTED }}>
+                        T Free Text
+                      </button>
+                    </div>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Text (dbl-click to edit)</span>
+                      <textarea value={selT.text} rows={3} onChange={e => updT({ text: e.target.value })}
+                        className="rounded px-2 py-1 text-xs outline-none resize-none"
+                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Font size {selT.size}px</span>
+                      <input type="range" min={10} max={48} value={selT.size}
+                        onChange={e => updT({ size: +e.target.value })} className="w-full accent-green-400" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Width {selT.width}px</span>
+                      <input type="range" min={80} max={500} value={selT.width}
+                        onChange={e => updT({ width: +e.target.value })} className="w-full accent-green-400" />
+                    </label>
+                    <ColorPicker label="Text color" colors={PALETTE} selected={selT.fg} onSelect={c => updT({ fg: c })} />
+                    <ColorPicker label="Background" colors={PALETTE} selected={selT.bg} onSelect={c => updT({ bg: c })} allowTransparent={true} />
+                    <ColorPicker label="Border" colors={PALETTE} selected={selT.border} onSelect={c => updT({ border: c })} allowTransparent={true} />
+                    <div className="flex gap-2">
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <input type="checkbox" checked={selT.bold} onChange={e => updT({ bold: e.target.checked })} className="accent-green-400" />
+                        <span style={{ color: TEXT_PRIMARY }}>Bold</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <input type="checkbox" checked={selT.dash} onChange={e => updT({ dash: e.target.checked })} className="accent-green-400" />
+                        <span style={{ color: TEXT_PRIMARY }}>Dashed</span>
+                      </label>
+                    </div>
+                    <div>
+                      <p className="text-xs mb-1" style={{ color: TEXT_MUTED }}>Layer</p>
+                      <div className="flex gap-1">
+                        {(["foreground","background"] as const).map(l => (
+                          <button key={l} onClick={() => updT({ layer: l })}
+                            className="flex-1 py-1 rounded text-xs transition-colors"
+                            style={{ background: selT.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selT.layer === l ? "#fff" : TEXT_MUTED }}>
+                            {l === "foreground" ? "Front" : "Behind"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {selS && (
+                  <div className="flex flex-col gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Label</span>
+                      <input value={selS.label} onChange={e => updS({ label: e.target.value })}
+                        className="rounded px-2 py-1 text-xs outline-none"
+                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    <ColorPicker label="Fill" colors={SHAPE_FILLS} selected={selS.fill} onSelect={c => updS({ fill: c })} />
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Opacity {Math.round(selS.fillOpacity * 100)}%</span>
+                      <input type="range" min={5} max={95} value={Math.round(selS.fillOpacity * 100)}
+                        onChange={e => updS({ fillOpacity: +e.target.value / 100 })} className="w-full accent-green-400" />
+                    </label>
+                    <ColorPicker label="Border" colors={PALETTE} selected={selS.stroke} onSelect={c => updS({ stroke: c })} />
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Border width {selS.strokeW}px</span>
+                      <input type="range" min={1} max={6} value={selS.strokeW}
+                        onChange={e => updS({ strokeW: +e.target.value })} className="w-full accent-green-400" />
+                    </label>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input type="checkbox" checked={selS.strokeDash} onChange={e => updS({ strokeDash: e.target.checked })} className="accent-green-400" />
+                      <span style={{ color: TEXT_PRIMARY }}>Dashed border</span>
+                    </label>
+                  </div>
+                )}
+
+                {selI && (
+                  <div className="flex flex-col gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Width {Math.round(selI.width)}px</span>
+                      <input type="range" min={50} max={CW} value={selI.width}
+                        onChange={e => { const w = +e.target.value; updI({ width: w, height: w * (selI.naturalH / selI.naturalW) }) }}
+                        className="w-full accent-green-400" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Opacity {Math.round(selI.opacity * 100)}%</span>
+                      <input type="range" min={10} max={100} value={Math.round(selI.opacity * 100)}
+                        onChange={e => updI({ opacity: +e.target.value / 100 })} className="w-full accent-green-400" />
+                    </label>
+                    <div>
+                      <p className="text-xs mb-1" style={{ color: TEXT_MUTED }}>Layer</p>
+                      <div className="flex gap-1">
+                        {(["background","overlay"] as const).map(l => (
+                          <button key={l} onClick={() => l === "background" ? updI({ layer: l, x: 0, y: 0, width: CW, height: CH }) : updI({ layer: l })}
+                            className="flex-1 py-1 rounded text-xs transition-colors"
+                            style={{ background: selI.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selI.layer === l ? "#fff" : TEXT_MUTED }}>
+                            {l === "background" ? "Behind Pitch" : "Over Pitch"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {selI.layer === "background" && (
+                      <p className="text-xs" style={{ color: TEXT_MUTED }}>Background image fills the full canvas.</p>
+                    )}
+                  </div>
+                )}
+
+                {sel.kind === "zone" && (() => {
+                  const z = customZones.find(x => x.id === sel.id)
+                  if (!z) return null
+                  const updZ = (patch: Partial<CustomZone>) =>
+                    setCustomZones(zones => zones.map(x => x.id === sel.id ? { ...x, ...patch } : x))
+                  return (
+                    <div className="flex flex-col gap-2">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs" style={{ color: TEXT_MUTED }}>Label</span>
+                        <input value={z.label} onChange={e => updZ({ label: e.target.value })} placeholder="e.g. Press zone"
+                          className="rounded px-2 py-1 text-xs outline-none"
+                          style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                      </label>
+                      <div>
+                        <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Color</p>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"].map(c => (
+                            <button key={c} onClick={() => updZ({ color: c })}
+                              className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
+                              style={{ background: c, borderColor: z.color === c ? "#fff" : "transparent" }} />
+                          ))}
+                        </div>
+                      </div>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs" style={{ color: TEXT_MUTED }}>Opacity {Math.round(z.opacity * 100)}%</span>
+                        <input type="range" min={5} max={80} value={Math.round(z.opacity * 100)}
+                          onChange={e => updZ({ opacity: +e.target.value / 100 })} className="w-full accent-orange-400" />
+                      </label>
+                    </div>
+                  )
+                })()}
+              </div>
+            ) : tool === "arrow" ? (
+              <div className="p-3 flex flex-col gap-2.5">
+                <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Arrow defaults</p>
+                <div>
+                  <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Line</p>
+                  <div className="flex gap-1.5">
+                    {(["none","dashed","dotted"] as const).map(d => (
+                      <button key={d} onClick={() => setArrowDefaultDash(d)}
+                        className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
+                        style={{ background: arrowDefaultDash === d ? ACCENT_GRADIENT : SURFACE_2, color: arrowDefaultDash === d ? "#fff" : TEXT_MUTED }}>
+                        {d === "none" ? "—" : d === "dashed" ? "- -" : "···"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <ColorPicker label="Color" colors={PALETTE} selected={arrowDefaultColor} onSelect={setArrowDefaultColor} />
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs" style={{ color: TEXT_MUTED }}>Width {arrowDefaultW}px</span>
+                  <input type="range" min={1} max={8} value={arrowDefaultW}
+                    onChange={e => setArrowDefaultW(+e.target.value)} className="w-full accent-green-400" />
+                </label>
+              </div>
+            ) : tool === "text" ? (
+              <div className="p-3 flex flex-col gap-2.5">
+                <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Text defaults</p>
+                <div>
+                  <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Place new text in</p>
+                  <div className="flex gap-1.5">
+                    {(["foreground","background"] as const).map(l => (
+                      <button key={l} onClick={() => setTextLayer(l)}
+                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
+                        style={{ background: textLayer === l ? ACCENT_GRADIENT : SURFACE_2, color: textLayer === l ? "#fff" : TEXT_MUTED }}>
+                        {l === "foreground" ? "In Front" : "Behind Pitch"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : tool === "shape" ? (
+              <div className="p-3 flex flex-col gap-2.5">
+                <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Shape type</p>
+                <div className="flex gap-1.5">
+                  {([
+                    { k: "polygon" as ShapeKind, icon: <Pentagon size={13} />, tip: "Polygon" },
+                    { k: "rect" as ShapeKind, icon: <Square size={13} />, tip: "Rectangle" },
+                    { k: "circle" as ShapeKind, icon: <Circle size={13} />, tip: "Circle" },
+                    { k: "ellipse" as ShapeKind, icon: <Circle size={13} style={{ transform: "scaleX(1.4)" }} />, tip: "Ellipse" },
+                  ]).map(({ k, icon, tip }) => (
+                    <button key={k} onClick={() => setShapeKind(k)} title={tip}
+                      className="flex-1 flex items-center justify-center py-2 rounded text-xs transition-colors"
+                      style={{ background: shapeKind === k ? ACCENT_GRADIENT : SURFACE_2, color: shapeKind === k ? "#fff" : TEXT_MUTED }}>
+                      {icon}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 text-center text-xs" style={{ color: TEXT_MUTED }}>
+                Select an element on the pitch to edit it.
+              </div>
+            )}
+          </div>
+
+          {/* ── BOARD TAB ── */}
+          <div style={{ flex: 1, overflowY: "auto", display: sideTab === "board" ? "block" : "none" }}>
+
+            <button aria-expanded={boardGroups.formation}
+              onClick={() => setBoardGroups(g => ({ ...g, formation: !g.formation }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.formation ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Formation
+            </button>
+            {boardGroups.formation && (
+              <div className="p-3 flex flex-col gap-2" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                <select value={selectedFormation} onChange={e => setSelectedFormation(e.target.value)}
+                  className="w-full rounded px-2 py-1.5 text-xs outline-none"
+                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
+                  {FORMATIONS.map(f => (
+                    <option key={f.name} value={f.name}>{f.name} — {f.description}</option>
+                  ))}
+                </select>
+                <div className="flex gap-1.5">
+                  <button onClick={() => { addFormation(selectedFormation, "home"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
+                    className="flex-1 py-1.5 rounded text-xs font-semibold"
+                    style={{ background: homeColor, color: homeColor === "#ffffff" || homeColor === "#fbbf24" ? "#000" : "#fff" }}>
+                    + Home
+                  </button>
+                  <button onClick={() => { addFormation(selectedFormation, "away"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
+                    className="flex-1 py-1.5 rounded text-xs font-semibold"
+                    style={{ background: awayColor, color: awayColor === "#ffffff" || awayColor === "#fbbf24" ? "#000" : "#fff" }}>
+                    + Away
+                  </button>
+                </div>
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Elements can be placed anywhere, including canvas margins.</p>
+              </div>
+            )}
+
+            <button aria-expanded={boardGroups.teams}
+              onClick={() => setBoardGroups(g => ({ ...g, teams: !g.teams }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.teams ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Teams
+            </button>
+            {boardGroups.teams && (
+              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                <div className="flex gap-3">
                   <div className="flex-1">
                     <ColorPicker label="Home Color" colors={PALETTE.slice(0, 5)} selected={homeColor} onSelect={c => {
                       setHomeColor(c)
@@ -1475,620 +1911,202 @@ function TacticsBoard() {
                 </div>
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
                   <input type="checkbox" checked={showPlayerLabels} onChange={e => setShowPlayerLabels(e.target.checked)} className="accent-green-400" />
-                  <span style={{ color: "#c9d1d9" }}>Show Player Names/Numbers</span>
+                  <span style={{ color: TEXT_PRIMARY }}>Show Player Names / Numbers</span>
                 </label>
               </div>
+            )}
 
-              {/* Tool grid */}
-              <div className="p-3 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {([
-                    { id: "select", icon: <MousePointer2 size={15} />, label: "Select" },
-                    { id: "pan", icon: <Move size={15} />, label: "Pan" },
-                    { id: "homePlayer", icon: <UserPlus size={15} />, label: "Home" },
-                    { id: "awayPlayer", icon: <UserPlus size={15} />, label: "Away" },
-                    { id: "arrow", icon: <ArrowUpRight size={15} />, label: "Arrow" },
-                    { id: "text", icon: <Type size={15} />, label: "Text" },
-                  ] as { id: Tool; icon: React.ReactNode; label: string }[]).map(t => (
-                    <button key={t.id} onClick={() => { setTool(t.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
-                      className="flex flex-col items-center gap-1 py-2 rounded text-xs font-medium transition-colors"
-                      style={{ background: tool === t.id ? ACCENT_GRADIENT : SURFACE_2, color: tool === t.id ? "#ffffff" : "#c9d1d9" }}>
-                      {t.icon}<span>{t.label}</span>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Shape tool with sub-kinds */}
-                <div className="mt-1.5">
-                  <button onClick={() => { setTool("shape"); setArrowDraft(null); setPolyDraft(null) }}
-                    className="w-full flex items-center justify-center gap-1.5 py-2 rounded text-xs font-medium transition-colors"
-                    style={{ background: tool === "shape" ? ACCENT_GRADIENT : SURFACE_2, color: tool === "shape" ? "#ffffff" : "#c9d1d9" }}>
-                    <Pentagon size={15} /> Shapes
-                  </button>
-                  {tool === "shape" && (
-                    <div className="flex gap-1 mt-1.5">
-                      {([
-                        { k: "polygon" as ShapeKind, icon: <Pentagon size={13} />, tip: "Polygon" },
-                        { k: "rect" as ShapeKind, icon: <Square size={13} />, tip: "Rectangle" },
-                        { k: "circle" as ShapeKind, icon: <Circle size={13} />, tip: "Circle" },
-                        { k: "ellipse" as ShapeKind, icon: <Circle size={13} style={{ transform: "scaleX(1.4)" }} />, tip: "Ellipse" },
-                      ]).map(({ k, icon, tip }) => (
-                        <button key={k} onClick={() => setShapeKind(k)} title={tip}
-                          className="flex-1 flex items-center justify-center py-1.5 rounded text-xs transition-colors"
-                          style={{ background: shapeKind === k ? ACCENT_GRADIENT : SURFACE_2, color: shapeKind === k ? "#ffffff" : "#c9d1d9" }}>
-                          {icon}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Image upload */}
-                <div className="mt-1.5">
-                  <button onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-1.5 py-2 rounded text-xs font-medium transition-colors"
-                    style={{ background: "#21262d", color: "#c9d1d9" }}>
-                    <ImagePlus size={15} /> Upload Image
-                  </button>
-                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-                </div>
-              </div>
-
-              {/* Text layer toggle */}
-              {tool === "text" && (
-                <div className="px-3 py-2 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                  <p className="text-xs mb-1.5" style={{ color: "#8b949e" }}>Place text in</p>
-                  <div className="flex gap-1.5">
-                    {(["foreground", "background"] as const).map(l => (
-                      <button key={l} onClick={() => setTextLayer(l)}
-                        className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                        style={{ background: textLayer === l ? ACCENT_GRADIENT : SURFACE_2, color: textLayer === l ? "#ffffff" : "#c9d1d9" }}>
-                        {l === "foreground" ? "In Front" : "Behind Pitch"}
-                      </button>
+            <button aria-expanded={boardGroups.zones}
+              onClick={() => setBoardGroups(g => ({ ...g, zones: !g.zones }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.zones ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Zones &amp; Lanes
+            </button>
+            {boardGroups.zones && (
+              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                <button onClick={() => setShow18Zones(v => !v)}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
+                  style={{ background: show18Zones ? "rgba(249,115,22,0.15)" : SURFACE_2, borderColor: show18Zones ? "#f97316" : DS_BORDER, color: show18Zones ? "#f97316" : TEXT_PRIMARY }}>
+                  <span>⬛ 18 Zones</span>
+                  <span className="px-1.5 py-0.5 rounded font-bold"
+                    style={{ background: show18Zones ? "#f97316" : SURFACE_1, color: show18Zones ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
+                    {show18Zones ? "ON" : "OFF"}
+                  </span>
+                </button>
+                <button onClick={() => setShowLanes(v => !v)}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
+                  style={{ background: showLanes ? "rgba(249,115,22,0.15)" : SURFACE_2, borderColor: showLanes ? "#f97316" : DS_BORDER, color: showLanes ? "#f97316" : TEXT_PRIMARY }}>
+                  <span>≡ Lanes</span>
+                  <span className="px-1.5 py-0.5 rounded font-bold"
+                    style={{ background: showLanes ? "#f97316" : SURFACE_1, color: showLanes ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
+                    {showLanes ? "ON" : "OFF"}
+                  </span>
+                </button>
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Custom Zones</p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"].map(c => (
+                      <button key={c} onClick={() => setZoneColor(c)}
+                        className="w-6 h-6 rounded border-2 transition-transform hover:scale-110 flex-shrink-0"
+                        style={{ background: c, borderColor: zoneColor === c ? "#fff" : "transparent" }} />
                     ))}
                   </div>
-                </div>
-              )}
-
-              {/* Hint */}
-              <div className="px-3 py-2 text-xs border-b" style={{ borderColor: "rgba(255,255,255,0.08)", color: "#8b949e" }}>
-                {tool === "select" && "Click to select. Drag to move. Del to remove."}
-                {tool === "pan" && "Drag canvas to pan. Or Alt+drag in any mode."}
-                {tool === "homePlayer" && "Click anywhere on the canvas to place a home player."}
-                {tool === "awayPlayer" && "Click anywhere on the canvas to place an away player."}
-                {tool === "arrow" && !arrowDraft && "Click to set arrow start point."}
-                {tool === "arrow" && arrowDraft && "Click to set end. Drag handle to curve."}
-                {tool === "text" && "Click anywhere on the canvas to place annotation."}
-                {tool === "shape" && shapeKind === "polygon" && (!polyDraft ? "Click to draw polygon. Double-click to close." : `${polyDraft.length} points — double-click to close.`)}
-                {tool === "shape" && shapeKind !== "polygon" && "Click-drag to draw shape."}
-                <div className="mt-1 opacity-60">Scroll = zoom · Alt+drag = pan</div>
-              </div>
-
-              {/* Arrow pre-draw style picker — shown when arrow tool active, nothing drawn yet */}
-              {tool === "arrow" && !sel && (
-                <div className="px-3 py-3 border-b flex flex-col gap-2.5" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                  <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Arrow Style</p>
-                  {/* Line style */}
-                  <div>
-                    <p className="text-xs mb-1.5" style={{ color: "#8b949e" }}>Line</p>
-                    <div className="flex gap-1.5">
-                      {(["none", "dashed", "dotted"] as const).map(d => (
-                        <button key={d} onClick={() => setArrowDefaultDash(d)}
-                          className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                          style={{ background: arrowDefaultDash === d ? ACCENT_GRADIENT : SURFACE_2, color: arrowDefaultDash === d ? "#ffffff" : TEXT_MUTED }}>
-                          {d === "none" ? "—" : d === "dashed" ? "- -" : "···"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Color */}
-                  <ColorPicker label="Color" colors={PALETTE} selected={arrowDefaultColor} onSelect={setArrowDefaultColor} />
-                  {/* Width */}
                   <label className="flex flex-col gap-1">
-                    <span className="text-xs" style={{ color: "#8b949e" }}>Width {arrowDefaultW}px</span>
-                    <input type="range" min={1} max={8} value={arrowDefaultW}
-                      onChange={e => setArrowDefaultW(+e.target.value)} className="w-full accent-green-400" />
+                    <span className="text-xs" style={{ color: TEXT_MUTED }}>Fill opacity {Math.round(zoneOpacity * 100)}%</span>
+                    <input type="range" min={5} max={80} value={Math.round(zoneOpacity * 100)}
+                      onChange={e => setZoneOpacity(+e.target.value / 100)} className="w-full accent-orange-400" />
                   </label>
-                  <p className="text-xs" style={{ color: "#8b949e" }}>
-                    {arrowDraft ? "Click to place end point. Drag yellow handle to curve." : "Click on canvas to start drawing."}
-                  </p>
-                </div>
-              )}
-
-              {/* Properties */}
-              {sel && (
-                <div className="p-3 flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Properties</p>
-                    <button onClick={deleteSelected} className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: "#f85149" }}>
-                      <Trash2 size={13} />
+                  <button onClick={() => { setTool("zone"); setSel(null) }}
+                    className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-colors"
+                    style={{ background: tool === "zone" ? "#f97316" : SURFACE_2, color: tool === "zone" ? "#fff" : TEXT_PRIMARY, border: `1px solid ${tool === "zone" ? "#f97316" : DS_BORDER}` }}>
+                    {tool === "zone" ? "🖊 Drawing zone…" : "+ Draw Custom Zone"}
+                  </button>
+                  {customZones.length > 0 && (
+                    <button onClick={() => { setCustomZones([]); setSel(null) }}
+                      className="w-full py-1 rounded text-xs hover:bg-red-500/20 transition-colors"
+                      style={{ color: DS_ERROR }}>
+                      Clear all zones ({customZones.length})
                     </button>
-                  </div>
-
-                  {/* PLAYER */}
-                  {selP && (
-                    <div className="flex flex-col gap-2">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Inside circle <span style={{ opacity: 0.55 }}>(name, position, number — anything)</span></span>
-                        <input value={selP.name} onChange={e => updP({ name: e.target.value })}
-                          placeholder="e.g. GK, Salah, 9"
-                          className="rounded px-2 py-1 text-xs outline-none"
-                          style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
-                      </label>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Below circle <span style={{ opacity: 0.55 }}>(pill grows to fit)</span></span>
-                        <input value={selP.num} onChange={e => updP({ num: e.target.value })}
-                          placeholder="e.g. 11 · M. Salah"
-                          className="rounded px-2 py-1 text-xs outline-none"
-                          style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
-                      </label>
-                      <ColorPicker label="Kit color" colors={PALETTE} selected={selP.bg}
-                        onSelect={c => updP({ bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" })} />
-                      <ColorPicker label="Ring color" colors={PALETTE} selected={selP.ring} onSelect={c => updP({ ring: c })} allowTransparent={true} />
-                      <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
-                        <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
-                        <span style={{ color: "#c9d1d9" }}>Glow Highlight</span>
-                      </label>
-                    </div>
-                  )}
-
-                  {/* ARROW */}
-                  {selA && (
-                    <div className="flex flex-col gap-2">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Label</span>
-                        <input value={selA.label} onChange={e => updA({ label: e.target.value })}
-                          className="rounded px-2 py-1 text-xs outline-none"
-                          style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
-                      </label>
-                      <ColorPicker label="Color" colors={PALETTE} selected={selA.color} onSelect={c => updA({ color: c })} />
-                      <div>
-                        <p className="text-xs mb-1" style={{ color: "#8b949e" }}>Style</p>
-                        <div className="flex gap-1">
-                          {(["none","dashed","dotted"] as const).map(s => (
-                            <button key={s} onClick={() => updA({ dash: s })}
-                              className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                              style={{ background: selA.dash === s ? ACCENT_GRADIENT : SURFACE_2, color: selA.dash === s ? "#ffffff" : TEXT_MUTED }}>
-                              {s === "none" ? "Solid" : s === "dashed" ? "Dashed" : "Dotted"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Width {selA.strokeW}px</span>
-                        <input type="range" min={1} max={8} value={selA.strokeW}
-                          onChange={e => updA({ strokeW: +e.target.value })} className="w-full accent-green-400" />
-                      </label>
-                      <div className="flex justify-between items-center mt-1">
-                        <label className="flex items-center gap-2 text-xs cursor-pointer">
-                          <input type="checkbox" checked={selA.twoWay} onChange={e => updA({ twoWay: e.target.checked })} className="accent-green-400" />
-                          <span style={{ color: "#c9d1d9" }}>Two-way</span>
-                        </label>
-                        <button onClick={() => {
-                          // offset control point perpendicularly from the midpoint
-                          const mx = (selA.x1 + selA.x2) / 2
-                          const my = (selA.y1 + selA.y2) / 2
-                          const dx = selA.x2 - selA.x1
-                          const dy = selA.y2 - selA.y1
-                          const len = Math.sqrt(dx * dx + dy * dy) || 1
-                          // perpendicular unit vector, offset by 20% of arrow length
-                          const offset = len * 0.25
-                          updA({ cpx: mx - (dy / len) * offset, cpy: my + (dx / len) * offset })
-                        }} className="px-2 py-1 rounded text-xs transition-colors hover:brightness-110"
-                          style={{ background: SURFACE_2, color: TEXT_MUTED }}>
-                          Curve
-                        </button>
-                      </div>
-                      <p className="text-[10px] italic text-[#8b949e] mt-1">Drag the yellow handle on the arrow to curve it manually.</p>
-                    </div>
-                  )}
-
-                  {/* TEXT */}
-                  {selT && (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex gap-1.5">
-                        <button onClick={() => updT({ noBox: false, bg: "rgba(13,17,23,0.85)", border: ACCENT_SOLID })}
-                          className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                          style={{ background: !selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: !selT.noBox ? "#ffffff" : TEXT_MUTED }}>
-                          ▣ With Box
-                        </button>
-                        <button onClick={() => updT({ noBox: true, bg: "transparent", border: "transparent" })}
-                          className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                          style={{ background: selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: selT.noBox ? "#ffffff" : TEXT_MUTED }}>
-                          T Free Text
-                        </button>
-                      </div>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Text (dbl-click to edit)</span>
-                        <textarea value={selT.text} rows={3} onChange={e => updT({ text: e.target.value })}
-                          className="rounded px-2 py-1 text-xs outline-none resize-none"
-                          style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
-                      </label>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Font size {selT.size}px</span>
-                        <input type="range" min={10} max={48} value={selT.size}
-                          onChange={e => updT({ size: +e.target.value })} className="w-full accent-green-400" />
-                      </label>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Width {selT.width}px</span>
-                        <input type="range" min={80} max={500} value={selT.width}
-                          onChange={e => updT({ width: +e.target.value })} className="w-full accent-green-400" />
-                      </label>
-                      <ColorPicker label="Text color" colors={PALETTE} selected={selT.fg} onSelect={c => updT({ fg: c })} />
-                      <ColorPicker label="Background color" colors={PALETTE} selected={selT.bg} onSelect={c => updT({ bg: c })} allowTransparent={true} />
-                      <ColorPicker label="Border color" colors={PALETTE} selected={selT.border} onSelect={c => updT({ border: c })} allowTransparent={true} />
-                      <div className="flex gap-2">
-                        <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                          <input type="checkbox" checked={selT.bold} onChange={e => updT({ bold: e.target.checked })} className="accent-green-400" />
-                          <span style={{ color: "#c9d1d9" }}>Bold</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                          <input type="checkbox" checked={selT.dash} onChange={e => updT({ dash: e.target.checked })} className="accent-green-400" />
-                          <span style={{ color: "#c9d1d9" }}>Dashed</span>
-                        </label>
-                      </div>
-                      <div>
-                        <p className="text-xs mb-1" style={{ color: "#8b949e" }}>Layer</p>
-                        <div className="flex gap-1">
-                          {(["foreground","background"] as const).map(l => (
-                            <button key={l} onClick={() => updT({ layer: l })}
-                              className="flex-1 py-1 rounded text-xs transition-colors"
-                              style={{ background: selT.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selT.layer === l ? "#ffffff" : TEXT_MUTED }}>
-                              {l === "foreground" ? "Front" : "Behind"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* SHAPE */}
-                  {selS && (
-                    <div className="flex flex-col gap-2">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Label</span>
-                        <input value={selS.label} onChange={e => updS({ label: e.target.value })}
-                          className="rounded px-2 py-1 text-xs outline-none"
-                          style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
-                      </label>
-                      <ColorPicker label="Fill" colors={SHAPE_FILLS} selected={selS.fill} onSelect={c => updS({ fill: c })} />
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Opacity {Math.round(selS.fillOpacity * 100)}%</span>
-                        <input type="range" min={5} max={95} value={Math.round(selS.fillOpacity * 100)}
-                          onChange={e => updS({ fillOpacity: +e.target.value / 100 })} className="w-full accent-green-400" />
-                      </label>
-                      <ColorPicker label="Border" colors={PALETTE} selected={selS.stroke} onSelect={c => updS({ stroke: c })} />
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Border width {selS.strokeW}px</span>
-                        <input type="range" min={1} max={6} value={selS.strokeW}
-                          onChange={e => updS({ strokeW: +e.target.value })} className="w-full accent-green-400" />
-                      </label>
-                      <label className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input type="checkbox" checked={selS.strokeDash} onChange={e => updS({ strokeDash: e.target.checked })} className="accent-green-400" />
-                        <span style={{ color: "#c9d1d9" }}>Dashed border</span>
-                      </label>
-                    </div>
-                  )}
-
-                  {/* IMAGE */}
-                  {selI && (
-                    <div className="flex flex-col gap-2">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Width {Math.round(selI.width)}px</span>
-                        <input type="range" min={50} max={CW} value={selI.width}
-                          onChange={e => {
-                            const w = +e.target.value
-                            const h = w * (selI.naturalH / selI.naturalW)
-                            updI({ width: w, height: h })
-                          }} className="w-full accent-green-400" />
-                      </label>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs" style={{ color: "#8b949e" }}>Opacity {Math.round(selI.opacity * 100)}%</span>
-                        <input type="range" min={10} max={100} value={Math.round(selI.opacity * 100)}
-                          onChange={e => updI({ opacity: +e.target.value / 100 })} className="w-full accent-green-400" />
-                      </label>
-                      <div>
-                        <p className="text-xs mb-1" style={{ color: "#8b949e" }}>Layer</p>
-                        <div className="flex gap-1">
-                          {(["background","overlay"] as const).map(l => (
-                            <button key={l} onClick={() => {
-                              if (l === "background") {
-                                updI({ layer: l, x: 0, y: 0, width: CW, height: CH })
-                              } else {
-                                updI({ layer: l })
-                              }
-                            }}
-                              className="flex-1 py-1 rounded text-xs transition-colors"
-                              style={{ background: selI.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selI.layer === l ? "#ffffff" : TEXT_MUTED }}>
-                              {l === "background" ? "Behind Pitch" : "Over Pitch"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      {selI.layer === "background" && (
-                        <p className="text-xs" style={{ color: "#8b949e" }}>
-                          Background image fills the full canvas. Hide pitch markings for a clean photo overlay.
-                        </p>
-                      )}
-                    </div>
                   )}
                 </div>
-              )}
-
-              {/* ── Activate Zones — always visible ── */}
-              <div className="p-3 border-t flex flex-col gap-3" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Activate Zones</p>
-
-                  {/* 18 Zones toggle */}
-                  <button
-                    onClick={() => setShow18Zones(v => !v)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-xs font-semibold transition-colors"
-                    style={{
-                      background: show18Zones ? "rgba(249,115,22,0.15)" : "#21262d",
-                      borderColor: show18Zones ? "#f97316" : "rgba(255,255,255,0.1)",
-                      color: show18Zones ? "#f97316" : "#c9d1d9",
-                    }}>
-                    <span>⬛ Activate 18 Zones</span>
-                    <span className="text-xs px-1.5 py-0.5 rounded font-bold"
-                      style={{ background: show18Zones ? "#f97316" : SURFACE_2, color: show18Zones ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
-                      {show18Zones ? "ON" : "OFF"}
-                    </span>
-                  </button>
-
-                  {/* 5 Lanes toggle */}
-                  <button
-                    onClick={() => setShowLanes(v => !v)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-xs font-semibold transition-colors"
-                    style={{
-                      background: showLanes ? "rgba(249,115,22,0.15)" : "#21262d",
-                      borderColor: showLanes ? "#f97316" : "rgba(255,255,255,0.1)",
-                      color: showLanes ? "#f97316" : "#c9d1d9",
-                    }}>
-                    <span>≡ Activate Lanes</span>
-                    <span className="text-xs px-1.5 py-0.5 rounded font-bold"
-                      style={{ background: showLanes ? "#f97316" : SURFACE_2, color: showLanes ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
-                      {showLanes ? "ON" : "OFF"}
-                    </span>
-                  </button>
-
-                  {/* Custom zone draw */}
-                  <div className="flex flex-col gap-2">
-                    <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Custom Zones</p>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"].map(c => (
-                        <button key={c} onClick={() => setZoneColor(c)}
-                          className="w-6 h-6 rounded border-2 transition-transform hover:scale-110 flex-shrink-0"
-                          style={{ background: c, borderColor: zoneColor === c ? "#fff" : "transparent" }} />
-                      ))}
-                    </div>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: "#8b949e" }}>Fill opacity {Math.round(zoneOpacity * 100)}%</span>
-                      <input type="range" min={5} max={80} value={Math.round(zoneOpacity * 100)}
-                        onChange={e => setZoneOpacity(+e.target.value / 100)} className="w-full accent-orange-400" />
-                    </label>
-                    <button
-                      onClick={() => { setTool("zone"); setSel(null) }}
-                      className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-colors"
-                      style={{ background: tool === "zone" ? "#f97316" : "#21262d", color: tool === "zone" ? "#fff" : "#c9d1d9", border: `1px solid ${tool === "zone" ? "#f97316" : "rgba(255,255,255,0.1)"}` }}>
-                      {tool === "zone" ? "🖊 Drawing zone…" : "+ Draw Custom Zone"}
-                    </button>
-                    {tool === "zone" && (
-                      <p className="text-xs text-center" style={{ color: "#8b949e" }}>
-                        Click-drag on the pitch to draw a zone. Press Esc to cancel.
-                      </p>
-                    )}
-                    {customZones.length > 0 && (
-                      <button onClick={() => { setCustomZones([]); setSel(null) }}
-                        className="w-full py-1 rounded text-xs transition-colors hover:bg-red-500/20"
-                        style={{ color: "#f85149" }}>
-                        Clear all zones ({customZones.length})
-                      </button>
-                    )}
-                  </div>
               </div>
+            )}
 
-              {/* Zone properties panel when a zone is selected */}
-              {sel?.kind === "zone" && (() => {
-                const z = customZones.find(x => x.id === sel.id)
-                if (!z) return null
-                const updZ = (patch: Partial<CustomZone>) =>
-                  setCustomZones(zones => zones.map(x => x.id === sel.id ? { ...x, ...patch } : x))
-                return (
-                  <div className="p-3 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Zone Properties</p>
-                      <button onClick={deleteSelected} className="p-1 rounded hover:bg-red-500/20" style={{ color: "#f85149" }}>
-                        <Trash2 size={13} />
+            <button aria-expanded={boardGroups.pitch}
+              onClick={() => setBoardGroups(g => ({ ...g, pitch: !g.pitch }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.pitch ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Pitch
+            </button>
+            {boardGroups.pitch && (
+              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                <div>
+                  <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Canvas Mode</p>
+                  <div className="flex flex-col gap-1.5">
+                    {(["full","half","blank"] as const).map(mode => (
+                      <button key={mode} onClick={() => setCanvasMode(mode)}
+                        className="px-3 py-1.5 rounded text-xs font-medium transition-colors text-left"
+                        style={{ background: canvasMode === mode ? ACCENT_GRADIENT : SURFACE_2, color: canvasMode === mode ? "#fff" : TEXT_MUTED }}>
+                        {mode === "full" ? "Full Pitch" : mode === "half" ? "Half Pitch" : "Blank / Custom"}
                       </button>
-                    </div>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: "#8b949e" }}>Label</span>
-                      <input value={z.label} onChange={e => updZ({ label: e.target.value })}
-                        placeholder="e.g. Press zone"
-                        className="rounded px-2 py-1 text-xs outline-none"
-                        style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
-                    </label>
-                    <div>
-                      <p className="text-xs mb-1.5" style={{ color: "#8b949e" }}>Color</p>
-                      <div className="flex gap-1.5 flex-wrap">
-                        {["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"].map(c => (
-                          <button key={c} onClick={() => updZ({ color: c })}
-                            className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
-                            style={{ background: c, borderColor: z.color === c ? "#fff" : "transparent" }} />
-                        ))}
-                      </div>
-                    </div>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: "#8b949e" }}>Opacity {Math.round(z.opacity * 100)}%</span>
-                      <input type="range" min={5} max={80} value={Math.round(z.opacity * 100)}
-                        onChange={e => updZ({ opacity: +e.target.value / 100 })} className="w-full accent-orange-400" />
-                    </label>
-                  </div>
-                )
-              })()}
-
-              {/* Quick formation — always visible */}
-              <div className="p-3 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Quick Add Formation</p>
-                  <select
-                    value={selectedFormation}
-                    onChange={e => setSelectedFormation(e.target.value)}
-                    className="w-full rounded px-2 py-1.5 text-xs outline-none mb-2"
-                    style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }}>
-                    {FORMATIONS.map(f => (
-                      <option key={f.name} value={f.name}>{f.name} — {f.description}</option>
                     ))}
-                  </select>
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={() => { addFormation(selectedFormation, "home"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
-                      className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                      style={{ background: "#fbbf24", color: "#000000" }}>
-                      + Home
-                    </button>
-                    <button
-                      onClick={() => { addFormation(selectedFormation, "away"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
-                      className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                      style={{ background: "#1d4ed8", color: "#ffffff" }}>
-                      + Away
-                    </button>
                   </div>
-                <div className="flex gap-1 mt-1.5">
-                  <ChevronRight size={11} style={{ color: "#8b949e", flexShrink: 0 }} />
-                  <p className="text-xs" style={{ color: "#8b949e" }}>
-                    Elements can be placed anywhere on canvas — in margins too.
-                  </p>
-                </div>
-              </div>
-            </>
-          )}
-
-          {sideTab === "background" && (
-            <div className="p-3 flex flex-col gap-4">
-              {/* BG Color */}
-              <div>
-                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Canvas Color</p>
-                {/* Full color picker + hex input */}
-                <div className="flex items-center gap-2 mb-3">
-                  <input type="color" value={bgColor} onChange={e => setBgColor(e.target.value)}
-                    className="w-10 h-10 rounded cursor-pointer"
-                    style={{ padding: 2, border: "1px solid rgba(255,255,255,0.15)", background: "transparent" }} />
-                  <input type="text" value={bgColor}
-                    onChange={e => { if (/^#[0-9a-fA-F]{0,6}$/.test(e.target.value)) setBgColor(e.target.value) }}
-                    className="flex-1 rounded px-2 py-1 text-xs font-mono outline-none"
-                    style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.1)" }} />
-                </div>
-                {/* Presets */}
-                <p className="text-xs mb-1.5" style={{ color: "#8b949e" }}>Presets</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {BG_PRESETS.map(c => (
-                    <button key={c} onClick={() => setBgColor(c)}
-                      className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
-                      style={{ background: c, borderColor: bgColor === c ? ACCENT_SOLID : "rgba(255,255,255,0.15)" }} />
-                  ))}
-                </div>
-              </div>
-
-              {/* Canvas Mode */}
-              <div>
-                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Canvas Mode</p>
-                <div className="flex flex-col gap-2 mb-3">
-                  {(["full", "half", "blank"] as const).map(mode => (
-                    <button key={mode} onClick={() => setCanvasMode(mode)}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors text-left"
-                      style={{ background: canvasMode === mode ? ACCENT_GRADIENT : SURFACE_2, color: canvasMode === mode ? "#ffffff" : TEXT_MUTED }}>
-                      {mode === "full" ? "Full Pitch" : mode === "half" ? "Half Pitch (Vertical)" : "Blank Whiteboard / Custom"}
-                    </button>
-                  ))}
                 </div>
                 {canvasMode !== "blank" && (
-                  <>
-                    <p className="text-xs font-semibold uppercase mb-2 mt-4" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Pitch Color</p>
-                    <div className="flex gap-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch Color</p>
+                    <div className="flex gap-1.5">
                       <button onClick={() => setPitchColor("green")}
                         className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
-                        style={{ background: pitchColor === "green" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "green" ? "#ffffff" : TEXT_MUTED }}>
-                        Green Grass
+                        style={{ background: pitchColor === "green" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "green" ? "#fff" : TEXT_MUTED }}>
+                        Green
                       </button>
                       <button onClick={() => setPitchColor("white")}
-                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors border"
-                        style={{ background: pitchColor === "white" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "white" ? "#ffffff" : TEXT_MUTED, borderColor: "rgba(255,255,255,0.1)" }}>
+                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
+                        style={{ background: pitchColor === "white" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "white" ? "#fff" : TEXT_MUTED }}>
                         White Lines
                       </button>
                     </div>
-                  </>
-                )}
-                <p className="text-xs mt-3" style={{ color: "#8b949e" }}>
-                  Hide pitch markings when using a live game background photo.
-                </p>
-              </div>
-
-              {/* Pitch size + position */}
-              {canvasMode !== "blank" && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-semibold uppercase" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Pitch Size</p>
-                    <button onClick={() => { setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
-                      className="text-xs px-2 py-0.5 rounded hover:bg-white/10 transition-colors"
-                      style={{ color: "#8b949e" }}>Reset</button>
                   </div>
-                  <input type="range" min={30} max={200} value={Math.round(pitchScale * 100)}
-                    onChange={e => setPitchScale(+e.target.value / 100)}
-                    className="w-full accent-green-400" />
-                  <p className="text-xs mt-1" style={{ color: "#8b949e" }}>
-                    {Math.round(pitchScale * 100)}% · hover pitch → yellow corners to resize
-                  </p>
-                  <p className="text-xs mt-1.5" style={{ color: "#8b949e" }}>
-                    Hover pitch → green bar at top to drag it anywhere
-                  </p>
-                  {(pitchOffX !== 0 || pitchOffY !== 0) && (
-                    <button onClick={() => { setPitchOffX(0); setPitchOffY(0) }}
-                      className="mt-1.5 w-full py-1 rounded text-xs hover:bg-white/10 transition-colors"
-                      style={{ color: "#8b949e" }}>
-                      Re-center pitch (offset {Math.round(pitchOffX)}, {Math.round(pitchOffY)})
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Canvas info */}
-              <div>
-                <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>Canvas Info</p>
-                <div className="rounded p-2 text-xs" style={{ background: "#21262d", color: "#8b949e" }}>
-                  <p>Canvas: {CW} × {CH}px</p>
-                  <p>Pitch: {PW} × {PH}px</p>
-                  <p>Offset: ({PX}, {PY})</p>
-                  <p className="mt-1 text-xs opacity-70">Elements can be placed anywhere, including margins outside the pitch.</p>
-                </div>
+                )}
+                {canvasMode !== "blank" && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch Size</p>
+                      <button onClick={() => { setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
+                        className="text-xs px-2 py-0.5 rounded hover:bg-white/10 transition-colors"
+                        style={{ color: TEXT_MUTED }}>Reset</button>
+                    </div>
+                    <input type="range" min={30} max={200} value={Math.round(pitchScale * 100)}
+                      onChange={e => setPitchScale(+e.target.value / 100)} className="w-full accent-green-400" />
+                    <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>{Math.round(pitchScale * 100)}% · hover pitch → corners to resize</p>
+                    {(pitchOffX !== 0 || pitchOffY !== 0) && (
+                      <button onClick={() => { setPitchOffX(0); setPitchOffY(0) }}
+                        className="mt-1.5 w-full py-1 rounded text-xs hover:bg-white/10 transition-colors"
+                        style={{ color: TEXT_MUTED }}>Re-center pitch</button>
+                    )}
+                  </div>
+                )}
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Hide pitch markings when using a game background photo.</p>
               </div>
+            )}
 
-              {/* Uploaded images info */}
-              {images.length > 0 && (
+            <button aria-expanded={boardGroups.canvas}
+              onClick={() => setBoardGroups(g => ({ ...g, canvas: !g.canvas }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.canvas ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Canvas
+            </button>
+            {boardGroups.canvas && (
+              <div className="p-3 flex flex-col gap-4" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                 <div>
-                  <p className="text-xs font-semibold uppercase mb-2" style={{ color: "#8b949e", letterSpacing: "0.08em" }}>
-                    Images ({images.length})
-                  </p>
-                  <div className="flex flex-col gap-1.5">
-                    {images.map(img => (
-                      <div key={img.id} className="flex items-center justify-between rounded px-2 py-1.5 text-xs"
-                        style={{ background: "#21262d", border: sel?.id === img.id ? "1px solid #3fb950" : "1px solid transparent" }}>
-                        <span style={{ color: "#c9d1d9" }} className="truncate">
-                          {img.layer === "background" ? "BG Image" : "Overlay"}
-                        </span>
-                        <button onClick={() => {
-                          snapshot()
-                          setImages(i => i.filter(x => x.id !== img.id))
-                        }} className="p-0.5 rounded hover:bg-red-500/20 ml-1 flex-shrink-0" style={{ color: "#f85149" }}>
-                          <X size={11} />
-                        </button>
-                      </div>
+                  <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Canvas Color</p>
+                  <div className="flex items-center gap-2 mb-2">
+                    <input type="color" value={bgColor} onChange={e => setBgColor(e.target.value)}
+                      className="w-9 h-9 rounded cursor-pointer"
+                      style={{ padding: 2, border: `1px solid ${DS_BORDER}`, background: "transparent" }} />
+                    <input type="text" value={bgColor}
+                      onChange={e => { if (/^#[0-9a-fA-F]{0,6}$/.test(e.target.value)) setBgColor(e.target.value) }}
+                      className="flex-1 rounded px-2 py-1 text-xs font-mono outline-none"
+                      style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {BG_PRESETS.map(c => (
+                      <button key={c} onClick={() => setBgColor(c)}
+                        className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
+                        style={{ background: c, borderColor: bgColor === c ? ACCENT_SOLID : DS_BORDER }} />
                     ))}
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+                <div className="rounded p-2 text-xs" style={{ background: SURFACE_2, color: TEXT_MUTED }}>
+                  <p>Canvas: {CW} × {CH}px</p>
+                  <p>Pitch: {PW} × {PH}px at ({PX}, {PY})</p>
+                </div>
+                {images.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Images ({images.length})</p>
+                    <div className="flex flex-col gap-1.5">
+                      {images.map(img => (
+                        <div key={img.id} className="flex items-center justify-between rounded px-2 py-1.5 text-xs"
+                          style={{ background: SURFACE_2, border: sel?.id === img.id ? `1px solid ${ACCENT_SOLID}` : "1px solid transparent" }}>
+                          <span style={{ color: TEXT_PRIMARY }} className="truncate">{img.layer === "background" ? "BG Image" : "Overlay"}</span>
+                          <button onClick={() => { snapshot(); setImages(i => i.filter(x => x.id !== img.id)) }}
+                            className="p-0.5 rounded hover:bg-red-500/20 ml-1 flex-shrink-0" style={{ color: DS_ERROR }}>
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{ padding: "7px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 11, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
+            {tool === "select" && "Click to select · Drag to move · Del to remove"}
+            {tool === "pan" && "Drag canvas to pan · Alt+drag also works"}
+            {tool === "homePlayer" && "Click pitch to place a home player"}
+            {tool === "awayPlayer" && "Click pitch to place an away player"}
+            {tool === "arrow" && !arrowDraft && "Click canvas to start an arrow"}
+            {tool === "arrow" && arrowDraft && "Click to set end · Drag handle to curve"}
+            {tool === "text" && "Click canvas to place a text annotation"}
+            {tool === "shape" && shapeKind === "polygon" && (!polyDraft ? "Click to draw · Dbl-click to close" : `${polyDraft.length} pts — dbl-click to close`)}
+            {tool === "shape" && shapeKind !== "polygon" && "Click and drag to draw a shape"}
+            {tool === "zone" && "Drag on pitch to draw a zone · Esc to cancel"}
+          </div>
         </aside>
+        )}
+
 
         {/* ── Main Canvas ── */}
         <main
