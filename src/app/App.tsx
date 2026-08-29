@@ -618,7 +618,7 @@ function TacticsBoard() {
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
-  const [sideTab, setSideTab] = useState<"selected" | "board">("selected")
+  const [sideTab, setSideTab] = useState<"selected" | "board">("board")
   const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
   const [boardGroups, setBoardGroups] = useState({ formation: true, teams: true, zones: false, pitch: false, canvas: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
@@ -745,6 +745,19 @@ function TacticsBoard() {
   useEffect(() => { pitchScaleRef.current = pitchScale }, [pitchScale])
   useEffect(() => { pitchOffXRef.current = pitchOffX }, [pitchOffX])
   useEffect(() => { pitchOffYRef.current = pitchOffY }, [pitchOffY])
+
+  /* ── Auto-switch panel tab when selection changes null↔element ── */
+  const prevSelNullRef = useRef<boolean>(true)
+  useEffect(() => {
+    const wasNull = prevSelNullRef.current
+    const isNull = sel === null
+    if (wasNull && !isNull) {
+      setSideTab("selected")
+    } else if (!wasNull && isNull) {
+      setSideTab("board")
+    }
+    prevSelNullRef.current = isNull
+  }, [sel])
 
   /* ── Drawing drafts ── */
   const [arrowDefaultDash, setArrowDefaultDash] = useState<"none" | "dashed" | "dotted">("none")
@@ -1074,11 +1087,11 @@ function TacticsBoard() {
     if (tool === "homePlayer") {
       snapshot()
       const p: Player = { id: uid(), x, y, name: "", num: String(players.length + 1), ...HOME_COLORS, bg: homeColor, glow: false, scale: 1 }
-      setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id })
+      setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "awayPlayer") {
       snapshot()
       const p: Player = { id: uid(), x, y, name: "", num: String(players.length + 1), ...AWAY_COLORS, bg: awayColor, glow: false, scale: 1 }
-      setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id })
+      setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "arrow") {
       if (!arrowDraft) {
         setArrowDraft({ x1: x, y1: y })
@@ -1300,7 +1313,7 @@ function TacticsBoard() {
         <div className="flex-1 flex items-center gap-2 justify-center">
           {/* Rotation control */}
           <div className="flex items-center gap-1.5 rounded px-2 py-1" style={{ background: "#21262d" }}>
-            <RefreshCw size={13} style={{ color: "#8b949e" }} />
+            <RefreshCw size={13} style={{ color: TEXT_MUTED }} />
             <input type="range" min={0} max={360} value={rotation}
               onChange={e => handleRotation(+e.target.value)}
               className="w-20 accent-green-400" style={{ height: 4 }} />
@@ -1314,12 +1327,12 @@ function TacticsBoard() {
             <span className="text-xs" style={{ color: "#555e6b" }}>°</span>
             <button onClick={() => setSnapRot(s => !s)} title={snapRot ? "45° snap ON — click to disable" : "Enable 45° snap"}
               className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs transition-colors"
-              style={{ background: snapRot ? "#fbbf2420" : "transparent", color: snapRot ? "#fbbf24" : "#8b949e" }}>
+              style={{ background: snapRot ? "#fbbf2420" : "transparent", color: snapRot ? "#fbbf24" : TEXT_MUTED }}>
               <Magnet size={12} />{snapRot && <span style={{ fontSize: 9, fontWeight: 700 }}>45°</span>}
             </button>
             <button onClick={() => setRotation(0)} title="Reset to 0°"
               className="p-0.5 rounded hover:bg-white/10 transition-colors"
-              style={{ color: "#8b949e" }}>
+              style={{ color: TEXT_MUTED }}>
               <RotateCcw size={13} />
             </button>
           </div>
@@ -1418,25 +1431,28 @@ function TacticsBoard() {
           ) : (
             <button onClick={() => { setAuthInitialTab("signin"); setShowAuth(true) }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
-              style={{ background: "#21262d", color: "#c9d1d9" }}>
+              style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
               <LogIn size={13} /> Sign In
             </button>
           )}
           {/* Undo/Redo */}
           <button onClick={undo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
           <button onClick={redo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
-          {/* Clear All — separated with extra left margin so it reads as destructive/distinct */}
+          {/* Clear All — visually separated by a divider so it reads as destructive/distinct */}
+          <div className="self-stretch flex items-center mx-2" style={{ width: 1, background: DS_BORDER }} />
           <button
             onClick={() => setShowClearConfirm(true)}
-            className="flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium transition-colors hover:bg-red-500/20 ml-2"
+            className="flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium transition-colors hover:bg-red-500/20 ml-1"
             style={{ color: DS_ERROR }}
             title="Clear all canvas elements">
             <Trash2 size={13} /> Clear All
           </button>
           {/* Export */}
           <div className="relative group">
-            <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold"
-              style={{ background: "#58a6ff", color: "#0d1117" }}>
+            <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
+              style={{ background: "transparent", color: ACCENT_SOLID, border: `1px solid ${ACCENT_SOLID}` }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = `${ACCENT_SOLID}26` }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent" }}>
               <Download size={13} /> Export <ChevronDown size={11} />
             </button>
             <div className="absolute right-0 top-full mt-1 w-28 rounded shadow-xl border z-50 hidden group-hover:flex flex-col"
@@ -1546,10 +1562,10 @@ function TacticsBoard() {
         {panelOpen && (
         <aside style={{ width: 230, flexShrink: 0, height: "100%", background: SURFACE_BASE, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ display: "flex", borderBottom: `1px solid ${DS_BORDER}`, flexShrink: 0 }}>
-            {(["selected", "board"] as const).map(t => (
+            {(["board", "selected"] as const).map(t => (
               <button key={t} onClick={() => setSideTab(t)}
                 style={{ flex: 1, height: 36, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", border: "none", cursor: "pointer", background: "transparent", color: sideTab === t ? TEXT_PRIMARY : TEXT_MUTED, borderBottom: sideTab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent", fontFamily: "'Inter', sans-serif", transition: "color 0.12s" }}>
-                {t}
+                {t === "selected" ? "EDIT" : "BOARD"}
               </button>
             ))}
           </div>
@@ -1895,19 +1911,15 @@ function TacticsBoard() {
             </button>
             {boardGroups.teams && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <ColorPicker label="Home Color" colors={PALETTE.slice(0, 5)} selected={homeColor} onSelect={c => {
-                      setHomeColor(c)
-                      setPlayers(prev => prev.map(p => p.bg === homeColor || p.bg === HOME_COLORS.bg ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
-                    }} />
-                  </div>
-                  <div className="flex-1">
-                    <ColorPicker label="Away Color" colors={PALETTE.slice(2, 7)} selected={awayColor} onSelect={c => {
-                      setAwayColor(c)
-                      setPlayers(prev => prev.map(p => p.bg === awayColor || p.bg === AWAY_COLORS.bg ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
-                    }} />
-                  </div>
+                <div className="flex flex-col gap-3">
+                  <ColorPicker label="Home Color" colors={PALETTE.slice(0, 5)} selected={homeColor} onSelect={c => {
+                    setHomeColor(c)
+                    setPlayers(prev => prev.map(p => p.bg === homeColor || p.bg === HOME_COLORS.bg ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
+                  }} />
+                  <ColorPicker label="Away Color" colors={PALETTE.slice(2, 7)} selected={awayColor} onSelect={c => {
+                    setAwayColor(c)
+                    setPlayers(prev => prev.map(p => p.bg === awayColor || p.bg === AWAY_COLORS.bg ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
+                  }} />
                 </div>
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
                   <input type="checkbox" checked={showPlayerLabels} onChange={e => setShowPlayerLabels(e.target.checked)} className="accent-green-400" />
@@ -2092,16 +2104,14 @@ function TacticsBoard() {
             )}
           </div>
 
-          <div style={{ padding: "7px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 11, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
+          <div style={{ padding: "9px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 11, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
             {tool === "select" && "Click to select · Drag to move · Del to remove"}
-            {tool === "pan" && "Drag canvas to pan · Alt+drag also works"}
-            {tool === "homePlayer" && "Click pitch to place a home player"}
-            {tool === "awayPlayer" && "Click pitch to place an away player"}
-            {tool === "arrow" && !arrowDraft && "Click canvas to start an arrow"}
-            {tool === "arrow" && arrowDraft && "Click to set end · Drag handle to curve"}
-            {tool === "text" && "Click canvas to place a text annotation"}
-            {tool === "shape" && shapeKind === "polygon" && (!polyDraft ? "Click to draw · Dbl-click to close" : `${polyDraft.length} pts — dbl-click to close`)}
-            {tool === "shape" && shapeKind !== "polygon" && "Click and drag to draw a shape"}
+            {tool === "pan" && "Drag to move the canvas · Scroll to zoom"}
+            {tool === "homePlayer" && "Click the pitch to place a home player"}
+            {tool === "awayPlayer" && "Click the pitch to place an away player"}
+            {tool === "arrow" && "Click once to start, click again to finish"}
+            {tool === "text" && "Click anywhere to add a text box"}
+            {tool === "shape" && "Click and drag to draw a shape"}
             {tool === "zone" && "Drag on pitch to draw a zone · Esc to cancel"}
           </div>
         </aside>
@@ -2143,6 +2153,7 @@ function TacticsBoard() {
                       x={0} y={0} width={CW} height={CH}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid slice"
                       onPointerDown={e => startDrag(e, "image", img.id, img.x, img.y)}
+                      onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "image", id: img.id }); setTool("select") } }}
                       style={{ cursor: tool === "select" ? "move" : "default" }} />
                   ))}
 
@@ -2151,7 +2162,7 @@ function TacticsBoard() {
                     <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
                       startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
-                      setSel={setSel} tool={tool} updT={updT} />
+                      setSel={setSel} tool={tool} updT={updT} setTool={setTool} />
                   ))}
 
                   {/* 4. Pitch group (translated to canvas offset + user drag offset) */}
@@ -2263,7 +2274,11 @@ function TacticsBoard() {
                   {/* 5. Shapes */}
                   {shapes.map(s => (
                     <g key={s.id}
-                      onClick={e => { e.stopPropagation(); if (tool === "select") setSel({ kind: "shape", id: s.id }) }}
+                      onClick={e => {
+                        e.stopPropagation()
+                        if (tool === "select") { setSel({ kind: "shape", id: s.id }) }
+                        else if (tool === "homePlayer" || tool === "awayPlayer") { setSel({ kind: "shape", id: s.id }); setTool("select") }
+                      }}
                       style={{ cursor: tool === "select" ? "pointer" : "default" }}>
                       {renderShapePath(s)}
                       {s.label && (() => {
@@ -2339,7 +2354,11 @@ function TacticsBoard() {
                     const hs = a.strokeW * 4 + 6
                     return (
                       <g key={a.id}
-                        onClick={e => { e.stopPropagation(); if (tool === "select") setSel({ kind: "arrow", id: a.id }) }}
+                        onClick={e => {
+                          e.stopPropagation()
+                          if (tool === "select") { setSel({ kind: "arrow", id: a.id }) }
+                          else if (tool === "homePlayer" || tool === "awayPlayer") { setSel({ kind: "arrow", id: a.id }); setTool("select") }
+                        }}
                         style={{ cursor: tool === "select" ? "pointer" : "default" }}>
                         <path d={arrowPath(a.x1, a.y1, a.x2, a.y2, a.cpx, a.cpy)}
                           fill="none" stroke="transparent" strokeWidth={16} />
@@ -2385,7 +2404,7 @@ function TacticsBoard() {
                         strokeOpacity={0.65}
                         strokeDasharray={arrowDefaultDash === "dashed" ? "12,6" : arrowDefaultDash === "dotted" ? "4,4" : undefined}
                         strokeLinecap="round" />
-                      <circle cx={arrowDraft.x1} cy={arrowDraft.y1} r={6} fill="#3fb950" />
+                      <circle cx={arrowDraft.x1} cy={arrowDraft.y1} r={6} fill={ACCENT_SOLID} />
                       <polygon points={arrowHead(mouse.x, mouse.y,
                         (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2, 14)}
                         fill={arrowDefaultColor} fillOpacity={0.65} />
@@ -2397,7 +2416,7 @@ function TacticsBoard() {
                     <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
                       startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
-                      setSel={setSel} tool={tool} updT={updT} />
+                      setSel={setSel} tool={tool} updT={updT} setTool={setTool} />
                   ))}
 
                   {/* 11. Players */}
@@ -2410,7 +2429,16 @@ function TacticsBoard() {
                     const numFontSize = Math.max(10 * s, Math.min(18 * s, r * 0.8) * Math.min(1, 3 / Math.max(3, numberText.length)))
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
-                        onPointerDown={e => startDrag(e, "player", p.id, p.x, p.y)}
+                        onPointerDown={e => {
+                          if (tool === "homePlayer" || tool === "awayPlayer") {
+                            e.stopPropagation()
+                            setSel({ kind: "player", id: p.id })
+                            setTool("select")
+                            return
+                          }
+                          startDrag(e, "player", p.id, p.x, p.y)
+                        }}
+                        onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") e.stopPropagation() }}
                         style={{ cursor: tool === "select" ? "grab" : "default" }}>
                         {p.glow && (
                           <circle r={r + 15} fill={p.bg} fillOpacity={0.4} filter="blur(8px)" />
@@ -2458,6 +2486,7 @@ function TacticsBoard() {
                       x={img.x} y={img.y} width={img.width} height={img.height}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid meet"
                       onPointerDown={e => startDrag(e, "image", img.id, img.x, img.y)}
+                      onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "image", id: img.id }); setTool("select") } }}
                       style={{ cursor: tool === "select" ? "move" : "default" }} />
                   ))}
 
@@ -3104,7 +3133,7 @@ function WorkspaceModeSelector({
             style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.12)", width: 280 }}
           >
             <div className="px-4 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-              <p className="text-xs font-bold uppercase" style={{ color: "#8b949e", letterSpacing: "0.1em" }}>What are you building?</p>
+              <p className="text-xs font-bold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.1em" }}>What are you building?</p>
             </div>
             {WORKSPACE_MODES.map(m => (
               <button
@@ -3123,7 +3152,7 @@ function WorkspaceModeSelector({
                       <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: ACCENT_SOLID, color: "#ffffff", fontSize: 9, fontWeight: 700 }}>ACTIVE</span>
                     )}
                   </div>
-                  <span className="text-xs leading-snug" style={{ color: "#8b949e" }}>{m.desc}</span>
+                  <span className="text-xs leading-snug" style={{ color: TEXT_MUTED }}>{m.desc}</span>
                 </div>
               </button>
             ))}
@@ -3140,12 +3169,12 @@ function ColorPicker({ label, colors, selected, onSelect, allowTransparent }: {
 }) {
   return (
     <div>
-      <p className="text-xs mb-1.5" style={{ color: "#8b949e" }}>{label}</p>
+      <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>{label}</p>
       <div className="flex flex-wrap gap-1">
         {allowTransparent && (
           <button onClick={() => onSelect("transparent")}
             className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center relative overflow-hidden"
-            style={{ borderColor: selected === "transparent" ? "#3fb950" : "transparent" }}>
+            style={{ borderColor: selected === "transparent" ? ACCENT_SOLID : "transparent" }}>
             <div className="absolute inset-0 bg-white" />
             <div className="absolute inset-0 w-full h-full bg-[repeating-linear-gradient(45deg,transparent,transparent_3px,rgba(255,0,0,0.5)_3px,rgba(255,0,0,0.5)_4px)]" />
           </button>
@@ -3153,14 +3182,14 @@ function ColorPicker({ label, colors, selected, onSelect, allowTransparent }: {
         {colors.map(c => (
           <button key={c} onClick={() => onSelect(c)}
             className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110"
-            style={{ background: c, borderColor: selected === c ? "#3fb950" : "transparent" }} />
+            style={{ background: c, borderColor: selected === c ? ACCENT_SOLID : "transparent" }} />
         ))}
       </div>
     </div>
   )
 }
 
-function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, setSel, tool, updT }: {
+function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, setSel, tool, updT, setTool }: {
   t: TextBox; sel: Sel; editingText: string | null
   setEditingText: (id: string | null) => void
   startDrag: (e: React.PointerEvent) => void
@@ -3168,6 +3197,7 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   setSel: (s: Sel) => void
   tool: Tool
   updT: (patch: Partial<TextBox>) => void
+  setTool?: (t: Tool) => void
 }) {
   const isSelected = sel?.id === t.id
   const isEditing = editingText === t.id
@@ -3229,9 +3259,16 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   return (
     <g
       onPointerDown={e => {
+        if (tool === "homePlayer" || tool === "awayPlayer") {
+          e.stopPropagation()
+          setSel({ kind: "text", id: t.id })
+          setTool?.("select")
+          return
+        }
         // Draggable in any tool — just like iPhone: grab and move without mode switching
         if (!isEditing) { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) }
       }}
+      onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") e.stopPropagation() }}
       onDoubleClick={e => { e.stopPropagation(); setEditingText(t.id) }}
       style={{ cursor: tool === "select" ? (isEditing ? "text" : "move") : "default" }}>
       {/* Background box — hidden in free-text / no-box mode */}
