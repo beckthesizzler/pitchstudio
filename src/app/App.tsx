@@ -1073,11 +1073,11 @@ function TacticsBoard() {
 
     if (tool === "homePlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "Player", num: String(players.length + 1), ...HOME_COLORS, bg: homeColor, glow: false, scale: 1 }
+      const p: Player = { id: uid(), x, y, name: "", num: String(players.length + 1), ...HOME_COLORS, bg: homeColor, glow: false, scale: 1 }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id })
     } else if (tool === "awayPlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "Player", num: String(players.length + 1), ...AWAY_COLORS, bg: awayColor, glow: false, scale: 1 }
+      const p: Player = { id: uid(), x, y, name: "", num: String(players.length + 1), ...AWAY_COLORS, bg: awayColor, glow: false, scale: 1 }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id })
     } else if (tool === "arrow") {
       if (!arrowDraft) {
@@ -1570,16 +1570,16 @@ function TacticsBoard() {
                 {selP && (
                   <div className="flex flex-col gap-2">
                     <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Inside circle <span style={{ opacity: 0.55 }}>(name, position, number)</span></span>
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Name — shown below</span>
                       <input value={selP.name} onChange={e => updP({ name: e.target.value })}
-                        placeholder="e.g. GK, Salah, 9"
+                        placeholder="e.g. Cubarsí"
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
                     <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Below circle <span style={{ opacity: 0.55 }}>(pill grows to fit)</span></span>
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Number — shown in circle</span>
                       <input value={selP.num} onChange={e => updP({ num: e.target.value })}
-                        placeholder="e.g. 11 · M. Salah"
+                        placeholder="e.g. 4"
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
@@ -2405,12 +2405,9 @@ function TacticsBoard() {
                     const isSelected = sel?.id === p.id
                     const s = p.scale || 1
                     const r = 28 * s
-                    // p.name = Position (inside circle), p.num = Name/Number (expanding pill)
-                    const numUpper = p.num.toUpperCase()
-                    const pillH = 17 * s
-                    const pillW = Math.max(r * 2, numUpper.length * 6.2 * s + 14 * s)
-                    const inCircleText = p.name.toUpperCase()
-                    const posFontSize = Math.max(9 * s, Math.min(15 * s, r * 0.58) * Math.min(1, 6 / Math.max(6, inCircleText.length)))
+                    // p.num = shirt number (inside circle), p.name = player name (below circle, halo text)
+                    const numberText = p.num.toUpperCase()
+                    const numFontSize = Math.max(10 * s, Math.min(18 * s, r * 0.8) * Math.min(1, 3 / Math.max(3, numberText.length)))
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
                         onPointerDown={e => startDrag(e, "player", p.id, p.x, p.y)}
@@ -2431,25 +2428,25 @@ function TacticsBoard() {
                         )}
                         {/* Main circle */}
                         <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={3 * s} />
-                        {/* Text inside circle — floor at 9*s, allow slight overflow for long labels */}
-                        {showPlayerLabels && inCircleText.trim() !== "" && (
+                        {/* Number inside circle */}
+                        {showPlayerLabels && numberText.trim() !== "" && (
                           <text textAnchor="middle" dominantBaseline="central" y={-1}
-                            fill={p.fg} fontSize={posFontSize} fontWeight="800"
+                            fill={p.fg} fontSize={numFontSize} fontWeight="800"
                             overflow="visible"
                             style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none" }}>
-                            {inCircleText}
+                            {numberText}
                           </text>
                         )}
-                        {/* Name/Number pill — scales with s, hidden when empty */}
-                        {showPlayerLabels && numUpper.trim() !== "" && (
-                          <>
-                            <rect x={-pillW / 2} y={r + 4 * s} width={pillW} height={pillH} rx={3 * s} fill="rgba(0,0,0,0.78)" />
-                            <text textAnchor="middle" x={0} y={r + 4 * s + pillH * 0.68}
-                              fill="#ffffff" fontSize={10 * s} fontWeight="700"
-                              style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.05em", pointerEvents: "none" }}>
-                              {numUpper}
-                            </text>
-                          </>
+                        {/* Name below circle — halo text, never shrinks, free overflow */}
+                        {showPlayerLabels && p.name.trim() !== "" && (
+                          <text textAnchor="middle" x={0} y={r + 6 * s + 13 * s}
+                            fill="#ffffff" fontSize={13 * s} fontWeight={700}
+                            stroke="rgba(0,0,0,0.9)" strokeWidth={3 * s}
+                            paintOrder="stroke" strokeLinejoin="round"
+                            overflow="visible"
+                            style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.03em", pointerEvents: "none", textTransform: "uppercase" }}>
+                            {p.name}
+                          </text>
                         )}
                       </g>
                     )
