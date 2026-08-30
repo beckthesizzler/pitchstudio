@@ -759,6 +759,10 @@ function TacticsBoard() {
   /* ── Multi-player drag start positions ── */
   const multiDragStartRef = useRef<{ startCursorX: number; startCursorY: number; players: { id: string; x: number; y: number }[] } | null>(null)
 
+  /* ── Clipboard for copy/paste ── */
+  type ClipSnap = { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]; zones: CustomZone[] }
+  const clipboardRef = useRef<ClipSnap | null>(null)
+
   /* ── Auto-switch panel tab when selection changes empty↔non-empty ── */
   const prevSelEmptyRef = useRef<boolean>(true)
   useEffect(() => {
@@ -816,16 +820,30 @@ function TacticsBoard() {
   }, [players, arrows, texts, shapes, images])
 
   const undo = () => {
-    if (histIdx.current <= 0) return
+    if (histIdx.current < 0) return
+    // Capture current live state so redo can get back to it
+    const live: Snap = {
+      players: players.map(x => ({ ...x })),
+      arrows: arrows.map(x => ({ ...x })),
+      texts: texts.map(x => ({ ...x })),
+      shapes: shapes.map(x => ({ ...x, pts: [...x.pts] })),
+      images: images.map(x => ({ ...x })),
+    }
+    const target = histRef.current[histIdx.current]
+    const redoIdx = histIdx.current + 1
+    if (redoIdx < histRef.current.length) {
+      histRef.current[redoIdx] = live
+    } else {
+      histRef.current.push(live)
+    }
     histIdx.current--
-    const s = histRef.current[histIdx.current]
-    setPlayers(s.players); setArrows(s.arrows); setTexts(s.texts)
-    setShapes(s.shapes); setImages(s.images); setSel(null)
+    setPlayers(target.players); setArrows(target.arrows); setTexts(target.texts)
+    setShapes(target.shapes); setImages(target.images); setSelection([])
   }
   const redo = () => {
-    if (histIdx.current >= histRef.current.length - 1) return
+    if (histIdx.current + 2 >= histRef.current.length) return
     histIdx.current++
-    const s = histRef.current[histIdx.current]
+    const s = histRef.current[histIdx.current + 1]
     setPlayers(s.players); setArrows(s.arrows); setTexts(s.texts)
     setShapes(s.shapes); setImages(s.images)
   }
@@ -952,6 +970,79 @@ function TacticsBoard() {
       setSelection([])
     }
     const sw = (t: Tool) => { setTool(t); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }
+
+    const buildDuplicates = (src: SelItem[], dx: number, dy: number) => {
+      const pIds = new Set(src.filter(s => s.kind === "player").map(s => s.id))
+      const aIds = new Set(src.filter(s => s.kind === "arrow").map(s => s.id))
+      const tIds = new Set(src.filter(s => s.kind === "text").map(s => s.id))
+      const sIds = new Set(src.filter(s => s.kind === "shape").map(s => s.id))
+      const iIds = new Set(src.filter(s => s.kind === "image").map(s => s.id))
+      const zIds = new Set(src.filter(s => s.kind === "zone").map(s => s.id))
+      const newPlayers = players.filter(p => pIds.has(p.id)).map(p => ({ ...p, id: uid(), x: p.x + dx, y: p.y + dy }))
+      const newArrows = arrows.filter(a => aIds.has(a.id)).map(a => ({ ...a, id: uid(), x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cpx: a.cpx + dx, cpy: a.cpy + dy }))
+      const newTexts = texts.filter(t => tIds.has(t.id)).map(t => ({ ...t, id: uid(), x: t.x + dx, y: t.y + dy }))
+      const newShapes = shapes.filter(s => sIds.has(s.id)).map(s => ({ ...s, id: uid(), x: s.x + dx, y: s.y + dy, pts: s.pts.map(([px, py]: [number, number]) => [px + dx, py + dy] as [number, number]) }))
+      const newImages = images.filter(i => iIds.has(i.id)).map(i => ({ ...i, id: uid(), x: i.x + dx, y: i.y + dy }))
+      const newZones = customZones.filter(z => zIds.has(z.id)).map(z => ({ ...z, id: uid(), x: z.x + dx, y: z.y + dy }))
+      return { newPlayers, newArrows, newTexts, newShapes, newImages, newZones }
+    }
+
+    const applyDuplicates = (dupes: ReturnType<typeof buildDuplicates>) => {
+      const { newPlayers, newArrows, newTexts, newShapes, newImages, newZones } = dupes
+      if (newPlayers.length) setPlayers(p => [...p, ...newPlayers])
+      if (newArrows.length) setArrows(a => [...a, ...newArrows])
+      if (newTexts.length) setTexts(t => [...t, ...newTexts])
+      if (newShapes.length) setShapes(s => [...s, ...newShapes])
+      if (newImages.length) setImages(i => [...i, ...newImages])
+      if (newZones.length) setCustomZones(z => [...z, ...newZones])
+      const newSel: SelItem[] = [
+        ...newPlayers.map(p => ({ kind: "player" as const, id: p.id })),
+        ...newArrows.map(a => ({ kind: "arrow" as const, id: a.id })),
+        ...newTexts.map(t => ({ kind: "text" as const, id: t.id })),
+        ...newShapes.map(s => ({ kind: "shape" as const, id: s.id })),
+        ...newImages.map(i => ({ kind: "image" as const, id: i.id })),
+        ...newZones.map(z => ({ kind: "zone" as const, id: z.id })),
+      ]
+      setSelection(newSel)
+    }
+
+    const duplicate = () => {
+      if (selection.length === 0) return
+      snapshot()
+      applyDuplicates(buildDuplicates(selection, 24, 24))
+    }
+
+    const copy = () => {
+      if (selection.length === 0) return
+      const pIds = new Set(selection.filter(s => s.kind === "player").map(s => s.id))
+      const aIds = new Set(selection.filter(s => s.kind === "arrow").map(s => s.id))
+      const tIds = new Set(selection.filter(s => s.kind === "text").map(s => s.id))
+      const sIds = new Set(selection.filter(s => s.kind === "shape").map(s => s.id))
+      const iIds = new Set(selection.filter(s => s.kind === "image").map(s => s.id))
+      const zIds = new Set(selection.filter(s => s.kind === "zone").map(s => s.id))
+      clipboardRef.current = {
+        players: players.filter(p => pIds.has(p.id)).map(p => ({ ...p })),
+        arrows: arrows.filter(a => aIds.has(a.id)).map(a => ({ ...a })),
+        texts: texts.filter(t => tIds.has(t.id)).map(t => ({ ...t })),
+        shapes: shapes.filter(s => sIds.has(s.id)).map(s => ({ ...s, pts: [...s.pts] })),
+        images: images.filter(i => iIds.has(i.id)).map(i => ({ ...i })),
+        zones: customZones.filter(z => zIds.has(z.id)).map(z => ({ ...z })),
+      }
+    }
+
+    const paste = () => {
+      const cb = clipboardRef.current
+      if (!cb) return
+      snapshot()
+      const newPlayers = cb.players.map(p => ({ ...p, id: uid(), x: p.x + 24, y: p.y + 24 }))
+      const newArrows = cb.arrows.map(a => ({ ...a, id: uid(), x1: a.x1 + 24, y1: a.y1 + 24, x2: a.x2 + 24, y2: a.y2 + 24, cpx: a.cpx + 24, cpy: a.cpy + 24 }))
+      const newTexts = cb.texts.map(t => ({ ...t, id: uid(), x: t.x + 24, y: t.y + 24 }))
+      const newShapes = cb.shapes.map(s => ({ ...s, id: uid(), x: s.x + 24, y: s.y + 24, pts: s.pts.map(([px, py]: [number, number]) => [px + 24, py + 24] as [number, number]) }))
+      const newImages = cb.images.map(i => ({ ...i, id: uid(), x: i.x + 24, y: i.y + 24 }))
+      const newZones = cb.zones.map(z => ({ ...z, id: uid(), x: z.x + 24, y: z.y + 24 }))
+      applyDuplicates({ newPlayers, newArrows, newTexts, newShapes, newImages, newZones })
+    }
+
     const handler = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
       const tag = el.tagName
@@ -968,6 +1059,9 @@ function TacticsBoard() {
       }
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z") undo()
       if ((e.ctrlKey || e.metaKey) && (e.shiftKey && e.key === "z" || e.key === "y")) redo()
+      if ((e.ctrlKey || e.metaKey) && e.key === "d") { e.preventDefault(); if (!typing) duplicate() }
+      if ((e.ctrlKey || e.metaKey) && e.key === "c") { e.preventDefault(); if (!typing) copy() }
+      if ((e.ctrlKey || e.metaKey) && e.key === "v") { e.preventDefault(); if (!typing) paste() }
       if (e.key === "+" || e.key === "=") applyZoom(1.15)
       if (e.key === "-") applyZoom(0.87)
       if (e.key === "0") fitToView()
@@ -2262,6 +2356,31 @@ function TacticsBoard() {
           onPointerMove={onCanvasMouseMove}
           onPointerUp={onCanvasMouseUp}
         >
+          {/* Empty state overlay */}
+          {players.length === 0 && arrows.length === 0 && texts.length === 0 && shapes.length === 0 && images.length === 0 && customZones.length === 0 && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
+              <div style={{ textAlign: "center" }}>
+                <p style={{ fontSize: 18, fontWeight: 700, color: TEXT_PRIMARY, margin: 0 }}>Start your board</p>
+                <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Add a full team, place players one at a time, or draw a zone.</p>
+                <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "center", pointerEvents: "auto" }}>
+                  {([
+                    { label: "Add formation", action: () => addFormation(selectedFormation, "home") },
+                    { label: "Place a player", action: () => setTool("homePlayer") },
+                    { label: "Draw a zone", action: () => setTool("zone") },
+                  ] as { label: string; action: () => void }[]).map(({ label, action }) => (
+                    <button key={label} onClick={action}
+                      style={{ background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, color: TEXT_PRIMARY, cursor: "pointer" }}
+                      onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = ACCENT_SOLID}
+                      onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.borderColor = DS_BORDER}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 14 }}>Tip: hold Shift and click to select more than one player.</p>
+              </div>
+            </div>
+          )}
+
           {/* Pitch + all layers */}
           <div style={{ transform: pitchTransform, transformOrigin: "center center" }}>
             <div style={{ transform: pitchInnerTransform, transformOrigin: "center center", transition: "transform 0.4s cubic-bezier(0.4,0,0.2,1)" }}>
@@ -2346,10 +2465,11 @@ function TacticsBoard() {
                                 strokeOpacity={isSelZ ? 1 : 0.5}
                                 strokeDasharray={isSelZ ? "6,3" : undefined} />
                               {z.label && (
-                                <text x={z.x + z.w / 2} y={z.y + z.h / 2}
-                                  textAnchor="middle" dominantBaseline="middle"
+                                <text x={z.x + 10} y={z.y + 18}
+                                  textAnchor="start" dominantBaseline="auto"
                                   fill="#ffffff" fontSize={14} fontWeight="700"
-                                  style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none", letterSpacing: "0.06em" }}>
+                                  stroke="rgba(0,0,0,0.9)" strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
+                                  style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none", letterSpacing: "0.06em", textTransform: "uppercase" }}>
                                   {z.label}
                                 </text>
                               )}
@@ -2456,7 +2576,7 @@ function TacticsBoard() {
                           y={Math.min(...s.pts.map(([, py]) => py)) - 4}
                           width={Math.max(...s.pts.map(([px]) => px)) - Math.min(...s.pts.map(([px]) => px)) + 8}
                           height={Math.max(...s.pts.map(([, py]) => py)) - Math.min(...s.pts.map(([, py]) => py)) + 8}
-                          fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="4,2" rx={3}
+                          fill="none" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="4,2" rx={3}
                           style={{ pointerEvents: "none" }} />
                       )}
                       {isSel(s.id) && s.kind !== "polygon" && (
@@ -2464,7 +2584,7 @@ function TacticsBoard() {
                           <rect
                             x={s.x - 4} y={s.y - 4}
                             width={s.w + 8} height={s.h + 8}
-                            fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="4,2" rx={3}
+                            fill="none" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="4,2" rx={3}
                             style={{ pointerEvents: "none" }} />
                           <circle cx={s.x + s.w} cy={s.y + s.h} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
                             onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizeShape", id: s.id, ox: 0, oy: 0 } }} />
@@ -2536,11 +2656,11 @@ function TacticsBoard() {
                         )}
                         {isSelected && (
                           <>
-                            <line x1={a.x1} y1={a.y1} x2={a.cpx} y2={a.cpy} stroke="#3fb950" strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
-                            <line x1={a.x2} y1={a.y2} x2={a.cpx} y2={a.cpy} stroke="#3fb950" strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
-                            <circle cx={a.x1} cy={a.y1} r={7} fill="#3fb950" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "grab" }}
+                            <line x1={a.x1} y1={a.y1} x2={a.cpx} y2={a.cpy} stroke={ACCENT_SOLID} strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
+                            <line x1={a.x2} y1={a.y2} x2={a.cpx} y2={a.cpy} stroke={ACCENT_SOLID} strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
+                            <circle cx={a.x1} cy={a.y1} r={7} fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} style={{ cursor: "grab" }}
                               onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowP1", id: a.id, ox: 0, oy: 0 } }} />
-                            <circle cx={a.x2} cy={a.y2} r={7} fill="#3fb950" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "grab" }}
+                            <circle cx={a.x2} cy={a.y2} r={7} fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} style={{ cursor: "grab" }}
                               onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowP2", id: a.id, ox: 0, oy: 0 } }} />
                             <circle cx={a.cpx} cy={a.cpy} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "grab" }}
                               onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowCp", id: a.id, ox: 0, oy: 0 } }} />
@@ -2671,7 +2791,7 @@ function TacticsBoard() {
                         y={selI.layer === "background" ? 0 : selI.y}
                         width={selI.layer === "background" ? CW : selI.width}
                         height={selI.layer === "background" ? CH : selI.height}
-                        fill="none" stroke="#3fb950" strokeWidth={2} strokeDasharray="6,3"
+                        fill="none" stroke={ACCENT_SOLID} strokeWidth={2} strokeDasharray="6,3"
                         style={{ pointerEvents: "none" }} />
                       {selI.layer !== "background" && (
                         <circle cx={selI.x + selI.width} cy={selI.y + selI.height} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
@@ -3480,7 +3600,7 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
       {/* Selection outline */}
       {isSelected && !isEditing && (
         <rect x={t.x - 2} y={t.y - 2} width={t.width + 4} height={boxH + 4}
-          fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="5,3" rx={5}
+          fill="none" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="5,3" rx={5}
           style={{ pointerEvents: "none" }} />
       )}
       {/* Resize handle — bottom-right corner */}
