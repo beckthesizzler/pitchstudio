@@ -11,7 +11,7 @@ import {
   Lock, Star, X, RefreshCw, Magnet, ChevronRight,
   Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock,
   LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive,
-  Settings, ArrowLeft,
+  Settings, ArrowLeft, HelpCircle,
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
@@ -342,6 +342,108 @@ const FORMATIONS: Formation[] = [
       { x: 800, y: 340, pos: "ST", num: 9 },
     ]
   },
+  {
+    name: "4-5-1",
+    description: "Flat five midfield with lone striker",
+    positions: [
+      { x: 100, y: 340, pos: "GK", num: 1 },
+      { x: 250, y: 110, pos: "LB", num: 3 },
+      { x: 260, y: 247, pos: "CB", num: 5 },
+      { x: 260, y: 433, pos: "CB", num: 4 },
+      { x: 250, y: 570, pos: "RB", num: 2 },
+      { x: 480, y: 80,  pos: "LM", num: 11 },
+      { x: 460, y: 220, pos: "CM", num: 8 },
+      { x: 470, y: 340, pos: "CM", num: 6 },
+      { x: 460, y: 460, pos: "CM", num: 7 },
+      { x: 480, y: 600, pos: "RM", num: 10 },
+      { x: 810, y: 340, pos: "ST", num: 9 },
+    ]
+  },
+  {
+    name: "3-2-4-1",
+    description: "Three defenders with double pivot and four forwards",
+    positions: [
+      { x: 100, y: 340, pos: "GK", num: 1 },
+      { x: 255, y: 185, pos: "CB", num: 5 },
+      { x: 260, y: 340, pos: "CB", num: 4 },
+      { x: 255, y: 495, pos: "CB", num: 3 },
+      { x: 400, y: 255, pos: "DM", num: 6 },
+      { x: 400, y: 425, pos: "DM", num: 8 },
+      { x: 620, y: 120, pos: "LW", num: 11 },
+      { x: 640, y: 265, pos: "AM", num: 10 },
+      { x: 640, y: 415, pos: "AM", num: 7 },
+      { x: 620, y: 560, pos: "RW", num: 2 },
+      { x: 810, y: 340, pos: "ST", num: 9 },
+    ]
+  },
+  {
+    name: "4-1-2-1-2",
+    description: "Midfield diamond with two strikers",
+    positions: [
+      { x: 100, y: 340, pos: "GK", num: 1 },
+      { x: 250, y: 110, pos: "LB", num: 3 },
+      { x: 260, y: 247, pos: "CB", num: 5 },
+      { x: 260, y: 433, pos: "CB", num: 4 },
+      { x: 250, y: 570, pos: "RB", num: 2 },
+      { x: 390, y: 340, pos: "DM", num: 6 },
+      { x: 540, y: 215, pos: "CM", num: 8 },
+      { x: 540, y: 465, pos: "CM", num: 7 },
+      { x: 660, y: 340, pos: "AM", num: 10 },
+      { x: 790, y: 230, pos: "ST", num: 9 },
+      { x: 790, y: 450, pos: "ST", num: 11 },
+    ]
+  },
+  {
+    name: "5-2-3",
+    description: "Five defenders with narrow midfield",
+    positions: [
+      { x: 100, y: 340, pos: "GK", num: 1 },
+      { x: 250, y: 78,  pos: "LWB", num: 3 },
+      { x: 260, y: 210, pos: "CB", num: 5 },
+      { x: 260, y: 340, pos: "CB", num: 4 },
+      { x: 260, y: 470, pos: "CB", num: 6 },
+      { x: 250, y: 602, pos: "RWB", num: 2 },
+      { x: 470, y: 260, pos: "CM", num: 8 },
+      { x: 470, y: 420, pos: "CM", num: 7 },
+      { x: 720, y: 140, pos: "LW", num: 11 },
+      { x: 780, y: 340, pos: "ST", num: 9 },
+      { x: 720, y: 540, pos: "RW", num: 10 },
+    ]
+  },
+  {
+    name: "4-3-1-2",
+    description: "Three midfielders behind an attacking mid and two strikers",
+    positions: [
+      { x: 100, y: 340, pos: "GK", num: 1 },
+      { x: 250, y: 110, pos: "LB", num: 3 },
+      { x: 260, y: 247, pos: "CB", num: 5 },
+      { x: 260, y: 433, pos: "CB", num: 4 },
+      { x: 250, y: 570, pos: "RB", num: 2 },
+      { x: 420, y: 190, pos: "CM", num: 6 },
+      { x: 440, y: 340, pos: "CM", num: 8 },
+      { x: 420, y: 490, pos: "CM", num: 7 },
+      { x: 620, y: 340, pos: "AM", num: 10 },
+      { x: 790, y: 230, pos: "ST", num: 9 },
+      { x: 790, y: 450, pos: "ST", num: 11 },
+    ]
+  },
+  {
+    name: "3-1-4-2",
+    description: "Three at back with a holding mid and four across",
+    positions: [
+      { x: 100, y: 340, pos: "GK", num: 1 },
+      { x: 255, y: 185, pos: "CB", num: 5 },
+      { x: 260, y: 340, pos: "CB", num: 4 },
+      { x: 255, y: 495, pos: "CB", num: 3 },
+      { x: 390, y: 340, pos: "DM", num: 6 },
+      { x: 560, y: 110, pos: "LM", num: 11 },
+      { x: 545, y: 268, pos: "CM", num: 8 },
+      { x: 545, y: 412, pos: "CM", num: 7 },
+      { x: 560, y: 570, pos: "RM", num: 2 },
+      { x: 790, y: 250, pos: "ST", num: 9 },
+      { x: 790, y: 430, pos: "ST", num: 10 },
+    ]
+  },
 ]
 
 /* ─────────────────────────── Helpers ────────────────────────── */
@@ -637,6 +739,7 @@ function TacticsBoard() {
   const [authInitialTab, setAuthInitialTab] = useState<"signin" | "signup">("signin")
   const [showMyBoards, setShowMyBoards] = useState(false)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [currentBoardId, setCurrentBoardId] = useState<string | null>(null)
 
@@ -802,7 +905,7 @@ function TacticsBoard() {
   const panDragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
 
   /* ── History ── */
-  type Snap = { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[] }
+  type Snap = { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]; customZones: CustomZone[] }
   const histRef = useRef<Snap[]>([])
   const histIdx = useRef(-1)
 
@@ -813,21 +916,22 @@ function TacticsBoard() {
       texts: texts.map(x => ({ ...x })),
       shapes: shapes.map(x => ({ ...x, pts: [...x.pts] })),
       images: images.map(x => ({ ...x })),
+      customZones: customZones.map(x => ({ ...x })),
     }
     histRef.current = histRef.current.slice(0, histIdx.current + 1)
     histRef.current.push(s)
     histIdx.current = histRef.current.length - 1
-  }, [players, arrows, texts, shapes, images])
+  }, [players, arrows, texts, shapes, images, customZones])
 
   const undo = () => {
     if (histIdx.current < 0) return
-    // Capture current live state so redo can get back to it
     const live: Snap = {
       players: players.map(x => ({ ...x })),
       arrows: arrows.map(x => ({ ...x })),
       texts: texts.map(x => ({ ...x })),
       shapes: shapes.map(x => ({ ...x, pts: [...x.pts] })),
       images: images.map(x => ({ ...x })),
+      customZones: customZones.map(x => ({ ...x })),
     }
     const target = histRef.current[histIdx.current]
     const redoIdx = histIdx.current + 1
@@ -838,14 +942,14 @@ function TacticsBoard() {
     }
     histIdx.current--
     setPlayers(target.players); setArrows(target.arrows); setTexts(target.texts)
-    setShapes(target.shapes); setImages(target.images); setSelection([])
+    setShapes(target.shapes); setImages(target.images); setCustomZones(target.customZones); setSelection([])
   }
   const redo = () => {
     if (histIdx.current + 2 >= histRef.current.length) return
     histIdx.current++
     const s = histRef.current[histIdx.current + 1]
     setPlayers(s.players); setArrows(s.arrows); setTexts(s.texts)
-    setShapes(s.shapes); setImages(s.images)
+    setShapes(s.shapes); setImages(s.images); setCustomZones(s.customZones)
   }
 
   /* ── SVG coordinate helper (handles all CSS transforms) ── */
@@ -1073,6 +1177,7 @@ function TacticsBoard() {
         if (e.key === "a" || e.key === "A") sw("arrow")
         if (e.key === "t" || e.key === "T") sw("text")
         if (e.key === "s" || e.key === "S") sw("shape")
+        if (e.key === "z" || e.key === "Z") sw("zone")
         if (e.key === "i" || e.key === "I") fileInputRef.current?.click()
       }
     }
@@ -1701,6 +1806,7 @@ function TacticsBoard() {
             { id: "arrow" as Tool, ic: <ArrowUpRight size={17} />, lbl: "Arrow", sc: "A" },
             { id: "text" as Tool, ic: <Type size={17} />, lbl: "Text", sc: "T" },
             { id: "shape" as Tool, ic: <Pentagon size={17} />, lbl: "Shapes", sc: "S" },
+            { id: "zone" as Tool, ic: <Square size={17} />, lbl: "Zone", sc: "Z" },
           ]).map(btn => (
             <div key={btn.id} className="rl-wrap">
               <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
@@ -1740,6 +1846,19 @@ function TacticsBoard() {
             </button>
             <div className="rl-tip">{panelOpen ? "Collapse panel" : "Expand panel"}</div>
           </div>
+
+          <div style={{ width: 24, height: 1, background: DS_BORDER, margin: "6px auto" }} />
+
+          <div className="rl-wrap" style={{ marginBottom: 0 }}>
+            <button aria-label="Keyboard shortcuts"
+              onClick={() => setShowShortcuts(true)}
+              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED }}>
+              <HelpCircle size={17} />
+            </button>
+            <div className="rl-tip">Keyboard shortcuts</div>
+          </div>
         </div>
 
         {panelOpen && (
@@ -1774,19 +1893,19 @@ function TacticsBoard() {
                       {selPlayerCount >= 2 ? (
                         <>
                           <div className="flex gap-1.5">
-                            <AlignBtn icon={AlignHorizontalJustifyStart} title="Align left" onClick={() => alignSelectedPlayers("left")} />
-                            <AlignBtn icon={AlignHorizontalJustifyCenter} title="Align center (H)" onClick={() => alignSelectedPlayers("center")} />
-                            <AlignBtn icon={AlignHorizontalJustifyEnd} title="Align right" onClick={() => alignSelectedPlayers("right")} />
-                            <AlignBtn icon={AlignVerticalJustifyStart} title="Align top" onClick={() => alignSelectedPlayers("top")} />
-                            <AlignBtn icon={AlignVerticalJustifyCenter} title="Align middle (V)" onClick={() => alignSelectedPlayers("middle")} />
-                            <AlignBtn icon={AlignVerticalJustifyEnd} title="Align bottom" onClick={() => alignSelectedPlayers("bottom")} />
+                            <AlignBtn icon={AlignHorizontalJustifyStart} title="Same depth — deepest player" onClick={() => alignSelectedPlayers("left")} />
+                            <AlignBtn icon={AlignHorizontalJustifyCenter} title="Same depth — average" onClick={() => alignSelectedPlayers("center")} />
+                            <AlignBtn icon={AlignHorizontalJustifyEnd} title="Same depth — highest player" onClick={() => alignSelectedPlayers("right")} />
+                            <AlignBtn icon={AlignVerticalJustifyStart} title="Same lane — top" onClick={() => alignSelectedPlayers("top")} />
+                            <AlignBtn icon={AlignVerticalJustifyCenter} title="Same lane — middle" onClick={() => alignSelectedPlayers("middle")} />
+                            <AlignBtn icon={AlignVerticalJustifyEnd} title="Same lane — bottom" onClick={() => alignSelectedPlayers("bottom")} />
                           </div>
                           {selPlayerCount >= 3 && (
                             <>
                               <p className="text-xs font-semibold uppercase mt-1" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Distribute</p>
                               <div className="flex gap-1.5">
-                                <AlignBtn icon={AlignHorizontalDistributeCenter} title="Distribute horizontally" onClick={() => distributeSelectedPlayers("horizontal")} />
-                                <AlignBtn icon={AlignVerticalDistributeCenter} title="Distribute vertically" onClick={() => distributeSelectedPlayers("vertical")} />
+                                <AlignBtn icon={AlignHorizontalDistributeCenter} title="Even spacing across the pitch width" onClick={() => distributeSelectedPlayers("horizontal")} />
+                                <AlignBtn icon={AlignVerticalDistributeCenter} title="Even spacing up the pitch" onClick={() => distributeSelectedPlayers("vertical")} />
                               </div>
                             </>
                           )}
@@ -2103,13 +2222,7 @@ function TacticsBoard() {
             </button>
             {boardGroups.formation && (
               <div className="p-3 flex flex-col gap-2" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <select value={selectedFormation} onChange={e => setSelectedFormation(e.target.value)}
-                  className="w-full rounded px-2 py-1.5 text-xs outline-none"
-                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
-                  {FORMATIONS.map(f => (
-                    <option key={f.name} value={f.name}>{f.name} — {f.description}</option>
-                  ))}
-                </select>
+                <FormationPicker value={selectedFormation} onChange={setSelectedFormation} />
                 <div className="flex gap-1.5">
                   <button onClick={() => { addFormation(selectedFormation, "home"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
                     className="flex-1 py-1.5 rounded text-xs font-semibold"
@@ -2331,13 +2444,14 @@ function TacticsBoard() {
           </div>
 
           <div style={{ padding: "9px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 11, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
-            {tool === "select" && "Click to select · Drag to move · Del to remove"}
-            {tool === "pan" && "Drag to move the canvas · Scroll to zoom"}
+            {tool === "select" && "Click to select · Shift+click for multiple · Del to remove"}
+            {tool === "pan" && "Drag to move · Alt+drag or middle-click also pans · Scroll to zoom"}
             {tool === "homePlayer" && "Click the pitch to place a home player"}
             {tool === "awayPlayer" && "Click the pitch to place an away player"}
             {tool === "arrow" && "Click once to start, click again to finish"}
             {tool === "text" && "Click anywhere to add a text box"}
-            {tool === "shape" && "Click and drag to draw a shape"}
+            {tool === "shape" && shapeKind === "polygon" && "Click to add points · Double-click to finish · Esc to cancel"}
+            {tool === "shape" && shapeKind !== "polygon" && "Click and drag to draw a shape"}
             {tool === "zone" && "Drag on pitch to draw a zone · Esc to cancel"}
           </div>
         </aside>
@@ -2378,6 +2492,13 @@ function TacticsBoard() {
                 </div>
                 <p style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 14 }}>Tip: hold Shift and click to select more than one player.</p>
               </div>
+            </div>
+          )}
+
+          {/* Polygon floating hint */}
+          {tool === "shape" && shapeKind === "polygon" && polyDraft && polyDraft.length >= 1 && (
+            <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", background: `${SURFACE_1}e6`, border: `1px solid ${DS_BORDER}`, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: TEXT_PRIMARY, pointerEvents: "none", zIndex: 20, whiteSpace: "nowrap" }}>
+              Double-click to finish the shape
             </div>
           )}
 
@@ -2524,9 +2645,9 @@ function TacticsBoard() {
                             dragRef.current = { kind: "movePitch", id: "pitch", ox: mx - pitchOffX - PX, oy: my - pitchOffY - PY }
                           }}>
                           <rect x={midX - 30} y={oy - 20} width={60} height={15} rx={7}
-                            fill="#3fb950" stroke="#0d1117" strokeWidth={1.5} opacity={0.92} />
+                            fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} opacity={0.92} />
                           {[-12, -4, 4, 12].map(dx => (
-                            <circle key={dx} cx={midX + dx} cy={oy - 12} r={2} fill="#0d1117" opacity={0.65} />
+                            <circle key={dx} cx={midX + dx} cy={oy - 12} r={2} fill="#ffffff" opacity={0.65} />
                           ))}
                         </g>
                       </>
@@ -2895,6 +3016,39 @@ function TacticsBoard() {
             if (id === currentBoardId) setCurrentBoardId(null)
           }}
         />
+      )}
+
+      {/* ── Keyboard shortcuts modal ── */}
+      {showShortcuts && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.6)" }}
+          onClick={() => setShowShortcuts(false)}>
+          <div style={{ background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 10, maxWidth: 380, width: "100%", padding: "20px 24px" }}
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+              <p style={{ margin: 0, fontSize: 15, fontWeight: 600, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>Keyboard shortcuts</p>
+              <button onClick={() => setShowShortcuts(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: TEXT_MUTED, padding: 2 }}><X size={16} /></button>
+            </div>
+            {([
+              { header: "TOOLS", rows: [["Select","V"],["Pan","H"],["Home player","1"],["Away player","2"],["Arrow","A"],["Text","T"],["Shapes","S"],["Zone","Z"],["Upload image","I"]] },
+              { header: "EDIT", rows: [["Undo","Ctrl+Z"],["Redo","Ctrl+Shift+Z"],["Duplicate","Ctrl+D"],["Copy","Ctrl+C"],["Paste","Ctrl+V"],["Delete","Del"]] },
+              { header: "VIEW", rows: [["Zoom in","+"],["Zoom out","−"],["Fit to view","0"],["Deselect / cancel","Esc"]] },
+              { header: "SELECTION", rows: [["Add to selection","Shift+click"],["Pan canvas","Alt+drag"]] },
+            ] as { header: string; rows: [string, string][] }[]).map(group => (
+              <div key={group.header} style={{ marginBottom: 14 }}>
+                <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: TEXT_MUTED, textTransform: "uppercase", fontFamily: "'Inter', sans-serif" }}>{group.header}</p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "3px 12px" }}>
+                  {group.rows.map(([action, key]) => (
+                    <React.Fragment key={action}>
+                      <span style={{ fontSize: 12, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>{action}</span>
+                      <span style={{ fontSize: 12, color: TEXT_MUTED, fontFamily: "monospace", textAlign: "right", whiteSpace: "nowrap" }}>{key}</span>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* ── Clear All confirmation ── */}
@@ -3457,6 +3611,36 @@ function WorkspaceModeSelector({
 }
 
 /* ─────────────────────────── Sub-components ────────────────── */
+function FormationPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ position: "relative", width: "100%" }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width: "100%", background: SURFACE_2, border: `1px solid ${DS_BORDER}`, borderRadius: 6, padding: "8px 10px", fontSize: 13, color: TEXT_PRIMARY, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "'Inter', sans-serif" }}>
+        <span>{value}</span>
+        <ChevronDown size={13} style={{ opacity: 0.6, flexShrink: 0 }} />
+      </button>
+      {open && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 100 }} onClick={() => setOpen(false)} />
+          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 8, maxHeight: 240, overflowY: "auto", zIndex: 101 }}>
+            {FORMATIONS.map(f => (
+              <button key={f.name}
+                onClick={() => { onChange(f.name); setOpen(false) }}
+                style={{ width: "100%", height: 32, padding: "0 10px", fontSize: 13, textAlign: "left", background: "transparent", border: "none", cursor: "pointer", color: f.name === value ? ACCENT_SOLID : TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2 }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent" }}>
+                {f.name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function AlignBtn({ icon: Icon, title, onClick }: { icon: React.ElementType; title: string; onClick: () => void }) {
   const [hov, setHov] = useState(false)
   return (
