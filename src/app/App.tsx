@@ -11,7 +11,10 @@ import {
   Lock, Star, X, RefreshCw, Magnet, ChevronRight,
   Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock,
   LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive,
-  Settings, ArrowLeft
+  Settings, ArrowLeft,
+  AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
+  AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
 } from "lucide-react"
 import { createClient } from "@supabase/supabase-js"
 import { projectId, publicAnonKey } from "../../utils/supabase/info"
@@ -87,6 +90,7 @@ interface Template {
 }
 
 type Sel = null | { kind: "player" | "arrow" | "text" | "shape" | "image" | "zone"; id: string }
+type SelItem = NonNullable<Sel>
 
 /* ─────────────────────────── Constants ─────────────────────── */
 const CW = 1400, CH = 900    // canvas dimensions
@@ -593,7 +597,10 @@ function TacticsBoard() {
   /* ── UI state ── */
   const [tool, setTool] = useState<Tool>("select")
   const [shapeKind, setShapeKind] = useState<ShapeKind>("polygon")
-  const [sel, setSel] = useState<Sel>(null)
+  /* ── Multi-selection: source of truth ── */
+  const [selection, setSelection] = useState<SelItem[]>([])
+  const sel: Sel = selection.length === 1 ? selection[0] : null
+  const setSel = useCallback((s: Sel) => setSelection(s ? [s] : []), [])
   const [view3d, setView3d] = useState(false)
   const [rotation, setRotation] = useState(0)
   const [snapRot, setSnapRot] = useState(false)
@@ -746,18 +753,24 @@ function TacticsBoard() {
   useEffect(() => { pitchOffXRef.current = pitchOffX }, [pitchOffX])
   useEffect(() => { pitchOffYRef.current = pitchOffY }, [pitchOffY])
 
-  /* ── Auto-switch panel tab when selection changes null↔element ── */
-  const prevSelNullRef = useRef<boolean>(true)
+  /* ── isSel: true if the given id is in the selection ── */
+  const isSel = useCallback((id: string) => selection.some(s => s.id === id), [selection])
+
+  /* ── Multi-player drag start positions ── */
+  const multiDragStartRef = useRef<{ startCursorX: number; startCursorY: number; players: { id: string; x: number; y: number }[] } | null>(null)
+
+  /* ── Auto-switch panel tab when selection changes empty↔non-empty ── */
+  const prevSelEmptyRef = useRef<boolean>(true)
   useEffect(() => {
-    const wasNull = prevSelNullRef.current
-    const isNull = sel === null
-    if (wasNull && !isNull) {
+    const wasEmpty = prevSelEmptyRef.current
+    const isEmpty = selection.length === 0
+    if (wasEmpty && !isEmpty) {
       setSideTab("selected")
-    } else if (!wasNull && isNull) {
+    } else if (!wasEmpty && isEmpty) {
       setSideTab("board")
     }
-    prevSelNullRef.current = isNull
-  }, [sel])
+    prevSelEmptyRef.current = isEmpty
+  }, [selection])
 
   /* ── Drawing drafts ── */
   const [arrowDefaultDash, setArrowDefaultDash] = useState<"none" | "dashed" | "dotted">("none")
@@ -922,15 +935,21 @@ function TacticsBoard() {
   /* ── Keyboard shortcuts ── */
   useEffect(() => {
     const del = () => {
-      if (!sel) return
+      if (selection.length === 0) return
       snapshot()
-      if (sel.kind === "player") setPlayers(p => p.filter(x => x.id !== sel.id))
-      else if (sel.kind === "arrow") setArrows(a => a.filter(x => x.id !== sel.id))
-      else if (sel.kind === "text") setTexts(t => t.filter(x => x.id !== sel.id))
-      else if (sel.kind === "shape") setShapes(s => s.filter(x => x.id !== sel.id))
-      else if (sel.kind === "image") setImages(i => i.filter(x => x.id !== sel.id))
-      else if (sel.kind === "zone") setCustomZones(z => z.filter(x => x.id !== sel.id))
-      setSel(null)
+      const pIds = new Set(selection.filter(s => s.kind === "player").map(s => s.id))
+      const aIds = new Set(selection.filter(s => s.kind === "arrow").map(s => s.id))
+      const tIds = new Set(selection.filter(s => s.kind === "text").map(s => s.id))
+      const sIds = new Set(selection.filter(s => s.kind === "shape").map(s => s.id))
+      const iIds = new Set(selection.filter(s => s.kind === "image").map(s => s.id))
+      const zIds = new Set(selection.filter(s => s.kind === "zone").map(s => s.id))
+      if (pIds.size > 0) setPlayers(p => p.filter(x => !pIds.has(x.id)))
+      if (aIds.size > 0) setArrows(a => a.filter(x => !aIds.has(x.id)))
+      if (tIds.size > 0) setTexts(t => t.filter(x => !tIds.has(x.id)))
+      if (sIds.size > 0) setShapes(sh => sh.filter(x => !sIds.has(x.id)))
+      if (iIds.size > 0) setImages(i => i.filter(x => !iIds.has(x.id)))
+      if (zIds.size > 0) setCustomZones(z => z.filter(x => !zIds.has(x.id)))
+      setSelection([])
     }
     const sw = (t: Tool) => { setTool(t); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }
     const handler = (e: KeyboardEvent) => {
@@ -970,16 +989,68 @@ function TacticsBoard() {
 
   /* ── Delete selected ── */
   const deleteSelected = useCallback(() => {
-    if (!sel) return
+    if (selection.length === 0) return
     snapshot()
-    if (sel.kind === "player") setPlayers(p => p.filter(x => x.id !== sel.id))
-    else if (sel.kind === "arrow") setArrows(a => a.filter(x => x.id !== sel.id))
-    else if (sel.kind === "text") setTexts(t => t.filter(x => x.id !== sel.id))
-    else if (sel.kind === "shape") setShapes(s => s.filter(x => x.id !== sel.id))
-    else if (sel.kind === "image") setImages(i => i.filter(x => x.id !== sel.id))
-    else if (sel.kind === "zone") setCustomZones(z => z.filter(x => x.id !== sel.id))
-    setSel(null)
-  }, [sel, snapshot])
+    const pIds = new Set(selection.filter(s => s.kind === "player").map(s => s.id))
+    const aIds = new Set(selection.filter(s => s.kind === "arrow").map(s => s.id))
+    const tIds = new Set(selection.filter(s => s.kind === "text").map(s => s.id))
+    const sIds = new Set(selection.filter(s => s.kind === "shape").map(s => s.id))
+    const iIds = new Set(selection.filter(s => s.kind === "image").map(s => s.id))
+    const zIds = new Set(selection.filter(s => s.kind === "zone").map(s => s.id))
+    if (pIds.size > 0) setPlayers(p => p.filter(x => !pIds.has(x.id)))
+    if (aIds.size > 0) setArrows(a => a.filter(x => !aIds.has(x.id)))
+    if (tIds.size > 0) setTexts(t => t.filter(x => !tIds.has(x.id)))
+    if (sIds.size > 0) setShapes(sh => sh.filter(x => !sIds.has(x.id)))
+    if (iIds.size > 0) setImages(i => i.filter(x => !iIds.has(x.id)))
+    if (zIds.size > 0) setCustomZones(z => z.filter(x => !zIds.has(x.id)))
+    setSelection([])
+  }, [selection, snapshot])
+
+  /* ── Align / Distribute ── */
+  const alignSelectedPlayers = useCallback((axis: "left" | "center" | "right" | "top" | "middle" | "bottom") => {
+    const selIds = new Set(selection.filter(s => s.kind === "player").map(s => s.id))
+    if (selIds.size < 2) return
+    const targets = players.filter(p => selIds.has(p.id))
+    snapshot()
+    let anchor: number
+    if (axis === "left") anchor = Math.min(...targets.map(p => p.x))
+    else if (axis === "center") anchor = (Math.min(...targets.map(p => p.x)) + Math.max(...targets.map(p => p.x))) / 2
+    else if (axis === "right") anchor = Math.max(...targets.map(p => p.x))
+    else if (axis === "top") anchor = Math.min(...targets.map(p => p.y))
+    else if (axis === "middle") anchor = (Math.min(...targets.map(p => p.y)) + Math.max(...targets.map(p => p.y))) / 2
+    else anchor = Math.max(...targets.map(p => p.y))
+    setPlayers(prev => prev.map(p => {
+      if (!selIds.has(p.id)) return p
+      if (axis === "left" || axis === "center" || axis === "right") return { ...p, x: anchor }
+      return { ...p, y: anchor }
+    }))
+  }, [selection, players, snapshot])
+
+  const distributeSelectedPlayers = useCallback((axis: "horizontal" | "vertical") => {
+    const selIds = new Set(selection.filter(s => s.kind === "player").map(s => s.id))
+    if (selIds.size < 3) return
+    const targets = players.filter(p => selIds.has(p.id))
+    snapshot()
+    if (axis === "horizontal") {
+      const sorted = [...targets].sort((a, b) => a.x - b.x)
+      const minX = sorted[0].x
+      const maxX = sorted[sorted.length - 1].x
+      const step = (maxX - minX) / (sorted.length - 1)
+      setPlayers(prev => prev.map(p => {
+        const idx = sorted.findIndex(s => s.id === p.id)
+        return idx >= 0 ? { ...p, x: minX + idx * step } : p
+      }))
+    } else {
+      const sorted = [...targets].sort((a, b) => a.y - b.y)
+      const minY = sorted[0].y
+      const maxY = sorted[sorted.length - 1].y
+      const step = (maxY - minY) / (sorted.length - 1)
+      setPlayers(prev => prev.map(p => {
+        const idx = sorted.findIndex(s => s.id === p.id)
+        return idx >= 0 ? { ...p, y: minY + idx * step } : p
+      }))
+    }
+  }, [selection, players, snapshot])
 
   /* ── Add formation ── */
   const addFormation = useCallback((formationName: string, team: "home" | "away") => {
@@ -1027,7 +1098,15 @@ function TacticsBoard() {
 
     if (!dragRef.current) return
     const d = dragRef.current
-    if (d.kind === "player") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, x: x - d.ox, y: y - d.oy } : pl))
+    if (d.kind === "player" && multiDragStartRef.current) {
+      const md = multiDragStartRef.current
+      const dx2 = x - md.startCursorX
+      const dy2 = y - md.startCursorY
+      setPlayers(p => p.map(pl => {
+        const origin = md.players.find(mp => mp.id === pl.id)
+        return origin ? { ...pl, x: origin.x + dx2, y: origin.y + dy2 } : pl
+      }))
+    } else if (d.kind === "player") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, x: x - d.ox, y: y - d.oy } : pl))
     else if (d.kind === "text") setTexts(t => t.map(tb => tb.id === d.id ? { ...tb, x: x - d.ox, y: y - d.oy } : tb))
     else if (d.kind === "image") setImages(i => i.map(im => im.id === d.id ? { ...im, x: x - d.ox, y: y - d.oy } : im))
     else if (d.kind === "arrowCp") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, cpx: x, cpy: y } : ar))
@@ -1062,7 +1141,7 @@ function TacticsBoard() {
   }, [svgXY, shapeKind])
 
   const onSVGMouseUp = useCallback(() => {
-    if (dragRef.current) { snapshot(); dragRef.current = null }
+    if (dragRef.current) { snapshot(); dragRef.current = null; multiDragStartRef.current = null }
   }, [snapshot])
 
   const onSVGMouseDown = useCallback((e: React.PointerEvent) => {
@@ -1155,11 +1234,21 @@ function TacticsBoard() {
   /* ── Element drag starts ── */
   const startDrag = (e: React.PointerEvent, kind: "player" | "text" | "image", id: string, ex: number, ey: number) => {
     e.stopPropagation()
-    // Text is always draggable regardless of active tool; players/images only in select mode
     if (kind !== "text" && tool !== "select") return
     const { x, y } = svgXY(e)
-    dragRef.current = { kind, id, ox: x - ex, oy: y - ey }
-    setSel({ kind: kind === "image" ? "image" : kind, id })
+    if (kind === "player" && selection.length > 1 && isSel(id)) {
+      // Multi-player drag: capture start cursor + all selected player positions
+      const selPlayers = players.filter(p => isSel(p.id))
+      multiDragStartRef.current = {
+        startCursorX: x,
+        startCursorY: y,
+        players: selPlayers.map(p => ({ id: p.id, x: p.x, y: p.y })),
+      }
+      dragRef.current = { kind: "player", id, ox: x - ex, oy: y - ey }
+    } else {
+      dragRef.current = { kind, id, ox: x - ex, oy: y - ey }
+      setSel({ kind: kind === "image" ? "image" : kind, id })
+    }
   }
 
   /* ── Image upload ── */
@@ -1572,7 +1661,50 @@ function TacticsBoard() {
 
           {/* ── SELECTED TAB ── */}
           <div style={{ flex: 1, overflowY: "auto", display: sideTab === "selected" ? "flex" : "none", flexDirection: "column" }}>
-            {sel ? (
+            {selection.length > 1 ? (
+              (() => {
+                const selPlayerIds = selection.filter(s => s.kind === "player").map(s => s.id)
+                const selPlayerCount = selPlayerIds.length
+                return (
+                  <div className="p-3 flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>
+                        {selection.length} selected
+                      </p>
+                      <button onClick={deleteSelected} className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: DS_ERROR }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Align</p>
+                      {selPlayerCount >= 2 ? (
+                        <>
+                          <div className="flex gap-1.5">
+                            <AlignBtn icon={AlignHorizontalJustifyStart} title="Align left" onClick={() => alignSelectedPlayers("left")} />
+                            <AlignBtn icon={AlignHorizontalJustifyCenter} title="Align center (H)" onClick={() => alignSelectedPlayers("center")} />
+                            <AlignBtn icon={AlignHorizontalJustifyEnd} title="Align right" onClick={() => alignSelectedPlayers("right")} />
+                            <AlignBtn icon={AlignVerticalJustifyStart} title="Align top" onClick={() => alignSelectedPlayers("top")} />
+                            <AlignBtn icon={AlignVerticalJustifyCenter} title="Align middle (V)" onClick={() => alignSelectedPlayers("middle")} />
+                            <AlignBtn icon={AlignVerticalJustifyEnd} title="Align bottom" onClick={() => alignSelectedPlayers("bottom")} />
+                          </div>
+                          {selPlayerCount >= 3 && (
+                            <>
+                              <p className="text-xs font-semibold uppercase mt-1" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Distribute</p>
+                              <div className="flex gap-1.5">
+                                <AlignBtn icon={AlignHorizontalDistributeCenter} title="Distribute horizontally" onClick={() => distributeSelectedPlayers("horizontal")} />
+                                <AlignBtn icon={AlignVerticalDistributeCenter} title="Distribute vertically" onClick={() => distributeSelectedPlayers("vertical")} />
+                              </div>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-xs" style={{ color: TEXT_MUTED }}>Select 2 or more players to align them.</p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()
+            ) : sel ? (
               <div className="p-3 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>
@@ -2153,7 +2285,13 @@ function TacticsBoard() {
                       x={0} y={0} width={CW} height={CH}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid slice"
                       onPointerDown={e => startDrag(e, "image", img.id, img.x, img.y)}
-                      onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "image", id: img.id }); setTool("select") } }}
+                      onClick={e => {
+                        if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "image", id: img.id }); setTool("select"); return }
+                        if (tool === "select" && e.shiftKey) {
+                          e.stopPropagation()
+                          setSelection(prev => isSel(img.id) ? prev.filter(s => s.id !== img.id) : [...prev, { kind: "image", id: img.id }])
+                        }
+                      }}
                       style={{ cursor: tool === "select" ? "move" : "default" }} />
                   ))}
 
@@ -2162,7 +2300,9 @@ function TacticsBoard() {
                     <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
                       startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
-                      setSel={setSel} tool={tool} updT={updT} setTool={setTool} />
+                      setSel={setSel} tool={tool} updT={updT} setTool={setTool}
+                      isSel={isSel}
+                      onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])} />
                   ))}
 
                   {/* 4. Pitch group (translated to canvas offset + user drag offset) */}
@@ -2177,11 +2317,19 @@ function TacticsBoard() {
                         {showLanes && <LanesOverlay />}
                         {/* Custom drawn zones */}
                         {customZones.map(z => {
-                          const isSelZ = sel?.kind === "zone" && sel.id === z.id
+                          const isSelZ = isSel(z.id)
                           return (
                             <g key={z.id}
                               style={{ cursor: tool === "select" ? "move" : "default" }}
-                              onClick={e => { e.stopPropagation(); if (tool === "select") setSel({ kind: "zone", id: z.id }) }}
+                              onClick={e => {
+                                e.stopPropagation()
+                                if (tool !== "select") return
+                                if (e.shiftKey) {
+                                  setSelection(prev => isSel(z.id) ? prev.filter(s => s.id !== z.id) : [...prev, { kind: "zone", id: z.id }])
+                                } else {
+                                  setSel({ kind: "zone", id: z.id })
+                                }
+                              }}
                               onPointerDown={e => {
                                 if (tool !== "select") return
                                 e.stopPropagation()
@@ -2189,7 +2337,7 @@ function TacticsBoard() {
                                 const px = (svgPt.x - PX - pitchOffXRef.current) / pitchScaleRef.current
                                 const py = (svgPt.y - PY - pitchOffYRef.current) / pitchScaleRef.current
                                 dragRef.current = { kind: "zone", id: z.id, ox: px - z.x, oy: py - z.y }
-                                setSel({ kind: "zone", id: z.id })
+                                if (!e.shiftKey) setSel({ kind: "zone", id: z.id })
                               }}>
                               <rect x={z.x} y={z.y} width={z.w} height={z.h} rx={4}
                                 fill={z.color} fillOpacity={z.opacity}
@@ -2276,8 +2424,14 @@ function TacticsBoard() {
                     <g key={s.id}
                       onClick={e => {
                         e.stopPropagation()
-                        if (tool === "select") { setSel({ kind: "shape", id: s.id }) }
-                        else if (tool === "homePlayer" || tool === "awayPlayer") { setSel({ kind: "shape", id: s.id }); setTool("select") }
+                        if (tool === "homePlayer" || tool === "awayPlayer") { setSel({ kind: "shape", id: s.id }); setTool("select"); return }
+                        if (tool === "select") {
+                          if (e.shiftKey) {
+                            setSelection(prev => isSel(s.id) ? prev.filter(x => x.id !== s.id) : [...prev, { kind: "shape", id: s.id }])
+                          } else {
+                            setSel({ kind: "shape", id: s.id })
+                          }
+                        }
                       }}
                       style={{ cursor: tool === "select" ? "pointer" : "default" }}>
                       {renderShapePath(s)}
@@ -2296,7 +2450,7 @@ function TacticsBoard() {
                           </text>
                         )
                       })()}
-                      {sel?.id === s.id && s.kind === "polygon" && s.pts && s.pts.length >= 2 && (
+                      {isSel(s.id) && s.kind === "polygon" && s.pts && s.pts.length >= 2 && (
                         <rect
                           x={Math.min(...s.pts.map(([px]) => px)) - 4}
                           y={Math.min(...s.pts.map(([, py]) => py)) - 4}
@@ -2305,7 +2459,7 @@ function TacticsBoard() {
                           fill="none" stroke="#3fb950" strokeWidth={1.5} strokeDasharray="4,2" rx={3}
                           style={{ pointerEvents: "none" }} />
                       )}
-                      {sel?.id === s.id && s.kind !== "polygon" && (
+                      {isSel(s.id) && s.kind !== "polygon" && (
                         <>
                           <rect
                             x={s.x - 4} y={s.y - 4}
@@ -2350,14 +2504,20 @@ function TacticsBoard() {
 
                   {/* 8. Arrows */}
                   {arrows.map(a => {
-                    const isSelected = sel?.id === a.id
+                    const isSelected = isSel(a.id)
                     const hs = a.strokeW * 4 + 6
                     return (
                       <g key={a.id}
                         onClick={e => {
                           e.stopPropagation()
-                          if (tool === "select") { setSel({ kind: "arrow", id: a.id }) }
-                          else if (tool === "homePlayer" || tool === "awayPlayer") { setSel({ kind: "arrow", id: a.id }); setTool("select") }
+                          if (tool === "homePlayer" || tool === "awayPlayer") { setSel({ kind: "arrow", id: a.id }); setTool("select"); return }
+                          if (tool === "select") {
+                            if (e.shiftKey) {
+                              setSelection(prev => isSel(a.id) ? prev.filter(s => s.id !== a.id) : [...prev, { kind: "arrow", id: a.id }])
+                            } else {
+                              setSel({ kind: "arrow", id: a.id })
+                            }
+                          }
                         }}
                         style={{ cursor: tool === "select" ? "pointer" : "default" }}>
                         <path d={arrowPath(a.x1, a.y1, a.x2, a.y2, a.cpx, a.cpy)}
@@ -2416,12 +2576,14 @@ function TacticsBoard() {
                     <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
                       startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
-                      setSel={setSel} tool={tool} updT={updT} setTool={setTool} />
+                      setSel={setSel} tool={tool} updT={updT} setTool={setTool}
+                      isSel={isSel}
+                      onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])} />
                   ))}
 
                   {/* 11. Players */}
                   {players.map(p => {
-                    const isSelected = sel?.id === p.id
+                    const isSelected = isSel(p.id)
                     const s = p.scale || 1
                     const r = 28 * s
                     // p.num = shirt number (inside circle), p.name = player name (below circle, halo text)
@@ -2434,6 +2596,11 @@ function TacticsBoard() {
                             e.stopPropagation()
                             setSel({ kind: "player", id: p.id })
                             setTool("select")
+                            return
+                          }
+                          if (tool === "select" && e.shiftKey) {
+                            e.stopPropagation()
+                            setSelection(prev => isSel(p.id) ? prev.filter(s => s.id !== p.id) : [...prev, { kind: "player", id: p.id }])
                             return
                           }
                           startDrag(e, "player", p.id, p.x, p.y)
@@ -2486,7 +2653,13 @@ function TacticsBoard() {
                       x={img.x} y={img.y} width={img.width} height={img.height}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid meet"
                       onPointerDown={e => startDrag(e, "image", img.id, img.x, img.y)}
-                      onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "image", id: img.id }); setTool("select") } }}
+                      onClick={e => {
+                        if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "image", id: img.id }); setTool("select"); return }
+                        if (tool === "select" && e.shiftKey) {
+                          e.stopPropagation()
+                          setSelection(prev => isSel(img.id) ? prev.filter(s => s.id !== img.id) : [...prev, { kind: "image", id: img.id }])
+                        }
+                      }}
                       style={{ cursor: tool === "select" ? "move" : "default" }} />
                   ))}
 
@@ -3164,6 +3337,26 @@ function WorkspaceModeSelector({
 }
 
 /* ─────────────────────────── Sub-components ────────────────── */
+function AlignBtn({ icon: Icon, title, onClick }: { icon: React.ElementType; title: string; onClick: () => void }) {
+  const [hov, setHov] = useState(false)
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      className="flex items-center justify-center rounded transition-colors"
+      style={{
+        width: 28, height: 28,
+        background: SURFACE_2,
+        border: `1px solid ${hov ? ACCENT_SOLID : DS_BORDER}`,
+        color: hov ? TEXT_PRIMARY : TEXT_MUTED,
+      }}>
+      <Icon size={14} />
+    </button>
+  )
+}
+
 function ColorPicker({ label, colors, selected, onSelect, allowTransparent }: {
   label: string; colors: string[]; selected: string; onSelect: (c: string) => void; allowTransparent?: boolean
 }) {
@@ -3189,7 +3382,7 @@ function ColorPicker({ label, colors, selected, onSelect, allowTransparent }: {
   )
 }
 
-function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, setSel, tool, updT, setTool }: {
+function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, setSel, tool, updT, setTool, isSel: isSelfSel, onShiftClick }: {
   t: TextBox; sel: Sel; editingText: string | null
   setEditingText: (id: string | null) => void
   startDrag: (e: React.PointerEvent) => void
@@ -3198,8 +3391,10 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   tool: Tool
   updT: (patch: Partial<TextBox>) => void
   setTool?: (t: Tool) => void
+  isSel?: (id: string) => boolean
+  onShiftClick?: () => void
 }) {
-  const isSelected = sel?.id === t.id
+  const isSelected = isSelfSel ? isSelfSel(t.id) : sel?.id === t.id
   const isEditing = editingText === t.id
   const lineH = t.size * 1.45
   const lines = t.text.split("\n")
@@ -3265,7 +3460,11 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
           setTool?.("select")
           return
         }
-        // Draggable in any tool — just like iPhone: grab and move without mode switching
+        if (tool === "select" && e.shiftKey && onShiftClick) {
+          e.stopPropagation()
+          onShiftClick()
+          return
+        }
         if (!isEditing) { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) }
       }}
       onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") e.stopPropagation() }}
