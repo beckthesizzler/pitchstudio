@@ -1,0 +1,10 @@
+{
+  "description": "Create custom football play visuals with movable players, arrows, and text for coaches and fans, then export analyses in multiple formats.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
