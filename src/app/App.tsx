@@ -9,7 +9,7 @@ import {
   ChevronDown, FileImage, Move, Hand, PanelLeftClose, PanelLeftOpen,
   ImagePlus, Square, Circle, Minus, Plus, BookOpen,
   Lock, Star, X, RefreshCw, Magnet, ChevronRight,
-  Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock, MoreHorizontal,
+  Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock, MoreHorizontal, Copy, BringToFront, SendToBack, Unlock,
   LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive,
   Settings, ArrowLeft, HelpCircle, Mail, AlignLeft, ChevronUp,
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
@@ -39,6 +39,7 @@ interface Player {
   glow?: boolean
   scale?: number
   kind?: "marker" | "ball" // a ✕ marker or the ball; no kind = a player (every board saved before this)
+  locked?: boolean // locked pieces can't be clicked, moved or nudged until you right-click → Unlock (same on every element type)
 }
 interface Arrow {
   id: string
@@ -47,6 +48,7 @@ interface Arrow {
   color: string; strokeW: number
   dash: "none" | "dashed" | "dotted"
   label: string; twoWay: boolean
+  locked?: boolean
 }
 interface TextBox {
   id: string; x: number; y: number
@@ -56,6 +58,7 @@ interface TextBox {
   layer: "foreground" | "background"
   manualH?: number
   noBox?: boolean
+  locked?: boolean
 }
 interface Shape {
   id: string; kind: ShapeKind
@@ -65,11 +68,13 @@ interface Shape {
   fill: string; fillOpacity: number
   stroke: string; strokeW: number; strokeDash: boolean
   label: string
+  locked?: boolean
 }
 interface CustomZone {
   id: string
   x: number; y: number; w: number; h: number  // pitch-local coordinates (0..PW, 0..PH)
   color: string; opacity: number; label: string
+  locked?: boolean
 }
 interface UploadedImage {
   id: string; x: number; y: number
@@ -77,6 +82,7 @@ interface UploadedImage {
   src: string; opacity: number
   layer: "background" | "overlay"
   naturalW: number; naturalH: number
+  locked?: boolean
 }
 interface CanvasState {
   players: Player[]; arrows: Arrow[]; texts: TextBox[]
@@ -587,6 +593,15 @@ const FORMATIONS: Formation[] = [
 function arrowPath(x1: number, y1: number, x2: number, y2: number, cpx: number, cpy: number) {
   return `M ${x1} ${y1} Q ${cpx} ${cpy} ${x2} ${y2}`
 }
+/** Points along an arrow's curve (used by box-select). */
+const arrowPoints = (a: Arrow) => Array.from({ length: 17 }, (_, i) => {
+  const t = i / 16, u = 1 - t
+  return [u * u * a.x1 + 2 * u * t * a.cpx + t * t * a.x2, u * u * a.y1 + 2 * u * t * a.cpy + t * t * a.y2] as [number, number]
+})
+/** A text box's height on the board: it grows with its lines, or the height you dragged it to. */
+const textBoxH = (t: TextBox) => Math.max(t.text.split("\n").length * t.size * 1.45 + 20, t.manualH || 0)
+/** Where the pieces being moved were when the move started. */
+type MoveBase = { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]; zones: CustomZone[] }
 function arrowHead(x2: number, y2: number, cpx: number, cpy: number, size = 16) {
   const angle = Math.atan2(y2 - cpy, x2 - cpx)
   const s = 0.42
@@ -1327,8 +1342,53 @@ function TacticsBoard() {
   /* ── isSel: true if the given id is in the selection ── */
   const isSel = useCallback((id: string) => selection.some(s => s.id === id), [selection])
 
-  /* ── Multi-player drag start positions ── */
-  const multiDragStartRef = useRef<{ startCursorX: number; startCursorY: number; players: { id: string; x: number; y: number }[] } | null>(null)
+  /* ── Moving, box-select, the right-click menu and locked pieces ── */
+  // Moving the selection: where the press started and where everything selected was at that moment
+  const moveRef = useRef<null | { x: number; y: number; sx: number; sy: number; live: boolean; item: SelItem; keep: boolean; base: MoveBase }>(null)
+  // Box-select: press on an empty part of the board and drag
+  const marqueeRef = useRef<null | { x: number; y: number; sx: number; sy: number; add: boolean }>(null)
+  const [marquee, setMarquee] = useState<null | { x1: number; y1: number; x2: number; y2: number }>(null)
+  // Right-click menu: acts on the selection, or offers Unlock for a locked piece
+  const [ctxMenu, setCtxMenu] = useState<null | { x: number; y: number; lockedItem: SelItem | null }>(null)
+  const menuActionsRef = useRef({ duplicate: () => {}, copy: () => {} })
+  // Pressing on a locked piece explains why nothing happens
+  const [lockHint, setLockHint] = useState(false)
+  const lockHintTimer = useRef(0)
+  const flashLockHint = () => { setLockHint(true); window.clearTimeout(lockHintTimer.current); lockHintTimer.current = window.setTimeout(() => setLockHint(false), 2500) }
+  /** Moves pieces by (dx, dy) from where they were in `base`. Zones live in pitch coordinates, so they move by the pitch's scale.
+   *  Only uses setters and refs, so it's safe to call from any handler. */
+  const moveBy = (base: MoveBase, dx: number, dy: number) => {
+    const byId = <T extends { id: string }>(list: T[]) => new Map(list.map(v => [v.id, v]))
+    const P = byId(base.players), A = byId(base.arrows), Tx = byId(base.texts), S = byId(base.shapes), I = byId(base.images), Z = byId(base.zones)
+    const zdx = dx / pitchScaleRef.current, zdy = dy / pitchScaleRef.current
+    if (P.size) setPlayers(list => list.map(p => { const o = P.get(p.id); return o ? { ...p, x: o.x + dx, y: o.y + dy } : p }))
+    if (A.size) setArrows(list => list.map(a => { const o = A.get(a.id); return o ? { ...a, x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy, cpx: o.cpx + dx, cpy: o.cpy + dy } : a }))
+    if (Tx.size) setTexts(list => list.map(t => { const o = Tx.get(t.id); return o ? { ...t, x: o.x + dx, y: o.y + dy } : t }))
+    if (S.size) setShapes(list => list.map(sh => { const o = S.get(sh.id); return o ? { ...sh, x: o.x + dx, y: o.y + dy, pts: o.pts.map(([px, py]) => [px + dx, py + dy] as [number, number]) } : sh }))
+    if (I.size) setImages(list => list.map(im => { const o = I.get(im.id); return o ? { ...im, x: o.x + dx, y: o.y + dy } : im }))
+    if (Z.size) setCustomZones(list => list.map(z => { const o = Z.get(z.id); return o ? { ...z, x: o.x + zdx, y: o.y + zdy } : z }))
+  }
+  /** Shifts the selected pieces by (dx, dy) from wherever they are right now (arrow keys, so fast key repeats never get lost). */
+  const nudge = (items: SelItem[], dx: number, dy: number) => {
+    const ids = new Set(items.map(s => s.id)), has = (k: SelItem["kind"]) => items.some(s => s.kind === k)
+    const on = (v: { id: string; locked?: boolean }) => ids.has(v.id) && !v.locked
+    const zdx = dx / pitchScaleRef.current, zdy = dy / pitchScaleRef.current
+    if (has("player")) setPlayers(l => l.map(p => on(p) ? { ...p, x: p.x + dx, y: p.y + dy } : p))
+    if (has("arrow")) setArrows(l => l.map(a => on(a) ? { ...a, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cpx: a.cpx + dx, cpy: a.cpy + dy } : a))
+    if (has("text")) setTexts(l => l.map(t => on(t) ? { ...t, x: t.x + dx, y: t.y + dy } : t))
+    if (has("shape")) setShapes(l => l.map(sh => on(sh) ? { ...sh, x: sh.x + dx, y: sh.y + dy, pts: sh.pts.map(([px, py]) => [px + dx, py + dy] as [number, number]) } : sh))
+    if (has("image")) setImages(l => l.map(im => on(im) ? { ...im, x: im.x + dx, y: im.y + dy } : im))
+    if (has("zone")) setCustomZones(l => l.map(z => on(z) ? { ...z, x: z.x + zdx, y: z.y + zdy } : z))
+  }
+  /** The selected pieces as they are now (locked ones never move). */
+  const selectedBase = (items: SelItem[]): MoveBase => {
+    const ids = new Set(items.map(s => s.id))
+    return {
+      players: players.filter(p => ids.has(p.id) && !p.locked), arrows: arrows.filter(a => ids.has(a.id) && !a.locked),
+      texts: texts.filter(t => ids.has(t.id) && !t.locked), shapes: shapes.filter(sh => ids.has(sh.id) && !sh.locked),
+      images: images.filter(im => ids.has(im.id) && !im.locked), zones: customZones.filter(z => ids.has(z.id) && !z.locked),
+    }
+  }
 
   /* ── Clipboard for copy/paste ── */
   type ClipSnap = { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]; zones: CustomZone[] }
@@ -1367,7 +1427,7 @@ function TacticsBoard() {
 
   /* ── Drag refs ── */
   const dragRef = useRef<{
-    kind: "player" | "text" | "image" | "arrowCp" | "arrowP1" | "arrowP2" | "resizeShape" | "resizeText" | "resizeImage" | "resizePlayer" | "resizePitch" | "zone" | "movePitch"
+    kind: "move" | "player" | "text" | "image" | "arrowCp" | "arrowP1" | "arrowP2" | "resizeShape" | "resizeText" | "resizeImage" | "resizePlayer" | "resizePitch" | "zone" | "movePitch"
     id: string; ox: number; oy: number
   } | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
@@ -1638,6 +1698,7 @@ function TacticsBoard() {
       const newZones = cb.zones.map(z => ({ ...z, id: uid(), x: z.x + 24, y: z.y + 24 }))
       applyDuplicates({ newPlayers, newArrows, newTexts, newShapes, newImages, newZones })
     }
+    menuActionsRef.current = { duplicate, copy } // the right-click menu uses the same actions as the shortcuts
 
     const handler = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
@@ -1650,7 +1711,7 @@ function TacticsBoard() {
       if (e.key === "Delete" || e.key === "Backspace") del()
       if (e.key === "Escape") {
         setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null
-        setShapeDraftPreview(null); setSel(null)
+        setShapeDraftPreview(null); setSel(null); setCtxMenu(null)
         if (tool !== "select") setTool("select")
       }
       // With Shift (or Caps Lock) the key arrives as "Z". preventDefault stops the browser also undoing the last text you typed in a box.
@@ -1660,6 +1721,27 @@ function TacticsBoard() {
       if ((e.ctrlKey || e.metaKey) && e.key === "d") { e.preventDefault(); if (!typing) duplicate() }
       if ((e.ctrlKey || e.metaKey) && e.key === "c") { e.preventDefault(); if (!typing) copy() }
       if ((e.ctrlKey || e.metaKey) && e.key === "v") { e.preventDefault(); if (!typing) paste() }
+      // Select everything that isn't locked
+      if ((e.ctrlKey || e.metaKey) && k === "a" && !typing) {
+        e.preventDefault()
+        setSelection([
+          ...players.filter(x => !x.locked).map(x => ({ kind: "player" as const, id: x.id })),
+          ...arrows.filter(x => !x.locked).map(x => ({ kind: "arrow" as const, id: x.id })),
+          ...texts.filter(x => !x.locked).map(x => ({ kind: "text" as const, id: x.id })),
+          ...shapes.filter(x => !x.locked).map(x => ({ kind: "shape" as const, id: x.id })),
+          ...images.filter(x => !x.locked).map(x => ({ kind: "image" as const, id: x.id })),
+          ...customZones.filter(x => !x.locked).map(x => ({ kind: "zone" as const, id: x.id })),
+        ])
+      }
+      // Arrow keys nudge the selection (Shift = 10 at a time); a burst of presses is one undo step
+      if (!typing && !e.ctrlKey && !e.metaKey && e.key.startsWith("Arrow") && selection.length > 0) {
+        e.preventDefault()
+        const step = e.shiftKey ? 10 : 1
+        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0
+        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0
+        undoPoint("nudge:" + selection.map(s => s.id).join())
+        nudge(selection, dx, dy)
+      }
       if (e.key === "+" || e.key === "=") applyZoom(1.15)
       if (e.key === "-") applyZoom(0.87)
       if (e.key === "0") fitToView()
@@ -1680,7 +1762,7 @@ function TacticsBoard() {
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel, tool, snapshot, applyZoom])
+  }, [selection, tool, snapshot, applyZoom]) // the whole selection, so Delete/Duplicate/Copy always act on everything selected
 
   /* ── Delete selected ── */
   const deleteSelected = useCallback(() => {
@@ -1700,6 +1782,35 @@ function TacticsBoard() {
     if (zIds.size > 0) setCustomZones(z => z.filter(x => !zIds.has(x.id)))
     setSelection([])
   }, [selection, snapshot])
+
+  /* ── Right-click menu actions ── */
+  /** Right-click on a piece: select it (or keep the selection it's part of) and open the menu where you clicked.
+   *  A locked piece isn't selected; its menu just offers Unlock. */
+  const openMenu = (e: React.MouseEvent, item: SelItem, locked?: boolean) => {
+    e.preventDefault(); e.stopPropagation()
+    if (!locked && !isSel(item.id)) setSelection([item])
+    setCtxMenu({ x: e.clientX, y: e.clientY, lockedItem: locked ? item : null })
+  }
+  /** Puts the selection in front of (or behind) the other pieces of the same kind. */
+  const reorder = (to: "front" | "back") => {
+    const ids = new Set(selection.map(s => s.id))
+    const move = <T extends { id: string }>(list: T[]) => {
+      const picked = list.filter(v => ids.has(v.id))
+      if (!picked.length) return list
+      const rest = list.filter(v => !ids.has(v.id))
+      return to === "front" ? [...rest, ...picked] : [...picked, ...rest]
+    }
+    undoPoint()
+    setPlayers(move); setArrows(move); setTexts(move); setShapes(move); setImages(move); setCustomZones(move)
+  }
+  /** Locks or unlocks pieces. Locked pieces ignore clicks, drags, box-select and the arrow keys. */
+  const setLocked = (items: SelItem[], locked: boolean) => {
+    const ids = new Set(items.map(s => s.id))
+    const lock = <T extends { id: string; locked?: boolean }>(list: T[]) =>
+      list.some(v => ids.has(v.id)) ? list.map(v => ids.has(v.id) ? { ...v, locked: locked || undefined } : v) : list
+    undoPoint()
+    setPlayers(lock); setArrows(lock); setTexts(lock); setShapes(lock); setImages(lock); setCustomZones(lock)
+  }
 
   /* ── Align / Distribute ── */
   const alignSelectedPlayers = useCallback((axis: "left" | "center" | "right" | "top" | "middle" | "bottom") => {
@@ -1791,21 +1902,21 @@ function TacticsBoard() {
       setZoneDraft({ x1: zoneDrawRef.current.x, y1: zoneDrawRef.current.y, x2: px, y2: py })
     }
 
+    // Box-select: the box appears once you've dragged a few pixels on an empty part of the board
+    const mq = marqueeRef.current
+    if (mq && Math.hypot(e.clientX - mq.sx, e.clientY - mq.sy) > 4) setMarquee({ x1: mq.x, y1: mq.y, x2: x, y2: y })
+
     if (!dragRef.current) { dragStartedRef.current = false; return }
     const d = dragRef.current
+    const m = moveRef.current
+    if (d.kind === "move") {
+      if (!m) return
+      // A few pixels' dead zone, so clicking a piece never nudges it
+      if (!m.live) { if (Math.hypot(e.clientX - m.sx, e.clientY - m.sy) < 4) return; m.live = true }
+    }
     // The first move of a drag marks the undo point, so one undo puts everything back where it was before the drag
     if (!dragStartedRef.current) { dragStartedRef.current = true; undoPointRef.current() }
-    if (d.kind === "player" && multiDragStartRef.current) {
-      const md = multiDragStartRef.current
-      const dx2 = x - md.startCursorX
-      const dy2 = y - md.startCursorY
-      setPlayers(p => p.map(pl => {
-        const origin = md.players.find(mp => mp.id === pl.id)
-        return origin ? { ...pl, x: origin.x + dx2, y: origin.y + dy2 } : pl
-      }))
-    } else if (d.kind === "player") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, x: x - d.ox, y: y - d.oy } : pl))
-    else if (d.kind === "text") setTexts(t => t.map(tb => tb.id === d.id ? { ...tb, x: x - d.ox, y: y - d.oy } : tb))
-    else if (d.kind === "image") setImages(i => i.map(im => im.id === d.id ? { ...im, x: x - d.ox, y: y - d.oy } : im))
+    if (d.kind === "move" && m) moveBy(m.base, x - m.x, y - m.y) // everything selected moves together
     else if (d.kind === "arrowCp") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, cpx: x, cpy: y } : ar))
     else if (d.kind === "arrowP1") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, x1: x, y1: y, cpx: (x + ar.x2) / 2, cpy: (y + ar.y2) / 2 } : ar))
     else if (d.kind === "arrowP2") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, x2: x, y2: y, cpx: (ar.x1 + x) / 2, cpy: (ar.y1 + y) / 2 } : ar))
@@ -1818,11 +1929,6 @@ function TacticsBoard() {
     }))
     else if (d.kind === "resizePlayer") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, scale: Math.max(0.5, (Math.hypot(x - pl.x, y - pl.y) - d.ox) / pieceBase(pl)) } : pl)) // the handle stays under the cursor (ox = where on the handle you grabbed it)
     else if (d.kind === "resizeImage") setImages(i => i.map(im => im.id === d.id ? { ...im, width: Math.max(20, x - im.x), height: Math.max(20, y - im.y) } : im))
-    else if (d.kind === "zone") {
-      const px = (x - PX - pitchOffXRef.current) / pitchScaleRef.current
-      const py = (y - PY - pitchOffYRef.current) / pitchScaleRef.current
-      setCustomZones(z => z.map(zone => zone.id === d.id ? { ...zone, x: px - d.ox, y: py - d.oy } : zone))
-    }
     else if (d.kind === "resizePitch") {
       const offX = pitchOffXRef.current
       if (d.id === "pitch-tr" || d.id === "pitch-br") {
@@ -1837,14 +1943,46 @@ function TacticsBoard() {
     }
   }, [svgXY, shapeKind])
 
-  const onSVGMouseUp = useCallback(() => {
-    if (dragRef.current) { dragRef.current = null; multiDragStartRef.current = null }
-    dragStartedRef.current = false
+  // Ends a move, a drag or a box-select wherever you let go, even off the board (it used to leave the piece stuck to the pointer)
+  const endDrag = () => {
+    const m = moveRef.current
+    if (dragRef.current?.kind === "move" && m && !m.live && m.keep) setSelection([m.item]) // a plain click on one of several selected pieces selects just that one
+    dragRef.current = null; moveRef.current = null; dragStartedRef.current = false
+    const mq = marqueeRef.current
+    marqueeRef.current = null
+    if (mq && marquee) {
+      const x1 = Math.min(marquee.x1, marquee.x2), x2 = Math.max(marquee.x1, marquee.x2)
+      const y1 = Math.min(marquee.y1, marquee.y2), y2 = Math.max(marquee.y1, marquee.y2)
+      const inBox = (x: number, y: number) => x >= x1 && x <= x2 && y >= y1 && y <= y2
+      const fits = (bx: number, by: number, bw: number, bh: number) => bx >= x1 && by >= y1 && bx + bw <= x2 && by + bh <= y2
+      const sc = pitchScaleRef.current, zx = PX + pitchOffXRef.current, zy = PY + pitchOffYRef.current
+      // Pieces, arrows and text are picked when the box touches them; shapes, zones and images only when they're fully inside it
+      const hits: SelItem[] = [
+        ...players.filter(p => !p.locked && Math.hypot(p.x - Math.max(x1, Math.min(p.x, x2)), p.y - Math.max(y1, Math.min(p.y, y2))) <= pieceBase(p) * (p.scale || 1)).map(p => ({ kind: "player" as const, id: p.id })),
+        ...arrows.filter(a => !a.locked && arrowPoints(a).some(([x, y]) => inBox(x, y))).map(a => ({ kind: "arrow" as const, id: a.id })),
+        ...texts.filter(t => !t.locked && t.x < x2 && t.x + t.width > x1 && t.y < y2 && t.y + textBoxH(t) > y1).map(t => ({ kind: "text" as const, id: t.id })),
+        ...shapes.filter(sh => !sh.locked && (sh.kind === "polygon" ? sh.pts.length > 0 && sh.pts.every(([x, y]) => inBox(x, y)) : fits(sh.x, sh.y, sh.w, sh.h))).map(sh => ({ kind: "shape" as const, id: sh.id })),
+        ...images.filter(im => !im.locked && im.layer === "overlay" && fits(im.x, im.y, im.width, im.height)).map(im => ({ kind: "image" as const, id: im.id })),
+        ...(canvasMode === "blank" ? [] : customZones.filter(z => !z.locked && fits(zx + z.x * sc, zy + z.y * sc, z.w * sc, z.h * sc)).map(z => ({ kind: "zone" as const, id: z.id }))),
+      ]
+      setSelection(mq.add ? [...selection, ...hits.filter(h => !selection.some(s => s.id === h.id))] : hits)
+    }
+    setMarquee(null)
+  }
+  const endDragRef = useRef(endDrag)
+  endDragRef.current = endDrag
+  useEffect(() => {
+    const up = () => endDragRef.current()
+    window.addEventListener("pointerup", up)
+    return () => window.removeEventListener("pointerup", up)
   }, [])
+  const onSVGMouseUp = useCallback(() => endDragRef.current(), [])
 
   const onSVGMouseDown = useCallback((e: React.PointerEvent) => {
     mouseDownPosRef.current = { x: e.clientX, y: e.clientY }
     hasDraggedRef.current = false
+    // Pressing on an empty part of the board with the select tool can start a box-select (Shift adds to the selection)
+    if (tool === "select" && e.button === 0 && !e.altKey) { const p = svgXY(e); marqueeRef.current = { x: p.x, y: p.y, sx: e.clientX, sy: e.clientY, add: e.shiftKey } }
     if (tool === "shape" && shapeKind !== "polygon") {
       const { x, y } = svgXY(e)
       shapeDrawRef.current = { x1: x, y1: y }
@@ -1939,23 +2077,18 @@ function TacticsBoard() {
   const onCanvasMouseUp = () => { panDragRef.current = null }
 
   /* ── Element drag starts ── */
-  const startDrag = (e: React.PointerEvent, kind: "player" | "text" | "image", id: string, ex: number, ey: number) => {
+  // Pressing on a piece selects it (or keeps the selection it's part of); dragging then moves everything selected together.
+  // With another tool picked, the press goes through to the board, so a zone or shape can start on top of a piece.
+  const startDrag = (e: React.PointerEvent, kind: SelItem["kind"], id: string, _ex?: number, _ey?: number) => {
+    if ((kind !== "text" && tool !== "select") || e.button !== 0) return
     e.stopPropagation()
-    if (kind !== "text" && tool !== "select") return
+    if (e.shiftKey) return // Shift+click adds or removes it (the piece handles that itself)
+    const keep = isSel(id)
+    const items: SelItem[] = keep ? selection : [{ kind, id }]
+    if (!keep) setSelection(items)
     const { x, y } = svgXY(e)
-    if (kind === "player" && selection.length > 1 && isSel(id)) {
-      // Multi-player drag: capture start cursor + all selected player positions
-      const selPlayers = players.filter(p => isSel(p.id))
-      multiDragStartRef.current = {
-        startCursorX: x,
-        startCursorY: y,
-        players: selPlayers.map(p => ({ id: p.id, x: p.x, y: p.y })),
-      }
-      dragRef.current = { kind: "player", id, ox: x - ex, oy: y - ey }
-    } else {
-      dragRef.current = { kind, id, ox: x - ex, oy: y - ey }
-      setSel({ kind: kind === "image" ? "image" : kind, id })
-    }
+    moveRef.current = { x, y, sx: e.clientX, sy: e.clientY, live: false, item: { kind, id }, keep: keep && selection.length > 1, base: selectedBase(items) }
+    dragRef.current = { kind: "move", id, ox: 0, oy: 0 }
   }
 
   /* ── Image upload ── */
@@ -3046,7 +3179,8 @@ function TacticsBoard() {
           </div>
 
           <div style={{ padding: "9px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 11, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
-            {tool === "select" && "Click to select · Shift+click for multiple · Del to remove"}
+            {lockHint ? "That's locked. Right-click it to unlock." : <>
+            {tool === "select" && "Click or drag a box to select · Shift adds · Arrow keys nudge · Right-click for more"}
             {tool === "pan" && "Drag to move · Alt+drag or middle-click also pans · Scroll to zoom"}
             {tool === "homePlayer" && "Click the pitch to place a home player"}
             {tool === "awayPlayer" && "Click the pitch to place an away player"}
@@ -3057,6 +3191,7 @@ function TacticsBoard() {
             {tool === "shape" && shapeKind === "polygon" && "Click to add points · Double-click to finish · Esc to cancel"}
             {tool === "shape" && shapeKind !== "polygon" && "Click and drag to draw a shape"}
             {tool === "zone" && "Drag on pitch to draw a zone · Esc to cancel"}
+            </>}
           </div>
         </aside>
         )}
@@ -3132,15 +3267,17 @@ function TacticsBoard() {
                     <image key={img.id} href={img.src}
                       x={0} y={0} width={CW} height={CH}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid slice"
-                      onPointerDown={e => startDrag(e, "image", img.id, img.x, img.y)}
+                      // A photo behind the pitch fills the canvas, so pressing on it starts a box-select; a plain click selects it
                       onClick={e => {
+                        if (img.locked) return
                         if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "image", id: img.id }); setTool("select"); return }
-                        if (tool === "select" && e.shiftKey) {
-                          e.stopPropagation()
-                          setSelection(prev => isSel(img.id) ? prev.filter(s => s.id !== img.id) : [...prev, { kind: "image", id: img.id }])
-                        }
+                        if (tool !== "select" || hasDraggedRef.current) return
+                        e.stopPropagation()
+                        if (e.shiftKey) setSelection(prev => isSel(img.id) ? prev.filter(s => s.id !== img.id) : [...prev, { kind: "image", id: img.id }])
+                        else setSel({ kind: "image", id: img.id })
                       }}
-                      style={{ cursor: tool === "select" ? "move" : "default" }} />
+                      onContextMenu={e => openMenu(e, { kind: "image", id: img.id }, img.locked)}
+                      style={{ cursor: "default" }} />
                   ))}
 
                   {/* 3. Background texts (behind pitch, in margins) */}
@@ -3150,7 +3287,8 @@ function TacticsBoard() {
                       startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
                       setSel={setSel} tool={tool} updT={updT} setTool={setTool}
                       isSel={isSel}
-                      onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])} />
+                      onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])}
+                      onMenu={e => openMenu(e, { kind: "text", id: t.id }, t.locked)} />
                   ))}
 
                   {/* 4. Pitch group (translated to canvas offset + user drag offset) */}
@@ -3168,25 +3306,18 @@ function TacticsBoard() {
                           const isSelZ = isSel(z.id)
                           return (
                             <g key={z.id}
-                              style={{ cursor: tool === "select" ? "move" : "default" }}
+                              style={{ cursor: tool === "select" && !z.locked ? "move" : "default" }}
                               onClick={e => {
+                                if (tool !== "select" || z.locked) return // other tools draw on top of the zone
                                 e.stopPropagation()
-                                if (tool !== "select") return
-                                if (e.shiftKey) {
-                                  setSelection(prev => isSel(z.id) ? prev.filter(s => s.id !== z.id) : [...prev, { kind: "zone", id: z.id }])
-                                } else {
-                                  setSel({ kind: "zone", id: z.id })
-                                }
+                                if (e.shiftKey) setSelection(prev => isSel(z.id) ? prev.filter(s => s.id !== z.id) : [...prev, { kind: "zone", id: z.id }])
                               }}
                               onPointerDown={e => {
                                 if (tool !== "select") return
-                                e.stopPropagation()
-                                const svgPt = svgXY(e)
-                                const px = (svgPt.x - PX - pitchOffXRef.current) / pitchScaleRef.current
-                                const py = (svgPt.y - PY - pitchOffYRef.current) / pitchScaleRef.current
-                                dragRef.current = { kind: "zone", id: z.id, ox: px - z.x, oy: py - z.y }
-                                if (!e.shiftKey) setSel({ kind: "zone", id: z.id })
-                              }}>
+                                if (z.locked) { if (e.button === 0) flashLockHint(); return }
+                                startDrag(e, "zone", z.id)
+                              }}
+                              onContextMenu={e => openMenu(e, { kind: "zone", id: z.id }, z.locked)}>
                               <rect x={z.x} y={z.y} width={z.w} height={z.h} rx={4}
                                 fill={z.color} fillOpacity={z.opacity}
                                 stroke={isSelZ ? "#ffffff" : z.color}
@@ -3271,18 +3402,16 @@ function TacticsBoard() {
                   {/* 5. Shapes */}
                   {shapes.map(s => (
                     <g key={s.id}
+                      onPointerDown={e => { if (s.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } startDrag(e, "shape", s.id) }}
                       onClick={e => {
+                        if (s.locked) return
+                        if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "shape", id: s.id }); setTool("select"); return }
+                        if (tool !== "select") return // other tools draw on top of the shape
                         e.stopPropagation()
-                        if (tool === "homePlayer" || tool === "awayPlayer") { setSel({ kind: "shape", id: s.id }); setTool("select"); return }
-                        if (tool === "select") {
-                          if (e.shiftKey) {
-                            setSelection(prev => isSel(s.id) ? prev.filter(x => x.id !== s.id) : [...prev, { kind: "shape", id: s.id }])
-                          } else {
-                            setSel({ kind: "shape", id: s.id })
-                          }
-                        }
+                        if (e.shiftKey) setSelection(prev => isSel(s.id) ? prev.filter(x => x.id !== s.id) : [...prev, { kind: "shape", id: s.id }])
                       }}
-                      style={{ cursor: tool === "select" ? "pointer" : "default" }}>
+                      onContextMenu={e => openMenu(e, { kind: "shape", id: s.id }, s.locked)}
+                      style={{ cursor: tool === "select" && !s.locked ? "move" : "default" }}>
                       {renderShapePath(s)}
                       {s.label && (() => {
                         const lx = s.kind === "polygon" && s.pts && s.pts.length > 0
@@ -3357,18 +3486,16 @@ function TacticsBoard() {
                     const hs = a.strokeW * 4 + 6
                     return (
                       <g key={a.id}
+                        onPointerDown={e => { if (a.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } startDrag(e, "arrow", a.id) }}
                         onClick={e => {
+                          if (a.locked) return
+                          if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "arrow", id: a.id }); setTool("select"); return }
+                          if (tool !== "select") return // other tools draw on top of the arrow
                           e.stopPropagation()
-                          if (tool === "homePlayer" || tool === "awayPlayer") { setSel({ kind: "arrow", id: a.id }); setTool("select"); return }
-                          if (tool === "select") {
-                            if (e.shiftKey) {
-                              setSelection(prev => isSel(a.id) ? prev.filter(s => s.id !== a.id) : [...prev, { kind: "arrow", id: a.id }])
-                            } else {
-                              setSel({ kind: "arrow", id: a.id })
-                            }
-                          }
+                          if (e.shiftKey) setSelection(prev => isSel(a.id) ? prev.filter(s => s.id !== a.id) : [...prev, { kind: "arrow", id: a.id }])
                         }}
-                        style={{ cursor: tool === "select" ? "pointer" : "default" }}>
+                        onContextMenu={e => openMenu(e, { kind: "arrow", id: a.id }, a.locked)}
+                        style={{ cursor: tool === "select" && !a.locked ? "move" : "default" }}>
                         <path d={arrowPath(a.x1, a.y1, a.x2, a.y2, a.cpx, a.cpy)}
                           fill="none" stroke="transparent" strokeWidth={16} />
                         <path d={arrowPath(a.x1, a.y1, a.x2, a.y2, a.cpx, a.cpy)}
@@ -3427,7 +3554,8 @@ function TacticsBoard() {
                       startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
                       setSel={setSel} tool={tool} updT={updT} setTool={setTool}
                       isSel={isSel}
-                      onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])} />
+                      onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])}
+                      onMenu={e => openMenu(e, { kind: "text", id: t.id }, t.locked)} />
                   ))}
 
                   {/* 11. Players, ✕ markers and the ball */}
@@ -3442,6 +3570,7 @@ function TacticsBoard() {
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
                         onPointerDown={e => {
+                          if (p.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } // locked: the press goes through to the board
                           if (tool === "homePlayer" || tool === "awayPlayer") {
                             e.stopPropagation()
                             setSel({ kind: "player", id: p.id })
@@ -3455,8 +3584,9 @@ function TacticsBoard() {
                           }
                           startDrag(e, "player", p.id, p.x, p.y)
                         }}
-                        onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") e.stopPropagation() }}
-                        style={{ cursor: tool === "select" ? "grab" : "default" }}>
+                        onClick={e => { if (!p.locked && (tool === "select" || tool === "homePlayer" || tool === "awayPlayer")) e.stopPropagation() }}
+                        onContextMenu={e => openMenu(e, { kind: "player", id: p.id }, p.locked)}
+                        style={{ cursor: tool === "select" && !p.locked ? "grab" : "default" }}>
                         {p.glow && (
                           <circle r={r + 15} fill={p.bg} fillOpacity={0.4} filter="blur(8px)" />
                         )}
@@ -3521,15 +3651,16 @@ function TacticsBoard() {
                     <image key={img.id} href={img.src}
                       x={img.x} y={img.y} width={img.width} height={img.height}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid meet"
-                      onPointerDown={e => startDrag(e, "image", img.id, img.x, img.y)}
+                      onPointerDown={e => { if (img.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } startDrag(e, "image", img.id, img.x, img.y) }}
                       onClick={e => {
+                        if (img.locked) return
                         if (tool === "homePlayer" || tool === "awayPlayer") { e.stopPropagation(); setSel({ kind: "image", id: img.id }); setTool("select"); return }
-                        if (tool === "select" && e.shiftKey) {
-                          e.stopPropagation()
-                          setSelection(prev => isSel(img.id) ? prev.filter(s => s.id !== img.id) : [...prev, { kind: "image", id: img.id }])
-                        }
+                        if (tool !== "select") return
+                        e.stopPropagation()
+                        if (e.shiftKey) setSelection(prev => isSel(img.id) ? prev.filter(s => s.id !== img.id) : [...prev, { kind: "image", id: img.id }])
                       }}
-                      style={{ cursor: tool === "select" ? "move" : "default" }} />
+                      onContextMenu={e => openMenu(e, { kind: "image", id: img.id }, img.locked)}
+                      style={{ cursor: tool === "select" && !img.locked ? "move" : "default" }} />
                   ))}
 
                   {/* Selected image border */}
@@ -3547,6 +3678,13 @@ function TacticsBoard() {
                           onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizeImage", id: selI.id, ox: 0, oy: 0 } }} />
                       )}
                     </>
+                  )}
+
+                  {/* Box-select */}
+                  {marquee && (
+                    <rect x={Math.min(marquee.x1, marquee.x2)} y={Math.min(marquee.y1, marquee.y2)}
+                      width={Math.abs(marquee.x2 - marquee.x1)} height={Math.abs(marquee.y2 - marquee.y1)}
+                      fill="rgba(124,92,255,0.1)" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="5,3" style={{ pointerEvents: "none" }} />
                   )}
 
                   {/* 13. Watermark — always last, always visible: your handle (once you've chosen one) and PITCHSTUDIO */}
@@ -3712,6 +3850,34 @@ function TacticsBoard() {
         />
       )}
 
+      {/* ── Right-click menu ── */}
+      {ctxMenu && (
+        <div className="fixed inset-0 z-50" onPointerDown={() => setCtxMenu(null)} onContextMenu={e => { e.preventDefault(); setCtxMenu(null) }}>
+          <div className="absolute w-52 rounded-lg shadow-xl border flex flex-col py-1"
+            style={{ left: Math.min(ctxMenu.x, window.innerWidth - 216), top: Math.min(ctxMenu.y, window.innerHeight - 250), background: SURFACE_1, borderColor: DS_BORDER }}
+            onPointerDown={e => e.stopPropagation()}>
+            {(ctxMenu.lockedItem
+              ? [{ label: "Unlock", icon: <Unlock size={13} />, run: () => { setLocked([ctxMenu.lockedItem!], false); setSelection([ctxMenu.lockedItem!]) } }]
+              : [
+                { label: "Duplicate", hint: "Ctrl+D", icon: <Plus size={13} />, run: () => menuActionsRef.current.duplicate() },
+                { label: "Copy", hint: "Ctrl+C", icon: <Copy size={13} />, run: () => menuActionsRef.current.copy() },
+                { label: "Bring to front", icon: <BringToFront size={13} />, run: () => reorder("front") },
+                { label: "Send to back", icon: <SendToBack size={13} />, run: () => reorder("back") },
+                { label: "Lock", icon: <Lock size={13} />, run: () => { setLocked(selection, true); setSelection([]) } },
+                { label: "Delete", hint: "Del", icon: <Trash2 size={13} />, run: deleteSelected, danger: true },
+              ]
+            ).map((item: { label: string; hint?: string; icon: React.ReactNode; run: () => void; danger?: boolean }) => (
+              <button key={item.label} onClick={() => { setCtxMenu(null); item.run() }}
+                className="flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-white/10"
+                style={{ color: item.danger ? DS_ERROR : TEXT_PRIMARY }}>
+                {item.icon}<span className="flex-1">{item.label}</span>
+                {item.hint && <span style={{ color: TEXT_MUTED }}>{item.hint}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Keyboard shortcuts modal ── */}
       {showShortcuts && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -3727,7 +3893,7 @@ function TacticsBoard() {
               { header: "TOOLS", rows: [["Select","V"],["Pan","H"],["Home player","1"],["Away player","2"],["✕ marker","X"],["Ball","B"],["Arrow","A"],["Text","T"],["Shapes","S"],["Zone","Z"],["Upload image","I"]] },
               { header: "EDIT", rows: [["Undo","Ctrl+Z"],["Redo","Ctrl+Shift+Z"],["Duplicate","Ctrl+D"],["Copy","Ctrl+C"],["Paste","Ctrl+V"],["Delete","Del"]] },
               { header: "VIEW", rows: [["Zoom in","+"],["Zoom out","−"],["Fit to view","0"],["Deselect / cancel","Esc"]] },
-              { header: "SELECTION", rows: [["Add to selection","Shift+click"],["Pan canvas","Alt+drag"]] },
+              { header: "SELECTION", rows: [["Add to selection","Shift+click"],["Box-select","Drag on empty board"],["Select all","Ctrl+A"],["Nudge","Arrow keys"],["Nudge further","Shift+Arrow keys"],["More actions","Right-click"],["Pan canvas","Alt+drag"]] },
             ] as { header: string; rows: [string, string][] }[]).map(group => (
               <div key={group.header} style={{ marginBottom: 14 }}>
                 <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: TEXT_MUTED, textTransform: "uppercase", fontFamily: "'Inter', sans-serif" }}>{group.header}</p>
@@ -4479,7 +4645,7 @@ function ColorPicker({ label, colors, selected, onSelect, allowTransparent }: {
   )
 }
 
-function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, setSel, tool, updT, setTool, isSel: isSelfSel, onShiftClick }: {
+function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, setSel, tool, updT, setTool, isSel: isSelfSel, onShiftClick, onMenu }: {
   t: TextBox; sel: Sel; editingText: string | null
   setEditingText: (id: string | null) => void
   startDrag: (e: React.PointerEvent) => void
@@ -4490,6 +4656,7 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   setTool?: (t: Tool) => void
   isSel?: (id: string) => boolean
   onShiftClick?: () => void
+  onMenu?: (e: React.MouseEvent) => void
 }) {
   const isSelected = isSelfSel ? isSelfSel(t.id) : sel?.id === t.id
   const isEditing = editingText === t.id
@@ -4550,7 +4717,9 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
 
   return (
     <g
+      onContextMenu={onMenu}
       onPointerDown={e => {
+        if (t.locked) return // locked: the press goes through to the board
         if (tool === "homePlayer" || tool === "awayPlayer") {
           e.stopPropagation()
           setSel({ kind: "text", id: t.id })
@@ -4562,10 +4731,11 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
           onShiftClick()
           return
         }
-        if (!isEditing) { e.stopPropagation(); startDrag(e); setSel({ kind: "text", id: t.id }) }
+        if (isEditing) { e.stopPropagation(); return } // selecting words while typing mustn't start a box-select
+        startDrag(e) // selects it (or keeps the selection it's part of) and lets you move everything selected
       }}
-      onClick={e => { if (tool === "homePlayer" || tool === "awayPlayer") e.stopPropagation() }}
-      onDoubleClick={e => { e.stopPropagation(); setEditingText(t.id) }}
+      onClick={e => { if (!t.locked && (tool === "select" || tool === "homePlayer" || tool === "awayPlayer")) e.stopPropagation() }}
+      onDoubleClick={e => { if (t.locked) return; e.stopPropagation(); setEditingText(t.id) }}
       style={{ cursor: tool === "select" ? (isEditing ? "text" : "move") : "default" }}>
       {/* Background box — hidden in free-text / no-box mode */}
       {!noBox && !isEditing && (
