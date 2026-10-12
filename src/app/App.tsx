@@ -57,6 +57,9 @@ interface Arrow {
   dash: "none" | "dashed" | "dotted"
   label: string; twoWay: boolean
   locked?: boolean
+  kind?: "pass" | "run" | "dribble" | "shot" | "line" // what the line shows; no kind = an arrow drawn before line types
+  step?: number // the step number shown on the line, to give the order of play
+  fromId?: string; toId?: string // the pieces the line starts and ends on; it follows them when they move
 }
 interface TextBox {
   id: string; x: number; y: number
@@ -124,6 +127,10 @@ interface BoardSettings {
   labelSize: "standard" | "large" | "xl" // name and number size on the pieces; bigger stays readable on a phone
   nameStyle: "halo" | "chip" // names on a dark outline, or on a small dark chip
   tokenStyle: "classic" | "minimal" // minimal = flat pieces: no drop shadow, a thin ring
+  vertical: boolean // the pitch stands upright: home goal at the bottom
+  focus: "board" | "pitch" | "half" | "third" // the part of the board you see and export
+  focusEnd: "attack" | "defend" // which end a half or a third shows
+  frameRatio: "auto" | "16:9" | "4:5" | "1:1" | "9:16" // the shape of the export
 }
 /** What a saved board keeps in canvas_data (version 2). Version 1 boards only had the five element lists. */
 interface BoardData {
@@ -140,6 +147,7 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   homePat: "solid", homeC2: "#fbbf24", homeNum: "#000000", homeName: "",
   awayPat: "solid", awayC2: "#1d4ed8", awayNum: "#ffffff", awayName: "",
   labelSize: "standard", nameStyle: "halo", tokenStyle: "classic",
+  vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto",
 }
 /** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
 function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
@@ -170,6 +178,10 @@ function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSet
     labelSize: oneOf(v.labelSize, ["standard", "large", "xl"] as const, d.labelSize),
     nameStyle: oneOf(v.nameStyle, ["halo", "chip"] as const, d.nameStyle),
     tokenStyle: oneOf(v.tokenStyle, ["classic", "minimal"] as const, d.tokenStyle),
+    vertical: bool(v.vertical, d.vertical),
+    focus: oneOf(v.focus, ["board", "pitch", "half", "third"] as const, d.focus),
+    focusEnd: oneOf(v.focusEnd, ["attack", "defend"] as const, d.focusEnd),
+    frameRatio: oneOf(v.frameRatio, ["auto", "16:9", "4:5", "1:1", "9:16"] as const, d.frameRatio),
   }
 }
 /** Reads any saved board, old or new format, and fills in anything missing. */
@@ -244,6 +256,52 @@ const PW = 1050, PH = 680    // pitch dimensions
 const PX = (CW - PW) / 2    // = 175, pitch x offset
 const PY = (CH - PH) / 2    // = 110, pitch y offset
 const CX = CW / 2, CY = CH / 2  // canvas center (700, 450)
+const SVG_DISPLAY_W = 980 // the board is shown at most 980 × 630 at 100% zoom
+
+/** Where the pitch sits on the canvas. Horizontal: as it always has. Vertical: turned a quarter, home goal at the bottom. */
+type PitchGeo = { ox: number; oy: number; sc: number; v: boolean }
+const VERT_SCALE = 0.78 // an upright pitch is scaled to fit the canvas height
+const pitchGeo = (v: boolean, scale: number, offX: number, offY: number): PitchGeo => v
+  ? { ox: (CW - PH * VERT_SCALE) / 2 + offX, oy: (CH - PW * VERT_SCALE) / 2 + offY, sc: scale * VERT_SCALE, v }
+  : { ox: PX + offX, oy: PY + offY, sc: scale, v }
+/** Pitch coordinates (the pitch drawn 1050 × 680, home goal on the left) → board coordinates */
+const toCanvas = (g: PitchGeo, px: number, py: number) =>
+  g.v ? { x: g.ox + g.sc * py, y: g.oy + g.sc * (PW - px) } : { x: g.ox + g.sc * px, y: g.oy + g.sc * py }
+/** Board coordinates → pitch coordinates */
+const toPitch = (g: PitchGeo, x: number, y: number) =>
+  g.v ? { x: PW - (y - g.oy) / g.sc, y: (x - g.ox) / g.sc } : { x: (x - g.ox) / g.sc, y: (y - g.oy) / g.sc }
+/** A move on the board, as a move in pitch coordinates (zones live in pitch coordinates) */
+const pitchDelta = (g: PitchGeo, dx: number, dy: number) =>
+  g.v ? { x: -dy / g.sc, y: dx / g.sc } : { x: dx / g.sc, y: dy / g.sc }
+const pitchTransformAttr = (g: PitchGeo) =>
+  g.v ? `translate(${g.ox},${g.oy}) scale(${g.sc}) translate(0,${PW}) rotate(-90)` : `translate(${g.ox},${g.oy}) scale(${g.sc})`
+/** The board rectangle covering part of the pitch */
+const pitchRect = (g: PitchGeo, x1: number, y1: number, x2: number, y2: number) => {
+  const a = toCanvas(g, x1, y1), b = toCanvas(g, x2, y2)
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) }
+}
+/** Export sizes in pixels; "auto" keeps the frame's own shape */
+const FRAME_SIZES: Record<BoardSettings["frameRatio"], [number, number] | null> = {
+  auto: null, "16:9": [1920, 1080], "4:5": [1080, 1350], "1:1": [1080, 1080], "9:16": [1080, 1920],
+}
+/** The part of the board you see and export: the whole board, or the pitch, a half or a third with room for names and the seal, widened to the export shape */
+const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"]) => {
+  let r = { x: 0, y: 0, w: CW, h: CH }
+  if (focus !== "board") {
+    const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
+    const [x1, x2] = end === "attack" ? [PW - part, PW] : [0, part]
+    const p = pitchRect(g, x1, 0, x2, PH)
+    r = { x: p.x - 36, y: p.y - 36, w: p.w + 72, h: p.h + 100 }
+  }
+  const size = FRAME_SIZES[ratio]
+  if (size) {
+    const a = size[0] / size[1]
+    if (r.w / r.h < a) { const w = r.h * a; r = { ...r, x: r.x - (w - r.w) / 2, w } }
+    else { const h = r.w / a; r = { ...r, y: r.y - (h - r.h) / 2, h } }
+  }
+  return r
+}
+const UPRIGHT_3D = "perspective(1400px) rotateX(38deg) scaleY(0.95)" // the 3D tilt, on screen and in exports
 // Pitch center in pitch-local coords
 const PCX = PW / 2, PCY = PH / 2
 
@@ -695,6 +753,42 @@ function arrowHeadRev(x1: number, y1: number, cpx: number, cpy: number, size = 1
 function dashArr(d: Arrow["dash"]) {
   return d === "dashed" ? "12,6" : d === "dotted" ? "4,4" : undefined
 }
+type LineKind = NonNullable<Arrow["kind"]>
+const LINE_KINDS: [LineKind, string][] = [["pass", "Pass"], ["run", "Run"], ["dribble", "Dribble"], ["shot", "Shot"], ["line", "Line"]]
+/** How each line type looks when you pick it */
+const LINE_PRESET: Record<LineKind, { dash: Arrow["dash"]; strokeW: number }> = {
+  pass: { dash: "none", strokeW: 3 }, run: { dash: "dashed", strokeW: 3 }, dribble: { dash: "none", strokeW: 3 },
+  shot: { dash: "none", strokeW: 5 }, line: { dash: "none", strokeW: 3 },
+}
+/** A point on a line's curve (t = 0 at the start, 1 at the end) */
+const curveAt = (x1: number, y1: number, cpx: number, cpy: number, x2: number, y2: number, t: number) => {
+  const u = 1 - t
+  return { x: u * u * x1 + 2 * u * t * cpx + t * t * x2, y: u * u * y1 + 2 * u * t * cpy + t * t * y2 }
+}
+/** A dribble: a wave along the curve that fades out at both ends, so the head sits straight */
+function wavyPath(x1: number, y1: number, x2: number, y2: number, cpx: number, cpy: number, amp: number, wave: number) {
+  const N = 120
+  const pts = [{ x: x1, y: y1 }], dist = [0]
+  for (let i = 1; i <= N; i++) { const p = curveAt(x1, y1, cpx, cpy, x2, y2, i / N); dist.push(dist[i - 1] + Math.hypot(p.x - pts[i - 1].x, p.y - pts[i - 1].y)); pts.push(p) }
+  const len = dist[N]
+  return pts.map((p, i) => {
+    const t = i / N, dx = 2 * (1 - t) * (cpx - x1) + 2 * t * (x2 - cpx), dy = 2 * (1 - t) * (cpy - y1) + 2 * t * (y2 - cpy)
+    const l = Math.hypot(dx, dy) || 1
+    const o = amp * Math.max(0, Math.min(1, dist[i] / wave, (len - dist[i]) / wave)) * Math.sin((2 * Math.PI * dist[i]) / wave)
+    return `${i ? "L" : "M"} ${p.x - (dy / l) * o} ${p.y + (dx / l) * o}`
+  }).join(" ")
+}
+/** The piece under a point (the one on top), if any */
+const pieceAt = (pieces: Player[], x: number, y: number) =>
+  [...pieces].reverse().find(p => !p.locked && Math.hypot(p.x - x, p.y - y) <= pieceBase(p) * (p.scale || 1))
+/** Where a line is drawn: an end attached to a piece starts or stops at the piece's edge, not its centre */
+const lineEnds = (a: Arrow, pieces: Map<string, Player>) => {
+  let { x1, y1, x2, y2 } = a
+  const P = a.fromId ? pieces.get(a.fromId) : undefined, Q = a.toId ? pieces.get(a.toId) : undefined
+  if (P) { const r = pieceBase(P) * (P.scale || 1) + 4, d = Math.hypot(a.cpx - x1, a.cpy - y1) || 1; x1 += ((a.cpx - x1) / d) * r; y1 += ((a.cpy - y1) / d) * r }
+  if (Q) { const r = pieceBase(Q) * (Q.scale || 1) + 4, d = Math.hypot(a.cpx - x2, a.cpy - y2) || 1; x2 += ((a.cpx - x2) / d) * r; y2 += ((a.cpy - y2) / d) * r }
+  return { x1, y1, x2, y2 }
+}
 function snapAngle(deg: number, snap: boolean): number {
   if (!snap) return deg
   return SNAP_ANGLES.reduce((a, b) => Math.abs(b - deg) < Math.abs(a - deg) ? b : a)
@@ -937,7 +1031,6 @@ function TacticsBoard() {
   const setSel = useCallback((s: Sel) => setSelection(s ? [s] : []), [])
   const [view3d, setView3d] = useState(false)
   const [rotation, setRotation] = useState(0)
-  const [snapRot, setSnapRot] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [panX, setPanX] = useState(0)
   const [panY, setPanY] = useState(0)
@@ -967,13 +1060,17 @@ function TacticsBoard() {
   const [labelSize, setLabelSize] = useState<BoardSettings["labelSize"]>("standard")
   const [nameStyle, setNameStyle] = useState<BoardSettings["nameStyle"]>("halo")
   const [tokenStyle, setTokenStyle] = useState<BoardSettings["tokenStyle"]>("classic")
+  const [vertical, setVertical] = useState(false)
+  const [focus, setFocus] = useState<BoardSettings["focus"]>("board")
+  const [focusEnd, setFocusEnd] = useState<BoardSettings["focusEnd"]>("attack")
+  const [frameRatio, setFrameRatio] = useState<BoardSettings["frameRatio"]>("auto")
   const [kitEditor, setKitEditor] = useState({ home: false, away: false })
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [sideTab, setSideTab] = useState<"selected" | "board">("board")
   const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
-  const [boardGroups, setBoardGroups] = useState({ formation: true, teams: true, labels: false, zones: false, pitch: false, canvas: false })
+  const [boardGroups, setBoardGroups] = useState({ frame: true, formation: true, teams: true, labels: false, zones: false, pitch: false, canvas: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [selectedFormation, setSelectedFormation] = useState("4-3-3")
 
@@ -1251,6 +1348,7 @@ function TacticsBoard() {
       workspaceMode, canvasMode, showPitch, pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY,
       view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible,
       homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
+      vertical, focus, focusEnd, frameRatio,
     }),
   })
   /** Puts a saved board's elements, zones and settings back on screen. */
@@ -1268,6 +1366,7 @@ function TacticsBoard() {
     setHomePat(st.homePat); setHomeC2(st.homeC2); setHomeNum(st.homeNum); setHomeName(st.homeName)
     setAwayPat(st.awayPat); setAwayC2(st.awayC2); setAwayNum(st.awayNum); setAwayName(st.awayName)
     setLabelSize(st.labelSize); setNameStyle(st.nameStyle); setTokenStyle(st.tokenStyle)
+    setVertical(st.vertical); setFocus(st.focus); setFocusEnd(st.focusEnd); setFrameRatio(st.frameRatio)
   }
   /** Opens a board exactly as it was saved. Older boards get today's defaults for anything they didn't store.
    *  boardId = null starts a new, unsaved board (used for templates). */
@@ -1340,7 +1439,7 @@ function TacticsBoard() {
   }, [title, narrative, players, arrows, texts, shapes, images, customZones, workspaceMode, canvasMode, showPitch,
       pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
       showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
-      labelSize, nameStyle, tokenStyle, currentBoardId, authUser, saveTick])
+      labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, currentBoardId, authUser, saveTick])
 
   // Opening a fresh board: bring back the unsaved board from last time, if there is one
   const restoreCheckedRef = useRef(false)
@@ -1458,9 +1557,9 @@ function TacticsBoard() {
   const moveBy = (base: MoveBase, dx: number, dy: number) => {
     const byId = <T extends { id: string }>(list: T[]) => new Map(list.map(v => [v.id, v]))
     const P = byId(base.players), A = byId(base.arrows), Tx = byId(base.texts), S = byId(base.shapes), I = byId(base.images), Z = byId(base.zones)
-    const zdx = dx / pitchScaleRef.current, zdy = dy / pitchScaleRef.current
+    const { x: zdx, y: zdy } = pitchDelta(geoRef.current, dx, dy)
     if (P.size) setPlayers(list => list.map(p => { const o = P.get(p.id); return o ? { ...p, x: o.x + dx, y: o.y + dy } : p }))
-    if (A.size) setArrows(list => list.map(a => { const o = A.get(a.id); return o ? { ...a, x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy, cpx: o.cpx + dx, cpy: o.cpy + dy } : a }))
+    if (A.size) setArrows(list => list.map(a => { const o = A.get(a.id); return o ? { ...a, x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy, cpx: o.cpx + dx, cpy: o.cpy + dy, fromId: o.fromId && P.has(o.fromId) ? o.fromId : undefined, toId: o.toId && P.has(o.toId) ? o.toId : undefined } : a }))
     if (Tx.size) setTexts(list => list.map(t => { const o = Tx.get(t.id); return o ? { ...t, x: o.x + dx, y: o.y + dy } : t }))
     if (S.size) setShapes(list => list.map(sh => { const o = S.get(sh.id); return o ? { ...sh, x: o.x + dx, y: o.y + dy, pts: o.pts.map(([px, py]) => [px + dx, py + dy] as [number, number]) } : sh }))
     if (I.size) setImages(list => list.map(im => { const o = I.get(im.id); return o ? { ...im, x: o.x + dx, y: o.y + dy } : im }))
@@ -1470,9 +1569,9 @@ function TacticsBoard() {
   const nudge = (items: SelItem[], dx: number, dy: number) => {
     const ids = new Set(items.map(s => s.id)), has = (k: SelItem["kind"]) => items.some(s => s.kind === k)
     const on = (v: { id: string; locked?: boolean }) => ids.has(v.id) && !v.locked
-    const zdx = dx / pitchScaleRef.current, zdy = dy / pitchScaleRef.current
+    const { x: zdx, y: zdy } = pitchDelta(geoRef.current, dx, dy)
     if (has("player")) setPlayers(l => l.map(p => on(p) ? { ...p, x: p.x + dx, y: p.y + dy } : p))
-    if (has("arrow")) setArrows(l => l.map(a => on(a) ? { ...a, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cpx: a.cpx + dx, cpy: a.cpy + dy } : a))
+    if (has("arrow")) setArrows(l => l.map(a => on(a) ? { ...a, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cpx: a.cpx + dx, cpy: a.cpy + dy, fromId: a.fromId && ids.has(a.fromId) ? a.fromId : undefined, toId: a.toId && ids.has(a.toId) ? a.toId : undefined } : a))
     if (has("text")) setTexts(l => l.map(t => on(t) ? { ...t, x: t.x + dx, y: t.y + dy } : t))
     if (has("shape")) setShapes(l => l.map(sh => on(sh) ? { ...sh, x: sh.x + dx, y: sh.y + dy, pts: sh.pts.map(([px, py]) => [px + dx, py + dy] as [number, number]) } : sh))
     if (has("image")) setImages(l => l.map(im => on(im) ? { ...im, x: im.x + dx, y: im.y + dy } : im))
@@ -1509,7 +1608,9 @@ function TacticsBoard() {
   const [arrowDefaultDash, setArrowDefaultDash] = useState<"none" | "dashed" | "dotted">("none")
   const [arrowDefaultColor, setArrowDefaultColor] = useState("#ffffff")
   const [arrowDefaultW, setArrowDefaultW] = useState(3)
-  const [arrowDraft, setArrowDraft] = useState<{ x1: number; y1: number } | null>(null)
+  const [arrowDraft, setArrowDraft] = useState<{ x1: number; y1: number; fromId?: string } | null>(null)
+  const [arrowDefaultKind, setArrowDefaultKind] = useState<LineKind>("pass")
+  const [arrowNumbering, setArrowNumbering] = useState(false) // each new line gets the next step number
   const [polyDraft, setPolyDraft] = useState<[number, number][] | null>(null)
   const shapeDrawRef = useRef<{ x1: number; y1: number } | null>(null)
   const [shapeDraftPreview, setShapeDraftPreview] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
@@ -1604,7 +1705,7 @@ function TacticsBoard() {
     const box = canvasRef.current?.getBoundingClientRect()
     if (!box || !box.width || !box.height) return 1
     // the canvas is shown 980 × 630 at 100%; never zoom in past that, and keep a small gap around it
-    return Math.max(0.2, Math.min(1, (box.width - 24) / SVG_DISPLAY_W, (box.height - 24) / (SVG_DISPLAY_W * CH / CW)))
+    return Math.max(0.2, Math.min(1, (box.width - 24) / dispRef.current.w, (box.height - 24) / dispRef.current.h))
   }
   useEffect(() => {
     const el = canvasRef.current
@@ -1732,8 +1833,9 @@ function TacticsBoard() {
       const sIds = new Set(src.filter(s => s.kind === "shape").map(s => s.id))
       const iIds = new Set(src.filter(s => s.kind === "image").map(s => s.id))
       const zIds = new Set(src.filter(s => s.kind === "zone").map(s => s.id))
-      const newPlayers = players.filter(p => pIds.has(p.id)).map(p => ({ ...p, id: uid(), x: p.x + dx, y: p.y + dy }))
-      const newArrows = arrows.filter(a => aIds.has(a.id)).map(a => ({ ...a, id: uid(), x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cpx: a.cpx + dx, cpy: a.cpy + dy }))
+      const idMap = new Map<string, string>() // a copied line stays attached to the copied pieces, never to the originals
+      const newPlayers = players.filter(p => pIds.has(p.id)).map(p => { const id = uid(); idMap.set(p.id, id); return { ...p, id, x: p.x + dx, y: p.y + dy } })
+      const newArrows = arrows.filter(a => aIds.has(a.id)).map(a => ({ ...a, id: uid(), x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cpx: a.cpx + dx, cpy: a.cpy + dy, fromId: a.fromId ? idMap.get(a.fromId) : undefined, toId: a.toId ? idMap.get(a.toId) : undefined }))
       const newTexts = texts.filter(t => tIds.has(t.id)).map(t => ({ ...t, id: uid(), x: t.x + dx, y: t.y + dy }))
       const newShapes = shapes.filter(s => sIds.has(s.id)).map(s => ({ ...s, id: uid(), x: s.x + dx, y: s.y + dy, pts: s.pts.map(([px, py]: [number, number]) => [px + dx, py + dy] as [number, number]) }))
       const newImages = images.filter(i => iIds.has(i.id)).map(i => ({ ...i, id: uid(), x: i.x + dx, y: i.y + dy }))
@@ -1788,8 +1890,9 @@ function TacticsBoard() {
       const cb = clipboardRef.current
       if (!cb) return
       snapshot()
-      const newPlayers = cb.players.map(p => ({ ...p, id: uid(), x: p.x + 24, y: p.y + 24 }))
-      const newArrows = cb.arrows.map(a => ({ ...a, id: uid(), x1: a.x1 + 24, y1: a.y1 + 24, x2: a.x2 + 24, y2: a.y2 + 24, cpx: a.cpx + 24, cpy: a.cpy + 24 }))
+      const idMap = new Map<string, string>()
+      const newPlayers = cb.players.map(p => { const id = uid(); idMap.set(p.id, id); return { ...p, id, x: p.x + 24, y: p.y + 24 } })
+      const newArrows = cb.arrows.map(a => ({ ...a, id: uid(), x1: a.x1 + 24, y1: a.y1 + 24, x2: a.x2 + 24, y2: a.y2 + 24, cpx: a.cpx + 24, cpy: a.cpy + 24, fromId: a.fromId ? idMap.get(a.fromId) : undefined, toId: a.toId ? idMap.get(a.toId) : undefined }))
       const newTexts = cb.texts.map(t => ({ ...t, id: uid(), x: t.x + 24, y: t.y + 24 }))
       const newShapes = cb.shapes.map(s => ({ ...s, id: uid(), x: s.x + 24, y: s.y + 24, pts: s.pts.map(([px, py]: [number, number]) => [px + 24, py + 24] as [number, number]) }))
       const newImages = cb.images.map(i => ({ ...i, id: uid(), x: i.x + 24, y: i.y + 24 }))
@@ -1956,6 +2059,62 @@ function TacticsBoard() {
     }
   }, [selection, players, snapshot])
 
+  /** Where the pitch is, and the part of the board you see and export (what you see is what you export) */
+  const geo = pitchGeo(vertical, pitchScale, pitchOffX, pitchOffY)
+  const geoRef = useRef(geo)
+  geoRef.current = geo
+  const frame = frameRect(geo, canvasMode === "blank" ? "board" : focus, focusEnd, frameRatio)
+  const sealK = Math.min(1, Math.min(frame.w, frame.h) / CH) // the seal and the legend shrink with a small frame
+  const dispW = Math.min(SVG_DISPLAY_W, (SVG_DISPLAY_W * CH / CW) * frame.w / frame.h)
+  const dispRef = useRef({ w: dispW, h: dispW * frame.h / frame.w })
+  dispRef.current = { w: dispW, h: dispW * frame.h / frame.w }
+  // A new frame fits the screen again
+  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** Turns the pitch upright (or back). Everything on it moves with it, so every piece keeps its place on the pitch. One undo step. */
+  const setOrientation = (v: boolean) => {
+    if (v === vertical) return
+    undoPoint()
+    const from = pitchGeo(vertical, pitchScale, pitchOffX, pitchOffY)
+    const to = pitchGeo(v, pitchScale, 0, 0)
+    const T = (x: number, y: number) => { const p = toPitch(from, x, y); return toCanvas(to, p.x, p.y) }
+    const k = to.sc / from.sc
+    setPlayers(l => l.map(p => ({ ...p, ...T(p.x, p.y) })))
+    setArrows(l => l.map(a => {
+      const a1 = T(a.x1, a.y1), a2 = T(a.x2, a.y2), c = T(a.cpx, a.cpy)
+      return { ...a, x1: a1.x, y1: a1.y, x2: a2.x, y2: a2.y, cpx: c.x, cpy: c.y }
+    }))
+    setTexts(l => l.map(tb => { const h = textBoxH(tb), c = T(tb.x + tb.width / 2, tb.y + h / 2); return { ...tb, x: c.x - tb.width / 2, y: c.y - h / 2 } }))
+    setShapes(l => l.map(sh => {
+      if (sh.kind === "polygon") return { ...sh, pts: sh.pts.map(([x, y]) => { const q = T(x, y); return [q.x, q.y] as [number, number] }) }
+      const c = T(sh.x + sh.w / 2, sh.y + sh.h / 2), w = sh.h * k, h = sh.w * k
+      return { ...sh, x: c.x - w / 2, y: c.y - h / 2, w, h }
+    }))
+    setImages(l => l.map(im => { if (im.layer === "background") return im; const c = T(im.x + im.width / 2, im.y + im.height / 2); return { ...im, x: c.x - im.width / 2, y: c.y - im.height / 2 } }))
+    setPitchOffX(0); setPitchOffY(0)
+    setVertical(v)
+    if (v && focus === "board") setFocus("pitch") // an upright pitch is usually wanted on its own
+  }
+
+  /** Every piece by id, for lines attached to pieces */
+  const pieceMap = new Map(players.map(p => [p.id, p]))
+  const piecesRef = useRef(players)
+  piecesRef.current = players
+  // A line attached to a piece follows it: when the piece moves, that end moves with it (and the bend moves half as far)
+  useEffect(() => {
+    setArrows(prev => {
+      let changed = false
+      const next = prev.map(a => {
+        if (!a.fromId && !a.toId) return a
+        const P = a.fromId ? pieceMap.get(a.fromId) : undefined, Q = a.toId ? pieceMap.get(a.toId) : undefined
+        const dx1 = P ? P.x - a.x1 : 0, dy1 = P ? P.y - a.y1 : 0, dx2 = Q ? Q.x - a.x2 : 0, dy2 = Q ? Q.y - a.y2 : 0
+        if (!dx1 && !dy1 && !dx2 && !dy2) return a
+        changed = true
+        return { ...a, x1: a.x1 + dx1, y1: a.y1 + dy1, x2: a.x2 + dx2, y2: a.y2 + dy2, cpx: a.cpx + (dx1 + dx2) / 2, cpy: a.cpy + (dy1 + dy2) / 2 }
+      })
+      return changed ? next : prev
+    })
+  }, [players]) // eslint-disable-line react-hooks/exhaustive-deps
+
   /** How much bigger the names and numbers on the pieces are drawn */
   const labelScale = labelSize === "xl" ? 1.7 : labelSize === "large" ? 1.35 : 1
 
@@ -2033,11 +2192,8 @@ function TacticsBoard() {
     if (!formation) return
     snapshot()
     const newPlayers: Player[] = formation.positions.map(pos => {
-      // Convert pitch-local to canvas coords
-      const cx = team === "home"
-        ? PX + pos.x
-        : PX + (PW - pos.x)
-      const cy = PY + pos.y
+      // Pitch coordinates → board coordinates (the away team mirrors the home team), wherever the pitch is and whichever way it faces
+      const { x: cx, y: cy } = toCanvas(geoRef.current, team === "home" ? pos.x : PW - pos.x, pos.y)
       const colors = team === "home"
         ? { ...HOME_COLORS, ...teamKit("home") }
         : { ...AWAY_COLORS, ...teamKit("away") }
@@ -2068,8 +2224,7 @@ function TacticsBoard() {
       setShapeDraftPreview({ x1: shapeDrawRef.current.x1, y1: shapeDrawRef.current.y1, x2: x, y2: y })
     }
     if (zoneDrawRef.current) {
-      const px = (x - PX - pitchOffXRef.current) / pitchScaleRef.current
-      const py = (y - PY - pitchOffYRef.current) / pitchScaleRef.current
+      const { x: px, y: py } = toPitch(geoRef.current, x, y)
       setZoneDraft({ x1: zoneDrawRef.current.x, y1: zoneDrawRef.current.y, x2: px, y2: py })
     }
 
@@ -2089,8 +2244,8 @@ function TacticsBoard() {
     if (!dragStartedRef.current) { dragStartedRef.current = true; undoPointRef.current() }
     if (d.kind === "move" && m) moveBy(m.base, x - m.x, y - m.y) // everything selected moves together
     else if (d.kind === "arrowCp") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, cpx: x, cpy: y } : ar))
-    else if (d.kind === "arrowP1") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, x1: x, y1: y, cpx: (x + ar.x2) / 2, cpy: (y + ar.y2) / 2 } : ar))
-    else if (d.kind === "arrowP2") setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, x2: x, y2: y, cpx: (ar.x1 + x) / 2, cpy: (ar.y1 + y) / 2 } : ar))
+    else if (d.kind === "arrowP1") { const P = pieceAt(piecesRef.current, x, y); const px = P ? P.x : x, py = P ? P.y : y; setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, x1: px, y1: py, cpx: (px + ar.x2) / 2, cpy: (py + ar.y2) / 2, fromId: P?.id } : ar)) }
+    else if (d.kind === "arrowP2") { const Q = pieceAt(piecesRef.current, x, y); const qx = Q ? Q.x : x, qy = Q ? Q.y : y; setArrows(a => a.map(ar => ar.id === d.id ? { ...ar, x2: qx, y2: qy, cpx: (ar.x1 + qx) / 2, cpy: (ar.y1 + qy) / 2, toId: Q?.id } : ar)) }
     else if (d.kind === "resizeShape") setShapes(s => s.map(sh => sh.id === d.id ? { ...sh, w: Math.max(10, x - sh.x), h: Math.max(10, y - sh.y) } : sh))
     else if (d.kind === "resizeText") setTexts(t => t.map(tb => {
       if (tb.id !== d.id) return tb
@@ -2101,11 +2256,11 @@ function TacticsBoard() {
     else if (d.kind === "resizePlayer") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, scale: Math.max(0.5, (Math.hypot(x - pl.x, y - pl.y) - d.ox) / pieceBase(pl)) } : pl)) // the handle stays under the cursor (ox = where on the handle you grabbed it)
     else if (d.kind === "resizeImage") setImages(i => i.map(im => im.id === d.id ? { ...im, width: Math.max(20, x - im.x), height: Math.max(20, y - im.y) } : im))
     else if (d.kind === "resizePitch") {
-      const offX = pitchOffXRef.current
+      const g = geoRef.current, wide = g.v ? PH * VERT_SCALE : PW // the pitch's width on the board at 100%
       if (d.id === "pitch-tr" || d.id === "pitch-br") {
-        setPitchScale(Math.max(0.3, Math.min(2.5, (x - PX - offX) / PW)))
+        setPitchScale(Math.max(0.3, Math.min(2.5, (x - g.ox) / wide)))
       } else {
-        setPitchScale(prev => Math.max(0.3, Math.min(2.5, (PX + offX + PW * prev - x) / PW)))
+        setPitchScale(prev => Math.max(0.3, Math.min(2.5, (g.ox + wide * prev - x) / wide)))
       }
     }
     else if (d.kind === "movePitch") {
@@ -2126,7 +2281,7 @@ function TacticsBoard() {
       const y1 = Math.min(marquee.y1, marquee.y2), y2 = Math.max(marquee.y1, marquee.y2)
       const inBox = (x: number, y: number) => x >= x1 && x <= x2 && y >= y1 && y <= y2
       const fits = (bx: number, by: number, bw: number, bh: number) => bx >= x1 && by >= y1 && bx + bw <= x2 && by + bh <= y2
-      const sc = pitchScaleRef.current, zx = PX + pitchOffXRef.current, zy = PY + pitchOffYRef.current
+      const zoneBox = (z: CustomZone) => { const r = pitchRect(geoRef.current, z.x, z.y, z.x + z.w, z.y + z.h); return fits(r.x, r.y, r.w, r.h) }
       // Pieces, arrows and text are picked when the box touches them; shapes, zones and images only when they're fully inside it
       const hits: SelItem[] = [
         ...players.filter(p => !p.locked && Math.hypot(p.x - Math.max(x1, Math.min(p.x, x2)), p.y - Math.max(y1, Math.min(p.y, y2))) <= pieceBase(p) * (p.scale || 1)).map(p => ({ kind: "player" as const, id: p.id })),
@@ -2134,7 +2289,7 @@ function TacticsBoard() {
         ...texts.filter(t => !t.locked && t.x < x2 && t.x + t.width > x1 && t.y < y2 && t.y + textBoxH(t) > y1).map(t => ({ kind: "text" as const, id: t.id })),
         ...shapes.filter(sh => !sh.locked && (sh.kind === "polygon" ? sh.pts.length > 0 && sh.pts.every(([x, y]) => inBox(x, y)) : fits(sh.x, sh.y, sh.w, sh.h))).map(sh => ({ kind: "shape" as const, id: sh.id })),
         ...images.filter(im => !im.locked && im.layer === "overlay" && fits(im.x, im.y, im.width, im.height)).map(im => ({ kind: "image" as const, id: im.id })),
-        ...(canvasMode === "blank" ? [] : customZones.filter(z => !z.locked && fits(zx + z.x * sc, zy + z.y * sc, z.w * sc, z.h * sc)).map(z => ({ kind: "zone" as const, id: z.id }))),
+        ...(canvasMode === "blank" ? [] : customZones.filter(z => !z.locked && zoneBox(z)).map(z => ({ kind: "zone" as const, id: z.id }))),
       ]
       setSelection(mq.add ? [...selection, ...hits.filter(h => !selection.some(s => s.id === h.id))] : hits)
     }
@@ -2160,8 +2315,7 @@ function TacticsBoard() {
     }
     if (tool === "zone") {
       const { x, y } = svgXY(e)
-      const px = (x - PX - pitchOffXRef.current) / pitchScaleRef.current
-      const py = (y - PY - pitchOffYRef.current) / pitchScaleRef.current
+      const { x: px, y: py } = toPitch(geoRef.current, x, y)
       zoneDrawRef.current = { x: px, y: py }
     }
   }, [tool, shapeKind, svgXY])
@@ -2188,15 +2342,21 @@ function TacticsBoard() {
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "arrow") {
       if (!arrowDraft) {
-        setArrowDraft({ x1: x, y1: y })
+        const P = pieceAt(players, x, y) // start on a piece and the line follows it
+        setArrowDraft(P ? { x1: P.x, y1: P.y, fromId: P.id } : { x1: x, y1: y })
       } else {
         snapshot()
-        const mx = (arrowDraft.x1 + x) / 2
-        const my = (arrowDraft.y1 + y) / 2
+        const Q = pieceAt(players, x, y)
+        const end = Q && Q.id !== arrowDraft.fromId ? Q : null
+        const x2 = end ? end.x : x, y2 = end ? end.y : y
+        const mx = (arrowDraft.x1 + x2) / 2
+        const my = (arrowDraft.y1 + y2) / 2
         const a: Arrow = {
-          id: uid(), x1: arrowDraft.x1, y1: arrowDraft.y1, x2: x, y2: y,
+          id: uid(), x1: arrowDraft.x1, y1: arrowDraft.y1, x2, y2,
           cpx: mx, cpy: my,
-          color: arrowDefaultColor, strokeW: arrowDefaultW, dash: arrowDefaultDash, label: "", twoWay: false
+          color: arrowDefaultColor, strokeW: arrowDefaultW, dash: arrowDefaultDash, label: "", twoWay: false,
+          kind: arrowDefaultKind, ...(arrowNumbering ? { step: Math.max(0, ...arrows.map(o => o.step || 0)) + 1 } : {}),
+          ...(arrowDraft.fromId ? { fromId: arrowDraft.fromId } : {}), ...(end ? { toId: end.id } : {}),
         }
         setArrows(prev => [...prev, a]); setSel({ kind: "arrow", id: a.id }); setArrowDraft(null)
       }
@@ -2228,7 +2388,7 @@ function TacticsBoard() {
     } else if (tool === "select") {
       setSel(null)
     }
-  }, [tool, shapeKind, players, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot, arrowDefaultDash, arrowDefaultColor, arrowDefaultW,
+  }, [tool, shapeKind, players, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot, arrowDefaultDash, arrowDefaultColor, arrowDefaultW, arrowDefaultKind, arrowNumbering, arrows,
       homeColor, homePat, homeC2, homeNum, awayColor, awayPat, awayC2, awayNum])
 
   /* ── Canvas pan (alt+drag, middle-button, or pan tool) ── */
@@ -2278,7 +2438,7 @@ function TacticsBoard() {
         const w = Math.min(400, img.naturalWidth)
         const h = w / aspect
         const newImg: UploadedImage = {
-          id: uid(), x: CX - w / 2, y: CY - h / 2,
+          id: uid(), x: frame.x + frame.w / 2 - w / 2, y: frame.y + frame.h / 2 - h / 2,
           width: w, height: h, src,
           opacity: 1, layer: "overlay",
           naturalW: img.naturalWidth, naturalH: img.naturalHeight
@@ -2305,17 +2465,25 @@ function TacticsBoard() {
       // The board's fonts go into the picture too, otherwise numbers and names come out in a fallback font (fetched once)
       if (!exportFontCSS) exportFontCSS = getFontEmbedCSS(document.body).catch(() => { exportFontCSS = null; return "" })
       const fontEmbedCSS = await exportFontCSS
+      // What you see is what you export: the frame, at its export size, tilted if 3D is on
+      const size = FRAME_SIZES[frameRatio]
+      const opts = {
+        fontEmbedCSS,
+        ...(size ? { canvasWidth: size[0], canvasHeight: size[1], pixelRatio: 1 } : { pixelRatio: 2 }),
+        // 3D: the tilt as on screen, a little smaller so the near edge stays in the picture, with the corners in the canvas colour
+        ...(view3d ? { backgroundColor: bgColor, style: { transform: `${UPRIGHT_3D} scale(0.86)`, transformOrigin: "center center" } } : {}),
+      }
       if (fmt === "png") {
-        const url = await toPng(node, { pixelRatio: 2, fontEmbedCSS })
+        const url = await toPng(node, opts)
         const a = document.createElement("a"); a.href = url; a.download = `${name}.png`; a.click()
       } else if (fmt === "jpeg") {
-        const url = await toJpeg(node, { quality: 0.95, pixelRatio: 2, backgroundColor: bgColor, fontEmbedCSS })
+        const url = await toJpeg(node, { ...opts, quality: 0.95, backgroundColor: bgColor })
         const a = document.createElement("a"); a.href = url; a.download = `${name}.jpg`; a.click()
       } else {
-        const url = await toPng(node, { pixelRatio: 2, fontEmbedCSS })
+        const url = await toPng(node, opts)
         const img = new Image(); img.src = url
         await new Promise(r => { img.onload = r })
-        const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [img.width, img.height] })
+        const pdf = new jsPDF({ orientation: img.width >= img.height ? "landscape" : "portrait", unit: "px", format: [img.width, img.height] })
         pdf.addImage(url, "PNG", 0, 0, img.width, img.height)
         pdf.save(`${name}.pdf`)
       }
@@ -2369,31 +2537,19 @@ function TacticsBoard() {
   const updS = (patch: Partial<Shape>) => { undoPoint(editKey(patch)); setShapes(s => s.map(x => x.id === sel!.id ? { ...x, ...patch } : x)) }
   const updI = (patch: Partial<UploadedImage>) => { undoPoint(editKey(patch)); setImages(i => i.map(x => x.id === sel!.id ? { ...x, ...patch } : x)) }
 
-  /* ── Rotation ── */
-  const handleRotation = (val: number) => {
-    const r = ((val % 360) + 360) % 360
-    setRotation(snapRot ? snapAngle(r, true) : r)
-  }
-
   /* ── Transform string ── */
   const pitchTransform = [
     `translate(${panX}px, ${panY}px)`,
     `scale(${zoom})`,
-    `rotate(${rotation}deg)`,
   ].join(" ")
 
-  const pitchInnerTransform = view3d
-    ? "perspective(1400px) rotateX(38deg) scaleY(0.95)"
-    : "none"
+  const pitchInnerTransform = view3d ? UPRIGHT_3D : "none"
 
   /* ── Layer splits ── */
   const bgTexts = texts.filter(t => t.layer === "background")
   const fgTexts = texts.filter(t => t.layer === "foreground")
   const bgImages = images.filter(i => i.layer === "background")
   const ovImages = images.filter(i => i.layer === "overlay")
-
-  // SVG display width — we use a fixed display width; viewBox handles scaling
-  const SVG_DISPLAY_W = 980
 
   /* ─────────── RENDER ─────────── */
   return (
@@ -2438,32 +2594,6 @@ function TacticsBoard() {
         </div>
 
         <div className="flex-1 hidden lg:flex items-center gap-2 justify-center">
-          {/* Rotation control */}
-          <div className="flex items-center gap-1.5 rounded px-2 py-1" style={{ background: SURFACE_2 }}>
-            <RefreshCw size={13} style={{ color: TEXT_MUTED }} />
-            <input type="range" min={0} max={360} value={rotation}
-              onChange={e => handleRotation(+e.target.value)}
-              className="hidden xl:block w-20 accent-green-400" style={{ height: 4 }} />
-            <input
-              type="number" min={0} max={360} value={Math.round(rotation)}
-              onChange={e => handleRotation(+e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
-              className="w-12 rounded px-1 py-0.5 text-xs font-mono text-center outline-none"
-              style={{ background: SURFACE_1, color: TEXT_PRIMARY, border: "1px solid rgba(255,255,255,0.1)" }}
-              title="Type exact angle" />
-            <span className="text-xs" style={{ color: TEXT_MUTED }}>°</span>
-            <button onClick={() => setSnapRot(s => !s)} title={snapRot ? "45° snap ON — click to disable" : "Enable 45° snap"}
-              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs transition-colors"
-              style={{ background: snapRot ? "#fbbf2420" : "transparent", color: snapRot ? "#fbbf24" : TEXT_MUTED }}>
-              <Magnet size={12} />{snapRot && <span style={{ fontSize: 9, fontWeight: 700 }}>45°</span>}
-            </button>
-            <button onClick={() => setRotation(0)} title="Reset to 0°"
-              className="p-0.5 rounded hover:bg-white/10 transition-colors"
-              style={{ color: TEXT_MUTED }}>
-              <RotateCcw size={13} />
-            </button>
-          </div>
-
           {/* 3D toggle */}
           <button onClick={() => setView3d(v => !v)}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
@@ -2880,6 +3010,22 @@ function TacticsBoard() {
 
                 {selA && (
                   <div className="flex flex-col gap-2">
+                    <Segmented label="Type" value={selA.kind ?? (selA.dash === "dashed" ? "run" : "pass")} options={LINE_KINDS}
+                      onChange={k => updA({ kind: k, dash: LINE_PRESET[k].dash, strokeW: LINE_PRESET[k].strokeW })} />
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Step number</span>
+                      <input type="number" min={1} value={selA.step ?? ""} placeholder="None"
+                        onChange={e => updA({ step: e.target.value === "" ? undefined : Math.max(1, Math.round(+e.target.value)) })}
+                        className="rounded px-2 py-1 text-xs outline-none"
+                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    {(selA.fromId || selA.toId) && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs" style={{ color: TEXT_MUTED }}>Follows {selA.fromId && selA.toId ? "two players" : "a player"}</span>
+                        <button onClick={() => updA({ fromId: undefined, toId: undefined })}
+                          className="px-2 py-1 rounded text-xs hover:brightness-110" style={{ background: SURFACE_2, color: TEXT_MUTED }}>Detach</button>
+                      </div>
+                    )}
                     <label className="flex flex-col gap-1">
                       <span className="text-xs" style={{ color: TEXT_MUTED }}>Label</span>
                       <input value={selA.label} onChange={e => updA({ label: e.target.value })}
@@ -3064,7 +3210,14 @@ function TacticsBoard() {
               </div>
             ) : tool === "arrow" ? (
               <div className="p-3 flex flex-col gap-2.5">
-                <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Arrow defaults</p>
+                <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Line defaults</p>
+                <Segmented label="Type" value={arrowDefaultKind} options={LINE_KINDS}
+                  onChange={k => { setArrowDefaultKind(k); setArrowDefaultDash(LINE_PRESET[k].dash); setArrowDefaultW(LINE_PRESET[k].strokeW) }} />
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="checkbox" checked={arrowNumbering} onChange={e => setArrowNumbering(e.target.checked)} className="accent-green-400" />
+                  <span style={{ color: TEXT_PRIMARY }}>Number the steps</span>
+                </label>
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Start or end a line on a player and it follows them when they move.</p>
                 <div>
                   <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Line</p>
                   <div className="flex gap-1.5">
@@ -3127,6 +3280,37 @@ function TacticsBoard() {
 
           {/* ── BOARD TAB ── */}
           <div style={{ flex: 1, overflowY: "auto", display: sideTab === "board" ? "block" : "none" }}>
+
+            <button aria-expanded={boardGroups.frame}
+              onClick={() => setBoardGroups(g => ({ ...g, frame: !g.frame }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.frame ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Frame
+            </button>
+            {boardGroups.frame && (
+              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                {canvasMode !== "blank" ? (
+                  <>
+                    <Segmented label="Pitch" value={vertical ? "v" : "h"} onChange={v => setOrientation(v === "v")}
+                      options={[["h", "Horizontal"], ["v", "Vertical"]]} />
+                    <Segmented label="Show" value={focus} onChange={v => { undoPoint(); setFocus(v) }}
+                      options={[["board", "Whole board"], ["pitch", "Pitch"], ["half", "Half"], ["third", "Third"]]} />
+                    {(focus === "half" || focus === "third") && (
+                      <Segmented label="End" value={focusEnd} onChange={v => { undoPoint(); setFocusEnd(v) }}
+                        options={[["attack", "Attacking"], ["defend", "Own"]]} />
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs" style={{ color: TEXT_MUTED }}>A blank canvas always shows the whole board.</p>
+                )}
+                <Segmented label="Size" value={frameRatio} onChange={v => { undoPoint(); setFrameRatio(v) }}
+                  options={[["auto", "Fit"], ["16:9", "16:9"], ["4:5", "4:5"], ["1:1", "1:1"], ["9:16", "9:16"]]} />
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>What you see is what you export. 16:9 exports 1920×1080, 4:5 1080×1350, 1:1 1080×1080 and 9:16 1080×1920.</p>
+              </div>
+            )}
 
             <button aria-expanded={boardGroups.formation}
               onClick={() => setBoardGroups(g => ({ ...g, formation: !g.formation }))}
@@ -3431,9 +3615,9 @@ function TacticsBoard() {
               <div ref={pitchRef} style={{ position: "relative" }}>
                 <svg
                   ref={svgRef}
-                  viewBox={`0 0 ${CW} ${CH}`}
-                  width={SVG_DISPLAY_W}
-                  style={{ display: "block", userSelect: "none", aspectRatio: `${CW}/${CH}`, touchAction: "none" }}
+                  viewBox={`${frame.x} ${frame.y} ${frame.w} ${frame.h}`}
+                  width={dispW}
+                  style={{ display: "block", userSelect: "none", aspectRatio: `${frame.w}/${frame.h}`, touchAction: "none" }}
                   onPointerMove={onSVGMouseMove}
                   onPointerUp={onSVGMouseUp}
                   onPointerDown={onSVGMouseDown}
@@ -3442,8 +3626,9 @@ function TacticsBoard() {
                   onPointerDownCapture={e => { if (tool === "marker" || tool === "ball") { mouseDownPosRef.current = { x: e.clientX, y: e.clientY }; hasDraggedRef.current = false } }}
                   onClickCapture={e => { if (tool === "marker" || tool === "ball") { e.stopPropagation(); onSVGClick(e as unknown as React.PointerEvent) } }}
                 >
-                  {/* 1. Canvas background */}
-                  <rect x={0} y={0} width={CW} height={CH} fill={bgColor} />
+                  {/* 1. Canvas background (it also fills a frame that reaches past the canvas) */}
+                  <rect x={Math.min(0, frame.x)} y={Math.min(0, frame.y)}
+                    width={Math.max(CW, frame.x + frame.w) - Math.min(0, frame.x)} height={Math.max(CH, frame.y + frame.h) - Math.min(0, frame.y)} fill={bgColor} />
 
                   {/* 2. Background images (full-canvas fill) */}
                   {bgImages.map(img => (
@@ -3476,14 +3661,14 @@ function TacticsBoard() {
 
                   {/* 4. Pitch group (translated to canvas offset + user drag offset) */}
                   {canvasMode !== "blank" && (
-                    <g transform={`translate(${PX + pitchOffX},${PY + pitchOffY}) scale(${pitchScale})`}
+                    <g transform={pitchTransformAttr(geo)}
                       onMouseEnter={() => setHoveredPitch(true)}
                       onMouseLeave={() => setHoveredPitch(false)}>
                       <g style={{ clipPath: canvasMode === "half" ? `url(#half-pitch-clip)` : undefined }}>
                         {pitchVisible && <PitchSVG pitchColor={pitchColor} />}
                         {/* ── Zone overlays (pitch-local coords) ── */}
-                        {show18Zones && <EighteenZonesOverlay />}
-                        {showLanes && <LanesOverlay />}
+                        {show18Zones && <EighteenZonesOverlay upright={vertical} />}
+                        {showLanes && <LanesOverlay upright={vertical} />}
                         {/* Custom drawn zones */}
                         {customZones.map(z => {
                           const isSelZ = isSel(z.id)
@@ -3508,7 +3693,8 @@ function TacticsBoard() {
                                 strokeOpacity={isSelZ ? 1 : 0.5}
                                 strokeDasharray={isSelZ ? "6,3" : undefined} />
                               {z.label && (
-                                <text x={z.x + 10} y={z.y + 18}
+                                <text x={vertical ? z.x + z.w - 18 : z.x + 10} y={vertical ? z.y + 10 : z.y + 18}
+                                  transform={vertical ? `rotate(90 ${z.x + z.w - 18} ${z.y + 10})` : undefined}
                                   textAnchor="start" dominantBaseline="auto"
                                   fill="#ffffff" fontSize={14} fontWeight="700"
                                   stroke="rgba(0,0,0,0.9)" strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
@@ -3538,10 +3724,11 @@ function TacticsBoard() {
 
                   {/* Pitch handles — only on hover so they don't show in screenshots */}
                   {canvasMode !== "blank" && tool === "select" && hoveredPitch && (() => {
-                    const ox = PX + pitchOffX
-                    const oy = PY + pitchOffY
-                    const pR = ox + PW * pitchScale
-                    const pB = oy + PH * pitchScale
+                    const pb = pitchRect(geo, 0, 0, PW, PH)
+                    const ox = pb.x
+                    const oy = pb.y
+                    const pR = ox + pb.w
+                    const pB = oy + pb.h
                     const hS = 9
                     const midX = (ox + pR) / 2
                     const corners = [
@@ -3666,7 +3853,10 @@ function TacticsBoard() {
                   {/* 8. Arrows */}
                   {arrows.map(a => {
                     const isSelected = isSel(a.id)
-                    const hs = a.strokeW * 4 + 6
+                    const hs = (a.strokeW * 4 + 6) * (a.kind === "shot" ? 1.25 : 1)
+                    const e = lineEnds(a, pieceMap)
+                    const d = arrowPath(e.x1, e.y1, e.x2, e.y2, a.cpx, a.cpy)
+                    const mid = curveAt(e.x1, e.y1, a.cpx, a.cpy, e.x2, e.y2, 0.5)
                     return (
                       <g key={a.id}
                         onPointerDown={e => { if (a.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } startDrag(e, "arrow", a.id) }}
@@ -3679,15 +3869,25 @@ function TacticsBoard() {
                         }}
                         onContextMenu={e => openMenu(e, { kind: "arrow", id: a.id }, a.locked)}
                         style={{ cursor: tool === "select" && !a.locked ? "move" : "default" }}>
-                        <path d={arrowPath(a.x1, a.y1, a.x2, a.y2, a.cpx, a.cpy)}
+                        <path d={d}
                           fill="none" stroke="transparent" strokeWidth={16} />
-                        <path d={arrowPath(a.x1, a.y1, a.x2, a.y2, a.cpx, a.cpy)}
+                        {/* A shot is a heavy line with a dark edge, so it stands out from a pass */}
+                        {a.kind === "shot" && <path d={d} fill="none" stroke="rgba(0,0,0,0.45)" strokeWidth={a.strokeW + 3} strokeLinecap="round" />}
+                        <path d={a.kind === "dribble" ? wavyPath(e.x1, e.y1, e.x2, e.y2, a.cpx, a.cpy, 3 + a.strokeW, 26) : d}
                           fill="none" stroke={a.color} strokeWidth={a.strokeW}
-                          strokeDasharray={dashArr(a.dash)} strokeLinecap="round" />
-                        <polygon points={arrowHead(a.x2, a.y2, a.cpx, a.cpy, hs)} fill={a.color} />
-                        {a.twoWay && <polygon points={arrowHeadRev(a.x1, a.y1, a.cpx, a.cpy, hs)} fill={a.color} />}
+                          strokeDasharray={dashArr(a.dash)} strokeLinecap="round" strokeLinejoin="round" />
+                        {a.kind !== "line" && <polygon points={arrowHead(e.x2, e.y2, a.cpx, a.cpy, hs)} fill={a.color} />}
+                        {a.twoWay && a.kind !== "line" && <polygon points={arrowHeadRev(e.x1, e.y1, a.cpx, a.cpy, hs)} fill={a.color} />}
+                        {/* Step number: the order of play */}
+                        {!!a.step && (
+                          <g style={{ pointerEvents: "none" }}>
+                            <circle cx={mid.x} cy={mid.y} r={11} fill={a.color} stroke="rgba(0,0,0,0.55)" strokeWidth={1.5} />
+                            <text x={mid.x} y={mid.y + 0.5} textAnchor="middle" dominantBaseline="central" fill={inkOn(a.color)} fontSize={14} fontWeight={800}
+                              style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>{a.step}</text>
+                          </g>
+                        )}
                         {a.label && (
-                          <text x={(a.x1 + a.x2) / 2} y={(a.y1 + a.y2) / 2 - 8}
+                          <text x={(a.x1 + a.x2) / 2} y={(a.y1 + a.y2) / 2 - (a.step ? 22 : 8)}
                             textAnchor="middle" fill={a.color} fontSize={12} fontWeight="600"
                             style={{ fontFamily: "'Inter', sans-serif", pointerEvents: "none" }}>
                             {a.label}
@@ -3695,11 +3895,11 @@ function TacticsBoard() {
                         )}
                         {isSelected && (
                           <>
-                            <line x1={a.x1} y1={a.y1} x2={a.cpx} y2={a.cpy} stroke={ACCENT_SOLID} strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
-                            <line x1={a.x2} y1={a.y2} x2={a.cpx} y2={a.cpy} stroke={ACCENT_SOLID} strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
-                            <circle cx={a.x1} cy={a.y1} r={7} fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} style={{ cursor: "grab" }}
+                            <line x1={e.x1} y1={e.y1} x2={a.cpx} y2={a.cpy} stroke={ACCENT_SOLID} strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
+                            <line x1={e.x2} y1={e.y2} x2={a.cpx} y2={a.cpy} stroke={ACCENT_SOLID} strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
+                            <circle cx={e.x1} cy={e.y1} r={7} fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} style={{ cursor: "grab" }}
                               onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowP1", id: a.id, ox: 0, oy: 0 } }} />
-                            <circle cx={a.x2} cy={a.y2} r={7} fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} style={{ cursor: "grab" }}
+                            <circle cx={e.x2} cy={e.y2} r={7} fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} style={{ cursor: "grab" }}
                               onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowP2", id: a.id, ox: 0, oy: 0 } }} />
                             <circle cx={a.cpx} cy={a.cpy} r={6} fill="#fbbf24" stroke="#0d1117" strokeWidth={1.5} style={{ cursor: "grab" }}
                               onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "arrowCp", id: a.id, ox: 0, oy: 0 } }} />
@@ -3717,16 +3917,19 @@ function TacticsBoard() {
                         (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2)}
                         fill="none" stroke="transparent" strokeWidth={16} />
                       {/* Styled preview path */}
-                      <path d={arrowPath(arrowDraft.x1, arrowDraft.y1, mouse.x, mouse.y,
-                        (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2)}
+                      <path d={arrowDefaultKind === "dribble"
+                        ? wavyPath(arrowDraft.x1, arrowDraft.y1, mouse.x, mouse.y, (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2, 3 + arrowDefaultW, 26)
+                        : arrowPath(arrowDraft.x1, arrowDraft.y1, mouse.x, mouse.y, (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2)}
                         fill="none" stroke={arrowDefaultColor} strokeWidth={arrowDefaultW}
                         strokeOpacity={0.65}
                         strokeDasharray={arrowDefaultDash === "dashed" ? "12,6" : arrowDefaultDash === "dotted" ? "4,4" : undefined}
                         strokeLinecap="round" />
                       <circle cx={arrowDraft.x1} cy={arrowDraft.y1} r={6} fill={ACCENT_SOLID} />
-                      <polygon points={arrowHead(mouse.x, mouse.y,
-                        (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2, 14)}
-                        fill={arrowDefaultColor} fillOpacity={0.65} />
+                      {arrowDefaultKind !== "line" && (
+                        <polygon points={arrowHead(mouse.x, mouse.y,
+                          (arrowDraft.x1 + mouse.x) / 2, (arrowDraft.y1 + mouse.y) / 2, 14)}
+                          fill={arrowDefaultColor} fillOpacity={0.65} />
+                      )}
                     </g>
                   )}
 
@@ -3876,11 +4079,11 @@ function TacticsBoard() {
 
                   {/* Team legend: the kit and name of each named team, bottom left */}
                   {(homeName.trim() !== "" || awayName.trim() !== "") && (
-                    <g style={{ pointerEvents: "none" }}>
+                    <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x},${frame.y + frame.h}) scale(${sealK})`}>
                       {(["home", "away"] as const).filter(team => (team === "home" ? homeName : awayName).trim() !== "").map((team, i, arr) => {
                         const k = kitOf(team)
                         return (
-                          <g key={team} transform={`translate(30,${CH - 26 - (arr.length - 1 - i) * 28})`}>
+                          <g key={team} transform={`translate(30,${-26 - (arr.length - 1 - i) * 28})`}>
                             <KitFill cid={`kl-${team}`} r={10} pat={k.pat} c1={k.c1} c2={k.c2} />
                             <circle r={10} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={1.5} />
                             <text x={19} y={1} dominantBaseline="central" fill="#ffffff" fontSize={17} fontWeight={700}
@@ -3895,14 +4098,14 @@ function TacticsBoard() {
                   )}
 
                   {/* 13. Creator seal — always last, always visible: the PS seal, your handle (once you've chosen one) and PITCHSTUDIO */}
-                  <g style={{ pointerEvents: "none" }}>
-                    <rect x={CW - 14 - (wmWidth + 48)} y={CH - 42} width={wmWidth + 48} height={28} rx={14} fill="rgba(0,0,0,0.62)" />
-                    <circle cx={CW - 14 - (wmWidth + 48) + 17} cy={CH - 28} r={11} fill={PS_VOLT} />
-                    <text x={CW - 14 - (wmWidth + 48) + 17} y={CH - 27.5} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#0a0c0f"
+                  <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x + frame.w},${frame.y + frame.h}) scale(${sealK})`}>
+                    <rect x={-14 - (wmWidth + 48)} y={-42} width={wmWidth + 48} height={28} rx={14} fill="rgba(0,0,0,0.62)" />
+                    <circle cx={-14 - (wmWidth + 48) + 17} cy={-28} r={11} fill={PS_VOLT} />
+                    <text x={-14 - (wmWidth + 48) + 17} y={-27.5} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#0a0c0f"
                       style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.02em" }}>
                       PS
                     </text>
-                    <text ref={wmTextRef} x={CW - 26} y={CH - 22} textAnchor="end" fontSize={17}
+                    <text ref={wmTextRef} x={-26} y={-22} textAnchor="end" fontSize={17}
                       style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
                       {creatorHandle && <tspan fill="rgba(255,255,255,0.78)" fontWeight="600" style={{ letterSpacing: "0.04em" }}>@{creatorHandle}</tspan>}
                       <tspan dx={creatorHandle ? 8 : 0} fill="rgba(255,255,255,0.95)" fontWeight="700" style={{ letterSpacing: "0.12em" }}>PITCHSTUDIO</tspan>
@@ -3925,14 +4128,6 @@ function TacticsBoard() {
             <button onClick={fitToView} className="px-1.5 py-0.5 rounded text-xs hover:bg-white/10 transition-colors"
               style={{ color: TEXT_MUTED }}>Fit</button>
           </div>
-
-          {/* Rotation snap indicator */}
-          {snapRot && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-lg px-3 py-1.5 border text-xs"
-              style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", color: "#fbbf24", zIndex: 10 }}>
-              <Magnet size={12} /> Snap: {Math.round(rotation)}°
-            </div>
-          )}
 
           {/* Save problems, and the unsaved board that came back: shown over the canvas so they're visible on every screen size.
               The status region always stays in place, so screen readers announce whatever appears in it. */}
@@ -4591,7 +4786,7 @@ function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted
 
 /* ─────────────────────────── Lanes Overlay ─────────────────── */
 // Renders in pitch-local coords (0..PW, 0..PH) — place inside scaled pitch group
-function LanesOverlay() {
+function LanesOverlay({ upright = false }: { upright?: boolean }) {
   const laneH = PH / 5
   const orange = "#f97316"
   const lanes = [
@@ -4607,7 +4802,7 @@ function LanesOverlay() {
         <g key={i}>
           <rect x={0} y={ln.y} width={PW} height={laneH}
             fill={ln.fill} stroke={ln.stroke} strokeWidth={1} strokeOpacity={0.5} />
-          <text x={PW / 2} y={ln.y + laneH / 2}
+          <text x={PW / 2} y={ln.y + laneH / 2} transform={upright ? `rotate(90 ${PW / 2} ${ln.y + laneH / 2})` : undefined}
             textAnchor="middle" dominantBaseline="middle"
             fill={orange} fontSize={14} fontWeight="700" fillOpacity={0.75}
             style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.12em" }}>
@@ -4629,7 +4824,7 @@ function LanesOverlay() {
 }
 
 /* ──────────────────────── 18 Zones Overlay ─────────────────── */
-function EighteenZonesOverlay() {
+function EighteenZonesOverlay({ upright = false }: { upright?: boolean }) {
   const cols = 6, rows = 3
   const cw = PW / cols   // 175
   const rh = PH / rows   // ≈ 226.67
@@ -4656,7 +4851,8 @@ function EighteenZonesOverlay() {
         return (
           <g key={zoneNum}>
             <rect x={x} y={y} width={cw} height={rh} fill={fill} stroke="rgba(255,255,255,0.08)" strokeWidth={0.5} />
-            <text x={x + 10} y={y + 18}
+            <text x={upright ? x + cw - 18 : x + 10} y={upright ? y + 10 : y + 18}
+              transform={upright ? `rotate(90 ${x + cw - 18} ${y + 10})` : undefined}
               fill="rgba(255,255,255,0.55)" fontSize={16} fontWeight="700"
               style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
               {zoneNum}
@@ -4671,8 +4867,8 @@ function EighteenZonesOverlay() {
       ))}
       {/* Third labels at bottom */}
       {thirds.map((t, i) => (
-        <text key={i} x={t.x + cw} y={PH - 8}
-          textAnchor="middle" fill={orange} fontSize={11} fontWeight="700" fillOpacity={0.9}
+        <text key={i} x={t.x + cw} y={PH - 8} transform={upright ? `rotate(90 ${t.x + cw} ${PH - 8})` : undefined}
+          textAnchor={upright ? "end" : "middle"} fill={orange} fontSize={11} fontWeight="700" fillOpacity={0.9}
           style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.08em" }}>
           {t.label}
         </text>
