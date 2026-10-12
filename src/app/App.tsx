@@ -11,7 +11,7 @@ import {
   Lock, Star, X, RefreshCw, Magnet, ChevronRight,
   Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock,
   LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive,
-  Settings, ArrowLeft, HelpCircle, Mail,
+  Settings, ArrowLeft, HelpCircle, Mail, AlignLeft, ChevronUp,
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
@@ -81,12 +81,124 @@ interface CanvasState {
   players: Player[]; arrows: Arrow[]; texts: TextBox[]
   shapes: Shape[]; images: UploadedImage[]
   title: string; bgColor: string; showPitch: boolean
+  customZones?: CustomZone[]; settings?: BoardSettings
 }
 interface Template {
   id: string; name: string
   data: CanvasState
   published: boolean
   createdAt: number
+}
+
+/** How a board looks. Saved with the board so it reopens exactly the same. */
+interface BoardSettings {
+  workspaceMode: "tactics" | "report" | "brainstorm"
+  canvasMode: "full" | "half" | "blank"
+  showPitch: boolean
+  pitchColor: "green" | "white"
+  bgColor: string
+  pitchScale: number; pitchOffX: number; pitchOffY: number
+  view3d: boolean; rotation: number
+  homeColor: string; awayColor: string
+  showPlayerLabels: boolean
+  textLayer: "foreground" | "background"
+  showLanes: boolean; show18Zones: boolean
+}
+/** What a saved board keeps in canvas_data (version 2). Version 1 boards only had the five element lists. */
+interface BoardData {
+  v: 2
+  players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]
+  customZones: CustomZone[]
+  settings: BoardSettings
+}
+const DEFAULT_BOARD_SETTINGS: BoardSettings = {
+  workspaceMode: "tactics", canvasMode: "full", showPitch: true, pitchColor: "green", bgColor: "#0d1117",
+  pitchScale: 1, pitchOffX: 0, pitchOffY: 0, view3d: false, rotation: 0,
+  homeColor: "#fbbf24", awayColor: "#1d4ed8", showPlayerLabels: true, textLayer: "foreground",
+  showLanes: false, show18Zones: false,
+}
+/** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
+function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
+  const v = src ?? {}
+  const d = DEFAULT_BOARD_SETTINGS
+  const oneOf = <T extends string>(x: unknown, allowed: readonly T[], fallback: T): T =>
+    (allowed as readonly unknown[]).includes(x) ? (x as T) : fallback
+  const num = (x: unknown, fallback: number) => (typeof x === "number" && Number.isFinite(x) ? x : fallback)
+  const bool = (x: unknown, fallback: boolean) => (typeof x === "boolean" ? x : fallback)
+  const str = (x: unknown, fallback: string) => (typeof x === "string" && x ? x : fallback)
+  return {
+    workspaceMode: oneOf(v.workspaceMode, ["tactics", "report", "brainstorm"] as const, d.workspaceMode),
+    canvasMode: oneOf(v.canvasMode, ["full", "half", "blank"] as const, d.canvasMode),
+    showPitch: bool(v.showPitch, d.showPitch),
+    pitchColor: oneOf(v.pitchColor, ["green", "white"] as const, d.pitchColor),
+    bgColor: str(v.bgColor, d.bgColor),
+    pitchScale: num(v.pitchScale, d.pitchScale), pitchOffX: num(v.pitchOffX, d.pitchOffX), pitchOffY: num(v.pitchOffY, d.pitchOffY),
+    view3d: bool(v.view3d, d.view3d), rotation: num(v.rotation, d.rotation),
+    homeColor: str(v.homeColor, d.homeColor), awayColor: str(v.awayColor, d.awayColor),
+    showPlayerLabels: bool(v.showPlayerLabels, d.showPlayerLabels),
+    textLayer: oneOf(v.textLayer, ["foreground", "background"] as const, d.textLayer),
+    showLanes: bool(v.showLanes, d.showLanes), show18Zones: bool(v.show18Zones, d.show18Zones),
+  }
+}
+/** Reads any saved board, old or new format, and fills in anything missing. */
+function normalizeBoardData(raw: unknown): BoardData {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
+  const list = <T,>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : [])
+  return {
+    v: 2,
+    players: list<Player>(r.players), arrows: list<Arrow>(r.arrows), texts: list<TextBox>(r.texts),
+    shapes: list<Shape>(r.shapes), images: list<UploadedImage>(r.images),
+    customZones: list<CustomZone>(r.customZones),
+    settings: settingsFrom(r.settings as Record<string, unknown> | undefined),
+  }
+}
+/** A short way to compare "what's on screen" with "what was last saved". */
+const boardFingerprint = (title: string, narrative: string, data: BoardData) => JSON.stringify([title, narrative, data])
+/** The pieces a board is made of, in a fixed order. Lists are compared as objects, so an edit shows up the moment it happens. */
+const boardParts = (title: string, narrative: string, d: BoardData): unknown[] =>
+  [title, narrative, d.players, d.arrows, d.texts, d.shapes, d.images, d.customZones, ...Object.values(d.settings)]
+const sameParts = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
+/** The same data always gives the same text, whatever order the keys come back in from the database. */
+function canonicalJson(x: unknown): string {
+  const sort = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(sort)
+      : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sort((v as Record<string, unknown>)[k])]))
+      : v
+  return JSON.stringify(sort(x))
+}
+/** How long a save is waited for before it counts as failed, so "Saving…" can never get stuck:
+ *  20 s, plus 1 s for every 50 KB it sends (photos on a slow phone connection need longer), up to 3 minutes. */
+const saveTimeoutFor = (size: number) => Math.min(180000, 20000 + Math.ceil(size / 50000) * 1000)
+/** Runs a database request, but stops waiting for it after ms (and cancels it, unless cancel is false). Gives null if it took too long. */
+function withTimeout<T>(make: (signal: AbortSignal) => PromiseLike<T>, ms: number, cancel = true): Promise<T | null> {
+  const ctrl = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<null>(resolve => { timer = setTimeout(() => { if (cancel) ctrl.abort(); resolve(null) }, ms) })
+  return Promise.race([Promise.resolve(make(ctrl.signal)), timeout]).finally(() => clearTimeout(timer))
+}
+/** What one save writes, decided at the moment it was asked for. */
+type SaveSnap = { epoch: number; uid: string; title: string; narrative: string; data: BoardData }
+/** Why the "leaving the board" dialog is showing. */
+type LeaveReason = "new" | "failed" | "conflict" | "saving"
+/** Saves still on their way. The hub's list waits for them (up to maxMs), so it doesn't show an older version of a board. */
+const savesInFlight = new Set<Promise<unknown>>()
+const waitForSaves = (maxMs: number) =>
+  Promise.race([Promise.allSettled(Array.from(savesInFlight)), new Promise(resolve => setTimeout(resolve, maxMs))])
+/** The save each saved board is waiting on. Opening that board waits for it: it may hold the last change made before Back. */
+const boardSavesInFlight = new Map<string, Promise<unknown>>()
+const waitForBoardSave = (id: string) => boardSavesInFlight.get(id) ?? Promise.resolve()
+/** Hands a board (or Braindump) from the hub to the board page. Kept in memory: a board with photos can be too big for browser storage. */
+const boardHandoff: { preload: { canvas_data: unknown; title: string | null; id: string; narrative: string | null; updated_at: string | null } | null; braindump: boolean } =
+  { preload: null, braindump: false }
+/** Unsaved new boards are kept on this device (one for the board, one for Braindump),
+ *  so the browser's Back button, a closed tab or a crash doesn't lose them. Boards with big photos are too large to keep. */
+const DRAFT_MAX_CHARS = 1000000
+const draftKey = (userId: string, mode: string) => `ps_draft_${mode === "brainstorm" ? "braindump" : "board"}_${userId}`
+function readDraft(key: string): { title: string; narrative: string; data: unknown } | null {
+  try {
+    const d = JSON.parse(localStorage.getItem(key) || "null")
+    return d && typeof d === "object" && d.data && typeof d.data === "object" ? { title: String(d.title || ""), narrative: String(d.narrative || ""), data: d.data } : null
+  } catch { return null }
 }
 
 type Sel = null | { kind: "player" | "arrow" | "text" | "shape" | "image" | "zone"; id: string }
@@ -743,6 +855,30 @@ function TacticsBoard() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [currentBoardId, setCurrentBoardId] = useState<string | null>(null)
 
+  /* ── Narrative: the written story that goes with the board ── */
+  const [narrative, setNarrative] = useState("")
+  const [narrativeOpen, setNarrativeOpen] = useState(false)
+
+  /* ── Saving: what's open, what was last saved, and whether a save is running ── */
+  const currentBoardIdRef = useRef<string | null>(null) // same as currentBoardId, but readable straight after a save
+  const boardEpochRef = useRef(0) // goes up every time a different board is opened or the board is cleared
+  const renderEpoch = boardEpochRef.current // the board this render belongs to
+  const lastSavedRef = useRef("") // fingerprint of the version last saved or opened
+  const loadedUpdatedAtRef = useRef<string | null>(null) // the row's updated_at when we last read or wrote it
+  const conflictRef = useRef(false) // the board changed (or was deleted) somewhere else: autosave pauses
+  const failedSaveRef = useRef("") // the version that last failed to save; autosave waits for a new change before retrying
+  const savePromiseRef = useRef<Promise<boolean> | null>(null)
+  const savedPartsRef = useRef<unknown[]>([]) // the pieces the board was made of when last saved or opened
+  const unsureRef = useRef<{ title: string; narrative: string; canon: string }[]>([]) // updates that got no answer: they may still have landed
+  const copyRef = useRef<Promise<boolean> | null>(null) // a "Save as new board" that's on its way (one copy per click burst)
+  const draftKeyRef = useRef<string | null>(null) // where this new board's unsaved draft is kept on this device
+  const keepDraftRef = useRef(true) // false once you've chosen to leave a new board without saving it
+  const [saveTick, setSaveTick] = useState(0) // bumps after every save so the autosave check runs again
+  const [, setSyncTick] = useState(0) // redraws the Save button when the board turns out to match what's saved
+  const [noticeHidden, setNoticeHidden] = useState(false) // the save problem notice was closed
+  const [draftNotice, setDraftNotice] = useState(false) // "We kept your unsaved board"
+  const bindBoard = (id: string | null) => { currentBoardIdRef.current = id; setCurrentBoardId(id) }
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setAuthUser(session?.user ?? null)
@@ -768,76 +904,174 @@ function TacticsBoard() {
   }, [authUser?.id])
 
   // Deep-link handlers: set by HubPage before navigating to "/"
+  const entryRef = useRef<"board" | "braindump" | "opened">("board") // how you got here (decides which unsaved draft comes back)
   useEffect(() => {
-    const mode = localStorage.getItem("ps_initial_mode")
-    if (mode === "brainstorm") {
-      localStorage.removeItem("ps_initial_mode")
+    if (boardHandoff.braindump) {
+      boardHandoff.braindump = false
+      entryRef.current = "braindump"
       setWorkspaceMode("brainstorm")
       setCanvasMode("blank")
       setBgColor("#08080A")
       setShowPitch(false)
       return
     }
-    const preload = localStorage.getItem("ps_preload_board")
+    const preload = boardHandoff.preload
     if (preload) {
-      localStorage.removeItem("ps_preload_board")
-      try {
-        const { canvas_data, title: t, id } = JSON.parse(preload)
-        setPlayers(canvas_data.players ?? [])
-        setArrows(canvas_data.arrows ?? [])
-        setTexts(canvas_data.texts ?? [])
-        setShapes(canvas_data.shapes ?? [])
-        setImages(canvas_data.images ?? [])
-        setTitle(t ?? "")
-        setSel(null)
-        setCurrentBoardId(id ?? null)
-      } catch { /* malformed, ignore */ }
+      boardHandoff.preload = null
+      openBoard(preload.canvas_data, preload.title, preload.id, preload.narrative, preload.updated_at)
+      entryRef.current = "opened"
     }
   }, [])
 
   const [saveError, setSaveError] = useState("")
   const [showSaveMenu, setShowSaveMenu] = useState(false)
 
-  const saveBoard = async (forceNew = false) => {
-    if (!authUser) { setShowAuth(true); return }
-    setSaveStatus("saving"); setSaveError(""); setShowSaveMenu(false)
-    const canvasData = { players, arrows, texts, shapes, images }
-
-    if (currentBoardId && !forceNew) {
-      // UPDATE existing board
-      const { error } = await supabase.from("boards")
-        .update({ title, canvas_data: canvasData, updated_at: new Date().toISOString() })
-        .eq("id", currentBoardId)
-        .eq("user_id", authUser.id)
-      if (error) {
-        console.error("Save board error:", error)
-        setSaveError(error.message)
-        setSaveStatus("error")
-        setTimeout(() => setSaveStatus("idle"), 6000)
-      } else {
-        setSaveStatus("saved")
-        ;(window as any).posthog?.capture("board_saved")
-        setTimeout(() => setSaveStatus("idle"), 2000)
-      }
-    } else {
-      // INSERT new board
-      const { data, error } = await supabase.from("boards")
-        .insert({ user_id: authUser.id, title, canvas_data: canvasData })
-        .select("id")
-        .single()
-      if (error) {
-        console.error("Save board error:", error)
-        setSaveError(error.message)
-        setSaveStatus("error")
-        setTimeout(() => setSaveStatus("idle"), 6000)
-      } else {
-        if (data?.id) setCurrentBoardId(data.id)
-        setSaveStatus("saved")
-        ;(window as any).posthog?.capture("board_saved")
-        setTimeout(() => setSaveStatus("idle"), 2000)
-      }
+  /** Saves the whole board: elements, zones, pitch settings, title and narrative.
+   *  forceNew = "Save as new board". auto = the quiet background save (no sign-in prompt, no analytics event).
+   *  Resolves true once saved, false if it couldn't be. Never waits longer than saveTimeoutFor() allows. */
+  const saveBoard = (forceNew = false, auto = false): Promise<boolean> => {
+    if (!authUser) { if (!auto) setShowAuth(true); return Promise.resolve(false) }
+    if (renderEpoch !== boardEpochRef.current) return Promise.resolve(false) // left over from a board that's no longer open
+    setShowSaveMenu(false)
+    if (forceNew && copyRef.current) return copyRef.current // a copy is already on its way
+    const running = savePromiseRef.current
+    if (running && !forceNew) return running // one save at a time
+    // What gets saved is decided now, even when it has to wait for a save that's already running
+    const snap: SaveSnap = { epoch: boardEpochRef.current, uid: authUser.id, title, narrative, data: collectBoard() }
+    // "Save as new board" waits for the running save, then makes its copy
+    const p = running ? running.then(() => startSave(snap, true, auto)) : startSave(snap, forceNew, auto)
+    if (forceNew) {
+      copyRef.current = p
+      const clear = () => { if (copyRef.current === p) copyRef.current = null }
+      p.then(clear, clear)
     }
+    return p
   }
+  /** Runs one save and keeps track of it until it's finished. */
+  const startSave = (snap: SaveSnap, forceNew: boolean, auto: boolean): Promise<boolean> => {
+    const target = forceNew ? null : currentBoardIdRef.current // the saved board this writes to (none for a first save or a copy)
+    const p: Promise<boolean> = runSave(snap, forceNew, auto)
+      .catch(err => {
+        console.error("Save board error:", err)
+        if (snap.epoch === boardEpochRef.current) { setSaveError("Couldn't save your latest changes."); setSaveStatus("error") }
+        return false
+      })
+      .finally(() => {
+        if (savePromiseRef.current === p) savePromiseRef.current = null
+        savesInFlight.delete(p)
+        if (target && boardSavesInFlight.get(target) === p) boardSavesInFlight.delete(target)
+        setSaveTick(t => t + 1)
+      })
+    savePromiseRef.current = p
+    savesInFlight.add(p)
+    if (target) boardSavesInFlight.set(target, p)
+    return p
+  }
+  const runSave = async (snap: SaveSnap, forceNew: boolean, auto: boolean): Promise<boolean> => {
+    const { epoch, uid, title: t, narrative: n, data } = snap
+    const here = () => epoch === boardEpochRef.current // is this still the board on screen?
+    const savedAs = boardFingerprint(t, n, data)
+    const ms = saveTimeoutFor(savedAs.length) // boards with photos get longer
+    const row = { title: t, canvas_data: data, narrative: n }
+    if (here()) { setSaveStatus("saving"); setSaveError(""); setNoticeHidden(false) }
+    const boardId = forceNew ? null : currentBoardIdRef.current
+    let newId: string | null = null
+    let failed = false
+    let conflict = false
+    let newUpdatedAt: string | null = null
+    let slowUpdate: Promise<any> | null = null // an update we stopped waiting for (it's left to finish)
+    if (boardId) {
+      // Only overwrite the version we last read or wrote. If it changed somewhere else (another tab or device)
+      // or was deleted, nothing is overwritten and we say so.
+      // A slow update is left to finish even after we stop waiting: it only lands if nothing newer was saved first.
+      const id = boardId
+      const update = (after: string | null): Promise<any> => {
+        let q = (supabase as any).from("boards")
+          .update({ ...row, updated_at: new Date().toISOString() })
+          .eq("id", id)
+          .eq("user_id", uid)
+        if (after) q = q.eq("updated_at", after)
+        return Promise.resolve(q.select("updated_at"))
+      }
+      let request = update(loadedUpdatedAtRef.current)
+      let res = await withTimeout(() => request, ms, false)
+      if (res && !res.error && !res.data?.length && unsureRef.current.length) {
+        // Nothing matched. If that's because an earlier save of ours landed after all (its answer was lost), carry on from it.
+        const landed = await ourEarlierSave(id, ms)
+        if (landed) { request = update(landed); res = await withTimeout(() => request, ms, false) }
+      }
+      if (!res) slowUpdate = request
+      if (!res || res.error) { failed = true; console.error("Save board error:", res ? res.error.message : "no answer yet") }
+      else if (!res.data?.length) conflict = true
+      else newUpdatedAt = res.data[0].updated_at ?? null
+    } else {
+      const res = await withTimeout<any>(signal => (supabase as any).from("boards")
+        .insert({ user_id: uid, ...row })
+        .select("id, updated_at")
+        .abortSignal(signal)
+        .single(), ms)
+      if (!res || res.error) { failed = true; console.error("Save board error:", res ? res.error.message : "no answer") }
+      else { newId = res.data?.id ?? null; newUpdatedAt = res.data?.updated_at ?? null }
+    }
+    // Another board was opened (or the board was cleared) while this save ran: the save itself is done,
+    // but it must not touch the board that's open now.
+    if (!here()) return !failed && !conflict
+    if (failed) {
+      failedSaveRef.current = savedAs
+      setSaveError("Couldn't save your latest changes.")
+      setSaveStatus("error")
+      if (!boardId) return false
+      // An update may still have landed: remember it, so the next save can tell our own change from someone else's
+      const attempt = { title: t, narrative: n, canon: canonicalJson(data) }
+      unsureRef.current = [...unsureRef.current.slice(-3), attempt]
+      // An update that was only slow: if it lands after all, and nothing else has saved since, the board counts as saved
+      slowUpdate?.then(late => {
+        if (!late || late.error || !late.data?.length) return
+        if (!here() || savePromiseRef.current || !unsureRef.current.includes(attempt)) return
+        loadedUpdatedAtRef.current = late.data[0].updated_at ?? null
+        conflictRef.current = false
+        failedSaveRef.current = ""
+        unsureRef.current = []
+        lastSavedRef.current = savedAs
+        savedPartsRef.current = boardParts(t, n, data)
+        setSaveStatus("idle"); setSaveError(""); setSaveTick(x => x + 1)
+      }, () => { /* never landed */ })
+      return false
+    }
+    if (conflict) {
+      conflictRef.current = true
+      setSaveError("This board was changed somewhere else.")
+      setSaveStatus("error")
+      return false
+    }
+    if (newId) { bindBoard(newId); removeDraft(); setDraftNotice(false) }
+    loadedUpdatedAtRef.current = newUpdatedAt
+    conflictRef.current = false
+    failedSaveRef.current = ""
+    unsureRef.current = []
+    lastSavedRef.current = savedAs
+    savedPartsRef.current = boardParts(t, n, data)
+    setSaveStatus("idle")
+    if (!auto) (window as any).posthog?.capture("board_saved")
+    return true
+  }
+  /** A save matched nothing: was that because one of our own earlier saves to this board landed after all? Gives its updated_at if so. */
+  const ourEarlierSave = async (boardId: string, ms: number): Promise<string | null> => {
+    const res = await withTimeout<any>(signal => (supabase as any).from("boards")
+      .select("updated_at, title, narrative, canvas_data").eq("id", boardId).abortSignal(signal).maybeSingle(), ms)
+    const row = res && !res.error ? res.data : null
+    if (!row) return null
+    const canon = canonicalJson(row.canvas_data)
+    const ours = unsureRef.current.some(u => u.title === row.title && u.narrative === (row.narrative ?? "") && u.canon === canon)
+    return ours ? row.updated_at ?? null : null
+  }
+  const removeDraft = () => {
+    if (!draftKeyRef.current) return
+    try { localStorage.removeItem(draftKeyRef.current) } catch { /* storage blocked */ }
+    draftKeyRef.current = null
+  }
+  const saveBoardRef = useRef(saveBoard)
+  saveBoardRef.current = saveBoard
 
   /* ── Templates ── */
   const [templates, setTemplates] = useState<Template[]>(() => {
@@ -846,7 +1080,8 @@ function TacticsBoard() {
   })
   const saveTemplates = (t: Template[]) => {
     setTemplates(t)
-    localStorage.setItem("tactics-templates", JSON.stringify(t))
+    try { localStorage.setItem("tactics-templates", JSON.stringify(t)) }
+    catch { console.warn("Templates couldn't be kept on this device: browser storage is full") }
   }
 
   /* ── Workspace mode ── */
@@ -869,6 +1104,196 @@ function TacticsBoard() {
   useEffect(() => { pitchScaleRef.current = pitchScale }, [pitchScale])
   useEffect(() => { pitchOffXRef.current = pitchOffX }, [pitchOffX])
   useEffect(() => { pitchOffYRef.current = pitchOffY }, [pitchOffY])
+
+  /* ── Whole-board save and restore ── */
+  /** Everything about the board right now, in the format it's saved in. */
+  const collectBoard = (): BoardData => ({
+    v: 2,
+    players, arrows, texts, shapes, images, customZones,
+    settings: settingsFrom({
+      workspaceMode, canvasMode, showPitch, pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY,
+      view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones,
+    }),
+  })
+  /** Puts a saved board's elements, zones and settings back on screen. */
+  const applyBoardData = (d: BoardData) => {
+    setPlayers(d.players); setArrows(d.arrows); setTexts(d.texts); setShapes(d.shapes); setImages(d.images)
+    setCustomZones(d.customZones)
+    const st = d.settings
+    setWorkspaceMode(st.workspaceMode); setCanvasMode(st.canvasMode); setShowPitch(st.showPitch)
+    setPitchColor(st.pitchColor); setBgColor(st.bgColor)
+    setPitchScale(st.pitchScale); setPitchOffX(st.pitchOffX); setPitchOffY(st.pitchOffY)
+    setView3d(st.view3d); setRotation(st.rotation)
+    setHomeColor(st.homeColor); setAwayColor(st.awayColor)
+    setShowPlayerLabels(st.showPlayerLabels); setTextLayer(st.textLayer)
+    setShowLanes(st.showLanes); setShow18Zones(st.show18Zones)
+  }
+  /** Opens a board exactly as it was saved. Older boards get today's defaults for anything they didn't store.
+   *  boardId = null starts a new, unsaved board (used for templates). */
+  const openBoard = (raw: unknown, boardTitle: string | null, boardId: string | null, boardNarrative: string | null, boardUpdatedAt: string | null) => {
+    const d = normalizeBoardData(raw)
+    const t = boardTitle || "Untitled board"
+    const n = boardNarrative ?? ""
+    boardEpochRef.current += 1 // anything still saving belongs to the previous board
+    histRef.current = []; histIdx.current = -1 // undo can't bring back another board's content
+    applyBoardData(d)
+    setTitle(t); setNarrative(n); setNarrativeOpen(false)
+    setSelection([])
+    bindBoard(boardId)
+    loadedUpdatedAtRef.current = boardUpdatedAt
+    conflictRef.current = false
+    failedSaveRef.current = ""
+    unsureRef.current = []
+    keepDraftRef.current = true
+    lastSavedRef.current = boardFingerprint(t, n, d)
+    savedPartsRef.current = boardParts(t, n, d)
+    setSaveStatus("idle"); setSaveError(""); setDraftNotice(false)
+  }
+  const boardIsEmpty = () =>
+    players.length + arrows.length + texts.length + shapes.length + images.length + customZones.length === 0 && !narrative.trim()
+  /** True when leaving now would lose work: a saved board with newer changes, or a new board you've added to. */
+  const hasUnsavedWork = () =>
+    (currentBoardIdRef.current !== null || !boardIsEmpty()) && boardFingerprint(title, narrative, collectBoard()) !== lastSavedRef.current
+  const hasUnsavedWorkRef = useRef(hasUnsavedWork)
+  hasUnsavedWorkRef.current = hasUnsavedWork
+  // The Save button only says "Saved" when nothing has changed since the last save
+  const changedSinceSave = !sameParts(boardParts(title, narrative, collectBoard()), savedPartsRef.current)
+  /** Keeps an unsaved new board on this device, and removes that copy once it's saved, emptied or thrown away. */
+  const writeDraft = () => {
+    if (!authUser) return
+    try {
+      if (!currentBoardIdRef.current && keepDraftRef.current && hasUnsavedWork()) {
+        const key = draftKey(authUser.id, workspaceMode)
+        const json = JSON.stringify({ title, narrative, data: collectBoard() })
+        if (json.length > DRAFT_MAX_CHARS) return // too big to keep on this device (photos): the last smaller copy stays
+        localStorage.setItem(key, json)
+        if (draftKeyRef.current && draftKeyRef.current !== key) localStorage.removeItem(draftKeyRef.current)
+        draftKeyRef.current = key
+      } else removeDraft()
+    } catch { /* storage full or blocked: the board itself is still on screen */ }
+  }
+  const flushSaveRef = useRef(() => {})
+  flushSaveRef.current = () => {
+    writeDraft()
+    if (currentBoardIdRef.current && authUser && !conflictRef.current && hasUnsavedWork()) void saveBoard(false, true)
+  }
+
+  // Autosave: a board that's already saved saves itself after you stop editing
+  // (1.5 s, or 6 s when it has images, because those make every save bigger). New boards are kept on this device until you save them.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      writeDraft()
+      if (!currentBoardIdRef.current) return
+      const data = collectBoard()
+      const now = boardFingerprint(title, narrative, data)
+      if (now === lastSavedRef.current) {
+        // Back to exactly what's saved (after an undo, say): the button can say "Saved" again
+        const parts = boardParts(title, narrative, data)
+        if (!sameParts(parts, savedPartsRef.current)) { savedPartsRef.current = parts; setSyncTick(t => t + 1) }
+        return
+      }
+      if (authUser && !savePromiseRef.current && !conflictRef.current && now !== failedSaveRef.current) void saveBoard(false, true)
+    }, images.length ? 6000 : 1500)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, narrative, players, arrows, texts, shapes, images, customZones, workspaceMode, canvasMode, showPitch,
+      pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
+      showPlayerLabels, textLayer, showLanes, show18Zones, currentBoardId, authUser, saveTick])
+
+  // Opening a fresh board: bring back the unsaved board from last time, if there is one
+  const restoreCheckedRef = useRef(false)
+  useEffect(() => {
+    if (!authUser || restoreCheckedRef.current) return
+    restoreCheckedRef.current = true
+    const key = draftKey(authUser.id, entryRef.current === "braindump" ? "brainstorm" : "tactics")
+    // A save from the board you just left may still be on its way (if it lands, that board is saved and its draft is gone)
+    waitForSaves(8000).then(() => {
+      if (entryRef.current === "opened" || boardEpochRef.current !== 0 || hasUnsavedWorkRef.current()) return
+      const draft = readDraft(key)
+      if (!draft) return
+      openBoard(draft.data, draft.title, null, draft.narrative, null)
+      lastSavedRef.current = "" // still not saved
+      draftKeyRef.current = key
+      setDraftNotice(true)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id])
+  useEffect(() => {
+    if (!draftNotice) return
+    const t = setTimeout(() => setDraftNotice(false), 10000)
+    return () => clearTimeout(t)
+  }, [draftNotice])
+  /** "Discard" on the restored-board notice: throw the draft away and start with an empty board */
+  const discardDraft = () => {
+    removeDraft()
+    openBoard(workspaceMode === "brainstorm" ? { settings: { workspaceMode: "brainstorm", canvasMode: "blank", bgColor: "#08080A", showPitch: false } } : null, null, null, null, null)
+  }
+
+  // Closing or reloading the tab with unsaved work: the browser asks first.
+  // Switching to another app on a phone: save straight away, because phones can close tabs without asking.
+  // Leaving the board inside the app (for example the browser's Back button): save the last changes on the way out.
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedWorkRef.current()) { e.preventDefault(); e.returnValue = "" }
+    }
+    const onHide = () => { if (document.visibilityState === "hidden") flushSaveRef.current() }
+    window.addEventListener("beforeunload", onBeforeUnload)
+    document.addEventListener("visibilitychange", onHide)
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload)
+      document.removeEventListener("visibilitychange", onHide)
+      flushSaveRef.current()
+    }
+  }, [])
+
+  /* ── Leaving the board (hub, sign out, opening another board or a template) ── */
+  const leaveResolveRef = useRef<((answer: "leave" | "stay" | "save") => void) | null>(null)
+  const [leaveAsk, setLeaveAsk] = useState<null | LeaveReason>(null)
+  const askLeave = (reason: LeaveReason) => new Promise<"leave" | "stay" | "save">(resolve => {
+    leaveResolveRef.current = resolve
+    setLeaveAsk(reason)
+  })
+  const answerLeave = (answer: "leave" | "stay" | "save") => {
+    leaveResolveRef.current?.(answer)
+    leaveResolveRef.current = null
+    setLeaveAsk(null)
+  }
+  /** Waits for a save to finish. If it takes more than a second, "Saving your changes…" appears, so you can still leave or stay. */
+  const waitForSave = async (p: Promise<boolean>): Promise<"saved" | "failed" | "leave" | "stay"> => {
+    const done = p.then(ok => (ok ? "saved" : "failed") as "saved" | "failed")
+    const first = await Promise.race([done, new Promise<"slow">(r => setTimeout(() => r("slow"), 1000))])
+    if (first !== "slow") return first
+    const answer = await Promise.race([askLeave("saving"), done])
+    if (answer === "saved" || answer === "failed") answerLeave("stay") // the save finished first: close the dialog and carry on
+    return answer === "save" ? "stay" : answer
+  }
+  /** Saved boards save their last changes first; new boards you've added to ask first. Resolves true when it's fine to leave. */
+  const confirmLeave = async (): Promise<boolean> => {
+    let quietTries = 0 // a saved board retries quietly (twice at most) before asking
+    let lastFailed = false
+    for (;;) {
+      const running = savePromiseRef.current
+      if (running) {
+        const r = await waitForSave(running)
+        if (r === "leave") return true
+        if (r === "stay") return false
+        lastFailed = r === "failed"
+        continue // look again: a copy may have been waiting for that save
+      }
+      if (!hasUnsavedWorkRef.current()) return true
+      if (currentBoardIdRef.current && !conflictRef.current && quietTries < 2) {
+        quietTries++
+        void saveBoardRef.current(false, true)
+        if (savePromiseRef.current) continue // it's running: wait for it above
+      }
+      const answer = await askLeave(conflictRef.current ? "conflict" : currentBoardIdRef.current || lastFailed ? "failed" : "new")
+      if (answer === "stay") return false
+      if (answer === "leave") { keepDraftRef.current = false; return true }
+      quietTries = 2 // you pressed Save: if it fails, ask again rather than retrying quietly
+      void saveBoardRef.current(conflictRef.current, false) // a board changed elsewhere is kept as a new copy
+      if (!savePromiseRef.current) return false
+    }
+  }
 
   /* ── isSel: true if the given id is in the selection ── */
   const isSel = useCallback((id: string) => selection.some(s => s.id === id), [selection])
@@ -1517,20 +1942,22 @@ function TacticsBoard() {
 
   /* ── Templates ── */
   const getCanvasState = (): CanvasState => ({
-    players, arrows, texts, shapes, images, title, bgColor, showPitch
+    players, arrows, texts, shapes, images, title, bgColor, showPitch,
+    customZones, settings: collectBoard().settings,
   })
   const saveTemplate = (name: string) => {
     const t: Template = { id: uid(), name, data: getCanvasState(), published: false, createdAt: Date.now() }
     saveTemplates([...templates, t])
   }
-  const loadTemplate = (t: Template) => {
-    snapshot()
-    const d = { ...t.data }
-    setPlayers(d.players ?? []); setArrows(d.arrows ?? [])
-    setTexts(d.texts ?? []); setShapes(d.shapes ?? [])
-    setImages(d.images ?? []); setTitle(d.title ?? "Untitled board")
-    setBgColor(d.bgColor ?? "#0d1117"); setShowPitch(d.showPitch ?? true)
-    setSel(null); setShowTemplates(false)
+  const loadTemplate = async (t: Template) => {
+    if (!(await confirmLeave())) return
+    const d = t.data
+    // Older templates only stored the background and pitch visibility: keep today's look for everything else
+    const current = collectBoard().settings
+    const settings = d.settings ?? { ...current, bgColor: d.bgColor ?? current.bgColor, showPitch: d.showPitch ?? current.showPitch }
+    // A template starts a new board, so it can never overwrite a board you've already saved
+    openBoard({ ...d, settings }, d.title ?? null, null, null, null)
+    setShowTemplates(false)
   }
   const deleteTemplate = (id: string) => saveTemplates(templates.filter(t => t.id !== id))
   const togglePublish = (id: string) => saveTemplates(templates.map(t => t.id === id ? { ...t, published: !t.published } : t))
@@ -1586,7 +2013,7 @@ function TacticsBoard() {
         <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
           <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
             title="Back to Hub"
-            onClick={() => navigateBoard("/hub")}
+            onClick={async () => { if (await confirmLeave()) navigateBoard("/hub") }}
             style={{ background: ACCENT_SOLID, color: "#ffffff", fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
           <WorkspaceModeSelector mode={workspaceMode} onChange={m => {
             setWorkspaceMode(m)
@@ -1674,8 +2101,8 @@ function TacticsBoard() {
                   opacity: saveStatus === "saving" ? 0.7 : 1,
                   borderRadius: currentBoardId ? "6px 0 0 6px" : 6,
                 }}>
-                {saveStatus === "saved" ? <Check size={13} /> : saveStatus === "error" ? <AlertCircle size={13} /> : <Save size={13} />}
-                {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved!" : saveStatus === "error" ? "Save failed" : "Save"}
+                {saveStatus === "error" ? <AlertCircle size={13} /> : currentBoardId && !changedSinceSave && saveStatus === "idle" ? <Check size={13} /> : <Save size={13} />}
+                {saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Save failed" : currentBoardId && !changedSinceSave ? "Saved" : "Save"}
               </button>
               {currentBoardId && (
                 <div className="relative">
@@ -1708,9 +2135,6 @@ function TacticsBoard() {
                 </div>
               )}
             </div>
-            {saveStatus === "error" && saveError && (
-              <span className="text-xs max-w-48 text-right" style={{ color: "#f85149" }}>{saveError}</span>
-            )}
           </div>
           {/* Auth */}
           {authUser ? (
@@ -1723,7 +2147,7 @@ function TacticsBoard() {
               </button>
               <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 hidden group-hover:flex flex-col"
                 style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-                <button onClick={() => supabase.auth.signOut()}
+                <button onClick={async () => { if (await confirmLeave()) supabase.auth.signOut() }}
                   className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left"
                   style={{ color: "#f85149" }}>
                   <LogOut size={12} /> Sign Out
@@ -2472,10 +2896,11 @@ function TacticsBoard() {
         )}
 
 
-        {/* ── Main Canvas ── */}
+        {/* ── Main Canvas, with the narrative underneath ── */}
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         <main
           ref={canvasRef}
-          className="flex-1 overflow-hidden relative flex items-center justify-center"
+          className="flex-1 min-h-0 overflow-hidden relative flex items-center justify-center"
           style={{
             background: bgColor,
             cursor: tool === "pan" ? "grab" : panDragRef.current ? "grabbing" : "default",
@@ -2970,6 +3395,35 @@ function TacticsBoard() {
             </div>
           )}
 
+          {/* Save problems, and the unsaved board that came back: shown over the canvas so they're visible on every screen size.
+              The status region always stays in place, so screen readers announce whatever appears in it. */}
+          <div role="status" aria-live="polite" className="absolute top-3 left-1/2 -translate-x-1/2"
+            style={{ zIndex: 20, width: "max-content", maxWidth: "calc(100% - 24px)" }}
+            onPointerDown={e => e.stopPropagation()}>
+            {((saveStatus === "error" && saveError && !noticeHidden) || draftNotice) && (() => {
+              const problem = saveStatus === "error" && !!saveError && !noticeHidden
+              const conflict = problem && conflictRef.current
+              return (
+                <div className="flex items-center gap-2 rounded-lg border shadow-xl text-xs"
+                  style={{ background: SURFACE_1, borderColor: problem ? "rgba(248,81,73,0.45)" : DS_BORDER, padding: "6px 6px 6px 12px" }}>
+                  {problem
+                    ? <AlertCircle size={14} style={{ color: DS_ERROR, flexShrink: 0 }} />
+                    : <RotateCcw size={14} style={{ color: ACCENT_SOLID, flexShrink: 0 }} />}
+                  <span style={{ color: TEXT_PRIMARY }}>{problem ? saveError : "We kept your unsaved board."}</span>
+                  <button onClick={() => (problem ? saveBoard(conflict) : discardDraft())}
+                    className="px-2 py-1 rounded text-xs font-semibold whitespace-nowrap transition-colors hover:bg-white/10"
+                    style={{ color: problem ? ACCENT_SOLID : TEXT_MUTED }}>
+                    {problem ? (conflict ? "Save as new board" : "Try again") : "Discard"}
+                  </button>
+                  <button onClick={() => (problem ? setNoticeHidden(true) : setDraftNotice(false))} aria-label="Close"
+                    className="p-1 rounded transition-colors hover:bg-white/10" style={{ color: TEXT_MUTED }}>
+                    <X size={13} />
+                  </button>
+                </div>
+              )
+            })()}
+          </div>
+
           {/* Canvas dimensions badge */}
           <div className="absolute top-3 right-3 text-xs rounded px-2 py-1"
             style={{ background: "rgba(0,0,0,0.45)", color: "rgba(255,255,255,0.4)", zIndex: 10, fontFamily: "monospace" }}>
@@ -2994,6 +3448,46 @@ function TacticsBoard() {
             </div>
           )}
         </main>
+
+        {/* ── Narrative: the written story that goes under the pitch (not on Braindump boards) ── */}
+        {workspaceMode !== "brainstorm" && (
+        <section aria-label="Narrative" className="flex-shrink-0 border-t" style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
+          <style>{`.ps-narrative:focus { border-color: ${ACCENT_SOLID} !important; }`}</style>
+          <button type="button" onClick={() => setNarrativeOpen(o => !o)} aria-expanded={narrativeOpen} aria-controls="ps-narrative-text"
+            className="w-full flex items-center gap-2 px-4 text-left hover:bg-white/5 transition-colors" style={{ height: 40 }}>
+            <AlignLeft size={14} style={{ color: TEXT_MUTED, flexShrink: 0 }} />
+            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", color: TEXT_PRIMARY, flexShrink: 0 }}>
+              NARRATIVE
+            </span>
+            {!narrativeOpen && (
+              <span className="truncate text-xs min-w-0" style={{ color: TEXT_MUTED }}>
+                {narrative.trim() ? narrative.trim().split("\n")[0] : "Add the story behind this board"}
+              </span>
+            )}
+            <span className="ml-auto flex items-center gap-3 flex-shrink-0" style={{ color: TEXT_MUTED }}>
+              {narrativeOpen && <span id="ps-narrative-count" className="text-[11px] tabular-nums">{narrative.length.toLocaleString()} / 2,000</span>}
+              {narrativeOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+            </span>
+          </button>
+          {narrativeOpen && (
+            <div className="px-4 pb-3">
+              <textarea
+                value={narrative}
+                onChange={e => setNarrative(e.target.value.slice(0, 2000))}
+                maxLength={2000}
+                autoFocus
+                id="ps-narrative-text"
+                aria-label="Narrative"
+                aria-describedby="ps-narrative-count"
+                placeholder="What's the idea? Who presses, where the space opens, how the ball gets there…"
+                className="ps-narrative w-full resize-none rounded-lg px-3 py-2.5 text-[16px] sm:text-sm leading-relaxed outline-none"
+                style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, height: "clamp(88px, 18vh, 160px)", fontFamily: "'Inter', sans-serif" }}
+              />
+            </div>
+          )}
+        </section>
+        )}
+        </div>
       </div>
 
       {/* ── Template modal ── */}
@@ -3014,20 +3508,17 @@ function TacticsBoard() {
           userId={authUser.id}
           currentBoardId={currentBoardId}
           onClose={() => setShowMyBoards(false)}
-          onLoad={(canvasData, boardTitle, boardId) => {
-            snapshot()
-            setPlayers(canvasData.players ?? [])
-            setArrows(canvasData.arrows ?? [])
-            setTexts(canvasData.texts ?? [])
-            setShapes(canvasData.shapes ?? [])
-            setImages(canvasData.images ?? [])
-            setTitle(boardTitle)
-            setSel(null)
-            setCurrentBoardId(boardId)
+          onLoad={async (canvasData, boardTitle, boardId, boardNarrative, boardUpdatedAt) => {
+            const ok = await confirmLeave()
+            // The board that's already open: keep what's on screen (it's newer than what the list fetched)
+            if (boardId === currentBoardIdRef.current) { setShowMyBoards(false); return }
+            if (!ok) return
+            openBoard(canvasData, boardTitle, boardId, boardNarrative, boardUpdatedAt)
             setShowMyBoards(false)
           }}
           onBoardDeleted={(id) => {
-            if (id === currentBoardId) setCurrentBoardId(null)
+            // The open board was deleted: what's on screen stays, and only changes you make from now on count as unsaved
+            if (id === currentBoardIdRef.current) { bindBoard(null); loadedUpdatedAtRef.current = null; conflictRef.current = false; unsureRef.current = [] }
           }}
         />
       )}
@@ -3065,16 +3556,28 @@ function TacticsBoard() {
         </div>
       )}
 
+      {/* ── Leave without saving? ── */}
+      {leaveAsk && (
+        <LeaveConfirmModal key={leaveAsk} reason={leaveAsk} onAnswer={answerLeave} />
+      )}
+
       {/* ── Clear All confirmation ── */}
       {showClearConfirm && (
         <ClearConfirmModal
           onCancel={() => setShowClearConfirm(false)}
           onConfirm={() => {
             snapshot()
+            boardEpochRef.current += 1 // anything still saving belongs to the previous board
             setPlayers([]); setArrows([]); setTexts([])
             setShapes([]); setImages([]); setCustomZones([])
+            setNarrative("")
             setSel(null)
-            setCurrentBoardId(null)
+            bindBoard(null)
+            loadedUpdatedAtRef.current = null
+            conflictRef.current = false
+            unsureRef.current = []
+            lastSavedRef.current = ""
+            setSaveStatus("idle"); setSaveError(""); setDraftNotice(false)
             setShowClearConfirm(false)
           }}
         />
@@ -3371,7 +3874,7 @@ function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted
   userId: string
   currentBoardId: string | null
   onClose: () => void
-  onLoad: (canvasData: { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[] }, title: string, id: string) => void
+  onLoad: (canvasData: unknown, title: string, id: string, narrative: string | null, updatedAt: string | null) => void
   onBoardDeleted: (id: string) => void
 }) {
   const [boards, setBoards] = useState<BoardRow[]>([])
@@ -3380,21 +3883,24 @@ function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  const fetchBoards = () => {
-    supabase
+  const fetchBoards = async () => {
+    await waitForSaves(5000) // a save still on its way would make the list out of date
+    const { data } = await supabase
       .from("boards")
       .select("id, title, created_at")
       .eq("user_id", userId)
       .order("updated_at", { ascending: false })
-      .then(({ data }) => { setBoards(data ?? []); setLoading(false) })
+    setBoards(data ?? []); setLoading(false)
   }
 
   useEffect(() => { fetchBoards() }, [userId])
 
   const loadBoard = async (b: BoardRow) => {
+    if (loadingId) return // one at a time
     setLoadingId(b.id)
-    const { data } = await supabase.from("boards").select("canvas_data, title").eq("id", b.id).single()
-    if (data) onLoad(data.canvas_data, data.title, b.id)
+    await waitForBoardSave(b.id) // a save to this board that's still on its way lands first
+    const { data } = await supabase.from("boards").select("canvas_data, title, narrative, updated_at").eq("id", b.id).single()
+    if (data) onLoad((data as any).canvas_data, (data as any).title, b.id, (data as any).narrative ?? null, (data as any).updated_at ?? null)
     setLoadingId(null)
   }
 
@@ -4276,6 +4782,7 @@ function HubPage() {
         .maybeSingle()
       const raw = (profile as any)?.display_name || (profile as any)?.handle || session.user.email?.split("@")[0] || ""
       setDisplayName(stripHandleSuffix(raw, uid, session.user.email))
+      await waitForSaves(5000) // coming straight from the board: let its last save land first
       const { data: boards } = await supabase
         .from("boards")
         .select("id, title, updated_at")
@@ -4292,9 +4799,21 @@ function HubPage() {
     return () => clearTimeout(t)
   }, [toastMsg])
 
+  // Opening a recent board: one at a time, and only while you're still on the hub
+  const [openingId, setOpeningId] = useState<string | null>(null)
+  const onHubRef = useRef(true)
+  useEffect(() => {
+    onHubRef.current = true
+    boardHandoff.preload = null; boardHandoff.braindump = false // anything left over from earlier is out of date
+    return () => { onHubRef.current = false }
+  }, [])
   const handleRecentClick = async (board: HubRecentBoard) => {
-    const { data } = await supabase.from("boards").select("canvas_data, title").eq("id", board.id).single()
-    if (data) localStorage.setItem("ps_preload_board", JSON.stringify({ canvas_data: data.canvas_data, title: data.title, id: board.id }))
+    if (openingId) return
+    setOpeningId(board.id)
+    await waitForBoardSave(board.id) // its last save (say, from just before you pressed Back) lands first
+    const { data } = await supabase.from("boards").select("canvas_data, title, narrative, updated_at").eq("id", board.id).single()
+    if (!onHubRef.current) return
+    if (data) boardHandoff.preload = { canvas_data: (data as any).canvas_data, title: (data as any).title ?? null, id: board.id, narrative: (data as any).narrative ?? null, updated_at: (data as any).updated_at ?? null }
     navigate("/")
   }
 
@@ -4321,7 +4840,7 @@ function HubPage() {
   const handleCardClick = (card: HubCardDef) => {
     if (!card.available) { fireComingSoon(card.title); return }
     if (card.id === "tactical") { navigate("/"); return }
-    if (card.id === "braindump") { localStorage.setItem("ps_initial_mode", "brainstorm"); navigate("/"); return }
+    if (card.id === "braindump") { boardHandoff.braindump = true; navigate("/"); return }
     if (card.id === "profile") { navigate("/profile"); return }
   }
 
@@ -4437,7 +4956,7 @@ function HubPage() {
                     {board.title}
                   </p>
                   <p style={{ margin: "4px 0 0", fontSize: 11, color: TEXT_MUTED }}>
-                    {hubRelTime(board.updated_at)}
+                    {openingId === board.id ? "Opening…" : hubRelTime(board.updated_at)}
                   </p>
                 </button>
               ))}
@@ -4839,6 +5358,78 @@ function ProfilePage() {
               opacity: saving ? 0.7 : 1,
             }}>
             {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ────────────────────────── Leave Confirm Modal ────────────── */
+function LeaveConfirmModal({ reason, onAnswer }: { reason: LeaveReason; onAnswer: (answer: "leave" | "stay" | "save") => void }) {
+  const boxRef = useRef<HTMLDivElement>(null)
+  // When the dialog closes, focus goes back to where it was (read before the dialog takes focus)
+  const [returnFocusTo] = useState(() => document.activeElement as HTMLElement | null)
+  useEffect(() => () => {
+    const now = document.activeElement
+    if ((!now || now === document.body) && returnFocusTo?.isConnected) returnFocusTo.focus?.()
+  }, [returnFocusTo])
+  // While this is open, keys belong to the dialog: Esc = cancel, Tab stays inside, board shortcuts are paused
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      e.stopImmediatePropagation()
+      if (e.key === "Escape") { e.preventDefault(); onAnswer("stay"); return }
+      if (e.key === "Tab") {
+        const items = Array.from(boxRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])
+        if (!items.length) return
+        const i = items.indexOf(document.activeElement as HTMLButtonElement)
+        const next = e.shiftKey ? (i <= 0 ? items.length - 1 : i - 1) : (i === items.length - 1 ? 0 : i + 1)
+        e.preventDefault(); items[next].focus()
+      }
+    }
+    window.addEventListener("keydown", onKey, true)
+    return () => window.removeEventListener("keydown", onKey, true)
+  }, [onAnswer])
+  const copy = {
+    new: { title: "Save this board before you go?", body: "It hasn't been saved yet. If you leave without saving, it's gone.", leave: "Don't save", save: "Save" },
+    failed: { title: "Your latest changes didn't save", body: "Check your connection and try again, or leave and lose them.", leave: "Leave anyway", save: "Try again" },
+    conflict: { title: "This board changed somewhere else", body: "It was edited or deleted in another tab or on another device. Keep your version as a new board, or leave without it.", leave: "Leave anyway", save: "Save as new" },
+    saving: { title: "Saving your changes…", body: "This usually takes a second. If you leave now, your latest changes may not be saved.", leave: "Leave anyway", save: "Saving…" },
+  }[reason]
+  const saving = reason === "saving"
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(0,0,0,0.7)" }}
+      onClick={() => onAnswer("stay")}>
+      <div ref={boxRef} role="alertdialog" aria-modal="true" aria-labelledby="ps-leave-title" aria-describedby="ps-leave-desc"
+        className="rounded-xl border flex flex-col gap-5 p-6 w-full"
+        style={{ background: SURFACE_1, borderColor: DS_BORDER, maxWidth: 380 }}
+        onClick={e => e.stopPropagation()}>
+        <div>
+          <p id="ps-leave-title" style={{ color: TEXT_PRIMARY, fontSize: 15, fontWeight: 600, margin: 0, fontFamily: "'Inter', sans-serif" }}>
+            {copy.title}
+          </p>
+          <p id="ps-leave-desc" style={{ color: TEXT_MUTED, fontSize: 13, margin: "6px 0 0", fontFamily: "'Inter', sans-serif" }}>
+            {copy.body}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => onAnswer("leave")}
+            className="px-2 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-white/5"
+            style={{ color: DS_ERROR }}>
+            {copy.leave}
+          </button>
+          <div className="flex-1" />
+          <button onClick={() => onAnswer("stay")} autoFocus={saving}
+            className="px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:brightness-110"
+            style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
+            Cancel
+          </button>
+          <button onClick={() => onAnswer("save")} autoFocus={!saving} disabled={saving}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${saving ? "" : "hover:brightness-110"}`}
+            style={{ background: ACCENT_GRADIENT, color: "#ffffff", opacity: saving ? 0.7 : 1, cursor: saving ? "default" : "pointer" }}>
+            {saving && <RefreshCw size={13} className="motion-safe:animate-spin" />}
+            {copy.save}
           </button>
         </div>
       </div>
