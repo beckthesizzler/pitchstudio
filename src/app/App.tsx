@@ -9,7 +9,7 @@ import {
   ChevronDown, FileImage, Move, Hand, PanelLeftClose, PanelLeftOpen,
   ImagePlus, Square, Circle, Minus, Plus, BookOpen,
   Lock, Star, X, RefreshCw, Magnet, ChevronRight,
-  Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock,
+  Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock, MoreHorizontal,
   LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive,
   Settings, ArrowLeft, HelpCircle, Mail, AlignLeft, ChevronUp,
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
@@ -930,6 +930,7 @@ function TacticsBoard() {
 
   const [saveError, setSaveError] = useState("")
   const [showSaveMenu, setShowSaveMenu] = useState(false)
+  const [headerMenu, setHeaderMenu] = useState<null | "export" | "account" | "more">(null) // the header menu that's open
 
   /** Saves the whole board: elements, zones, pitch settings, title and narrative.
    *  forceNew = "Save as new board". auto = the quiet background save (no sign-in prompt, no analytics event).
@@ -1412,7 +1413,26 @@ function TacticsBoard() {
   }, [])
 
   /* ── Zoom ── */
+  // The board fits the space it has (smaller laptops, the narrative opening) until you zoom or pan yourself
+  const userViewRef = useRef(false)
+  const fitZoom = () => {
+    const box = canvasRef.current?.getBoundingClientRect()
+    if (!box || !box.width || !box.height) return 1
+    // the canvas is shown 980 × 630 at 100%; never zoom in past that, and keep a small gap around it
+    return Math.max(0.2, Math.min(1, (box.width - 24) / SVG_DISPLAY_W, (box.height - 24) / (SVG_DISPLAY_W * CH / CW)))
+  }
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const fit = () => { if (!userViewRef.current) { setZoom(fitZoom()); setPanX(0); setPanY(0) } }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const applyZoom = useCallback((delta: number, cx?: number, cy?: number) => {
+    userViewRef.current = true
     setZoom(z => {
       const nz = Math.min(6, Math.max(0.2, z * delta))
       if (cx !== undefined && cy !== undefined) {
@@ -1428,7 +1448,7 @@ function TacticsBoard() {
     })
   }, [])
 
-  const fitToView = () => { setZoom(1); setPanX(0); setPanY(0) }
+  const fitToView = () => { userViewRef.current = false; setZoom(fitZoom()); setPanX(0); setPanY(0) }
 
   /* ── Mouse wheel zoom ── */
   useEffect(() => {
@@ -1862,6 +1882,7 @@ function TacticsBoard() {
   const onCanvasMouseDown = (e: React.PointerEvent) => {
     if (e.button === 1 || (e.altKey && e.button === 0) || tool === "pan") {
       e.preventDefault()
+      userViewRef.current = true
       panDragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: panX, startPanY: panY }
     }
   }
@@ -2029,46 +2050,49 @@ function TacticsBoard() {
     <div className="flex flex-col h-screen overflow-hidden select-none"
       style={{ fontFamily: "'Inter', sans-serif", background: SURFACE_BASE, color: TEXT_PRIMARY }}>
 
-      {/* ── Top Header ── */}
-      <header className="flex items-center gap-3 px-3 py-2 border-b flex-shrink-0"
+      {/* ── Top Header ── (on narrower screens the less-used controls move into the ⋯ menu) */}
+      <header className="flex items-center gap-2 lg:gap-3 px-2 sm:px-3 py-2 border-b flex-shrink-0"
         style={{ borderColor: "rgba(255,255,255,0.08)", background: "#161b22", minHeight: 48 }}>
+        {headerMenu && <div className="fixed inset-0 z-40" onClick={() => setHeaderMenu(null)} />}
         {/* Logo + Workspace Mode Selector + Title */}
-        <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
             title="Back to Hub"
             onClick={async () => { if (await confirmLeave()) navigateBoard("/hub") }}
             style={{ background: ACCENT_SOLID, color: "#ffffff", fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
-          <WorkspaceModeSelector mode={workspaceMode} onChange={m => {
-            setWorkspaceMode(m)
-            if (m === "report") { setCanvasMode("blank"); setBgColor("#f5f5f0"); setShowPitch(false) }
-            else if (m === "brainstorm") { setCanvasMode("blank"); setBgColor("#0d1117"); setShowPitch(false) }
-            else { setCanvasMode("full"); setBgColor("#0d1117"); setShowPitch(true) }
-          }} />
-          <div className="w-px h-5 mx-3 flex-shrink-0" style={{ background: "rgba(255,255,255,0.12)" }} />
+          <div className="hidden sm:block flex-shrink-0">
+            <WorkspaceModeSelector mode={workspaceMode} onChange={m => {
+              setWorkspaceMode(m)
+              if (m === "report") { setCanvasMode("blank"); setBgColor("#f5f5f0"); setShowPitch(false) }
+              else if (m === "brainstorm") { setCanvasMode("blank"); setBgColor("#0d1117"); setShowPitch(false) }
+              else { setCanvasMode("full"); setBgColor("#0d1117"); setShowPitch(true) }
+            }} />
+          </div>
+          <div className="hidden sm:block w-px h-5 mx-1 xl:mx-3 flex-shrink-0" style={{ background: "rgba(255,255,255,0.12)" }} />
           {editingTitle ? (
             <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)}
               onKeyDown={e => { if (e.key === "Enter") setEditingTitle(false) }}
-              className="bg-transparent outline-none font-bold text-sm"
+              className="bg-transparent outline-none font-bold text-sm min-w-0"
               style={{ borderBottom: `1px solid ${ACCENT_SOLID}`, color: TEXT_PRIMARY, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 200 }} />
           ) : (
             <button onClick={() => setEditingTitle(true)}
-              className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-white/8 transition-colors"
+              className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-white/8 transition-colors min-w-0"
               title="Click to rename">
-              <span className="font-bold text-sm truncate max-w-44"
+              <span className="font-bold text-sm truncate max-w-28 xl:max-w-44"
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>{title}</span>
               <span className="text-xs opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: ACCENT_SOLID }}>✏</span>
             </button>
           )}
         </div>
 
-        <div className="flex-1 flex items-center gap-2 justify-center">
+        <div className="flex-1 hidden lg:flex items-center gap-2 justify-center">
           {/* Rotation control */}
           <div className="flex items-center gap-1.5 rounded px-2 py-1" style={{ background: "#21262d" }}>
             <RefreshCw size={13} style={{ color: TEXT_MUTED }} />
             <input type="range" min={0} max={360} value={rotation}
               onChange={e => handleRotation(+e.target.value)}
-              className="w-20 accent-green-400" style={{ height: 4 }} />
+              className="hidden xl:block w-20 accent-green-400" style={{ height: 4 }} />
             <input
               type="number" min={0} max={360} value={Math.round(rotation)}
               onChange={e => handleRotation(+e.target.value)}
@@ -2097,20 +2121,21 @@ function TacticsBoard() {
             {view3d ? "3D" : "2D"}
           </button>
         </div>
+        <div className="flex-1 lg:hidden" />
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {/* Templates */}
-          <button onClick={() => setShowTemplates(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
+          <button onClick={() => setShowTemplates(true)} title="Templates"
+            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
             style={{ background: "#21262d", color: "#c9d1d9" }}>
-            <BookOpen size={13} /> Templates
+            <BookOpen size={13} /> <span className="hidden xl:inline">Templates</span>
           </button>
           {/* My Boards */}
           {authUser && (
-            <button onClick={() => setShowMyBoards(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
+            <button onClick={() => setShowMyBoards(true)} title="My Boards"
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
               style={{ background: "#21262d", color: "#c9d1d9" }}>
-              <FolderOpen size={13} /> My Boards
+              <FolderOpen size={13} /> <span className="hidden xl:inline">My Boards</span>
             </button>
           )}
           {/* Save */}
@@ -2161,59 +2186,95 @@ function TacticsBoard() {
           </div>
           {/* Auth */}
           {authUser ? (
-            <div className="relative group">
-              <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium"
+            <div className="relative hidden lg:block">
+              <button onClick={() => setHeaderMenu(m => (m === "account" ? null : "account"))} aria-expanded={headerMenu === "account"}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium"
                 style={{ background: "#21262d", color: "#c9d1d9" }}>
                 <User size={13} />
-                <span className="max-w-20 truncate">{accountName || authUser.email?.split("@")[0]}</span>
+                <span className="max-w-20 truncate hidden xl:inline">{accountName || authUser.email?.split("@")[0]}</span>
                 <ChevronDown size={11} />
               </button>
-              <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 hidden group-hover:flex flex-col"
-                style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-                <button onClick={async () => { if (await confirmLeave()) supabase.auth.signOut() }}
-                  className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left"
-                  style={{ color: "#f85149" }}>
-                  <LogOut size={12} /> Sign Out
-                </button>
-              </div>
+              {headerMenu === "account" && (
+                <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 flex flex-col"
+                  style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
+                  <button onClick={async () => { setHeaderMenu(null); if (await confirmLeave()) supabase.auth.signOut() }}
+                    className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left"
+                    style={{ color: "#f85149" }}>
+                    <LogOut size={12} /> Sign Out
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <button onClick={() => { setAuthInitialTab("signin"); setShowAuth(true) }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
               style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
               <LogIn size={13} /> Sign In
             </button>
           )}
           {/* Undo/Redo */}
-          <button onClick={undo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
-          <button onClick={redo} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
+          <button onClick={undo} className="hidden lg:block p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
+          <button onClick={redo} className="hidden lg:block p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
           {/* Clear All — visually separated by a divider so it reads as destructive/distinct */}
-          <div className="self-stretch flex items-center mx-2" style={{ width: 1, background: DS_BORDER }} />
+          <div className="hidden lg:flex self-stretch items-center mx-2" style={{ width: 1, background: DS_BORDER }} />
           <button
             onClick={() => setShowClearConfirm(true)}
-            className="flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium transition-colors hover:bg-red-500/20 ml-1"
+            className="hidden lg:flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium transition-colors hover:bg-red-500/20 ml-1"
             style={{ color: DS_ERROR }}
             title="Clear all canvas elements">
-            <Trash2 size={13} /> Clear All
+            <Trash2 size={13} /> <span className="hidden xl:inline">Clear All</span>
           </button>
           {/* Export */}
-          <div className="relative group">
-            <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
+          <div className="relative">
+            <button onClick={() => setHeaderMenu(m => (m === "export" ? null : "export"))} aria-expanded={headerMenu === "export"} title="Export"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
               style={{ background: "transparent", color: ACCENT_SOLID, border: `1px solid ${ACCENT_SOLID}` }}
               onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = `${ACCENT_SOLID}26` }}
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent" }}>
-              <Download size={13} /> Export <ChevronDown size={11} />
+              <Download size={13} /> <span className="hidden sm:inline">Export</span> <ChevronDown size={11} />
             </button>
-            <div className="absolute right-0 top-full mt-1 w-28 rounded shadow-xl border z-50 hidden group-hover:flex flex-col"
-              style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-              {(["png", "jpeg", "pdf"] as const).map(f => (
-                <button key={f} onClick={() => doExport(f)}
-                  className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left uppercase font-semibold"
-                  style={{ letterSpacing: "0.06em" }}>
-                  <FileImage size={12} /> {f}
-                </button>
-              ))}
-            </div>
+            {headerMenu === "export" && (
+              <div className="absolute right-0 top-full mt-1 w-28 rounded shadow-xl border z-50 flex flex-col"
+                style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
+                {(["png", "jpeg", "pdf"] as const).map(f => (
+                  <button key={f} onClick={() => { setHeaderMenu(null); doExport(f) }}
+                    className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left uppercase font-semibold"
+                    style={{ letterSpacing: "0.06em" }}>
+                    <FileImage size={12} /> {f}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* ⋯ More: everything that doesn't fit in the bar on narrower screens */}
+          <div className="relative lg:hidden">
+            <button onClick={() => setHeaderMenu(m => (m === "more" ? null : "more"))} aria-expanded={headerMenu === "more"}
+              aria-label="More" title="More"
+              className="p-1.5 rounded hover:bg-white/10 transition-colors" style={{ color: "#c9d1d9" }}>
+              <MoreHorizontal size={16} />
+            </button>
+            {headerMenu === "more" && (
+              <div className="absolute right-0 top-full mt-1 w-48 rounded-lg shadow-xl border z-50 flex flex-col py-1"
+                style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
+                {([
+                  { label: "Templates", icon: <BookOpen size={13} />, run: () => setShowTemplates(true) },
+                  ...(authUser ? [{ label: "My Boards", icon: <FolderOpen size={13} />, run: () => setShowMyBoards(true) }] : []),
+                  { label: "Undo", icon: <RotateCcw size={13} />, run: undo },
+                  { label: "Redo", icon: <RotateCw size={13} />, run: redo },
+                  { label: view3d ? "Switch to 2D" : "Switch to 3D", icon: <Layers size={13} />, run: () => setView3d(v => !v) },
+                  { label: "Clear All", icon: <Trash2 size={13} />, run: () => setShowClearConfirm(true), danger: true },
+                  authUser
+                    ? { label: "Sign Out", icon: <LogOut size={13} />, run: async () => { if (await confirmLeave()) supabase.auth.signOut() }, danger: true }
+                    : { label: "Sign In", icon: <LogIn size={13} />, run: () => { setAuthInitialTab("signin"); setShowAuth(true) } },
+                ] as { label: string; icon: React.ReactNode; run: () => void; danger?: boolean }[]).map(item => (
+                  <button key={item.label} onClick={() => { setHeaderMenu(null); item.run() }}
+                    className="flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-white/10"
+                    style={{ color: item.danger ? DS_ERROR : TEXT_PRIMARY }}>
+                    {item.icon} {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -2938,7 +2999,7 @@ function TacticsBoard() {
               <div style={{ textAlign: "center" }}>
                 <p style={{ fontSize: 18, fontWeight: 700, color: TEXT_PRIMARY, margin: 0 }}>Start your board</p>
                 <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Add a full team, place players one at a time, or draw a zone.</p>
-                <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "center", pointerEvents: "auto" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, padding: "0 12px", justifyContent: "center", pointerEvents: "auto" }}>
                   {([
                     { label: "Add formation", action: () => addFormation(selectedFormation, "home") },
                     { label: "Place a player", action: () => setTool("homePlayer") },
@@ -3398,7 +3459,7 @@ function TacticsBoard() {
           </div>
 
           {/* ── Zoom controls ── */}
-          <div className="absolute bottom-4 right-4 flex items-center gap-1 rounded-lg px-2 py-1.5 border"
+          <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-lg px-2 py-1.5 border"
             style={{ background: "#161b22", borderColor: "rgba(255,255,255,0.1)", zIndex: 10 }}>
             <button onClick={() => applyZoom(0.87)} className="p-1 rounded hover:bg-white/10 transition-colors"><Minus size={13} /></button>
             <span className="text-xs font-mono w-12 text-center" style={{ color: "#c9d1d9" }}>
