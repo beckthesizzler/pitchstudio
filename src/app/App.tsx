@@ -27,7 +27,7 @@ const supabase: ReturnType<typeof createClient> = (globalThis[_sbKey] ??= create
 /* ─────────────────────────── Types ─────────────────────────── */
 type Tool =
   | "select" | "pan"
-  | "homePlayer" | "awayPlayer"
+  | "homePlayer" | "awayPlayer" | "marker" | "ball"
   | "arrow" | "text" | "shape" | "image" | "zone"
 
 type ShapeKind = "polygon" | "circle" | "ellipse" | "rect"
@@ -38,6 +38,7 @@ interface Player {
   bg: string; fg: string; ring: string
   glow?: boolean
   scale?: number
+  kind?: "marker" | "ball" // a ✕ marker or the ball; no kind = a player (every board saved before this)
 }
 interface Arrow {
   id: string
@@ -218,6 +219,28 @@ const PCX = PW / 2, PCY = PH / 2
 const uid = () => Math.random().toString(36).slice(2, 9)
 const HOME_COLORS = { bg: "#fbbf24", fg: "#000000", ring: "#000000" }
 const AWAY_COLORS = { bg: "#1d4ed8", fg: "#ffffff", ring: "#60a5fa" }
+const MARKER_COLOR = "#f87171" // a new ✕ marker starts red, easy to see on any pitch
+/** Size of a piece at scale 1: a player's circle, a ✕ marker, the ball. */
+const pieceBase = (p: Player) => (p.kind === "ball" ? 12 : p.kind === "marker" ? 20 : 28)
+/** A football: a centre patch, five patches cut off by the edge, and the seams between them. On the pitch it's white with black patches; as a tool icon it's drawn in the text colour. */
+function BallGlyph({ r, icon = false }: { r: number; icon?: boolean }) {
+  const ink = icon ? "currentColor" : "#161616"
+  // A point d × r from the centre, at an angle in degrees (0 = straight up)
+  const at = (d: number, deg: number) => { const a = (deg - 90) * Math.PI / 180; return `${(Math.cos(a) * d * r).toFixed(2)},${(Math.sin(a) * d * r).toFixed(2)}` }
+  const ks = [0, 72, 144, 216, 288]
+  return (
+    <g>
+      <circle r={r} fill={icon ? "none" : "#ffffff"} stroke={ink} strokeWidth={r * (icon ? 0.18 : 0.08)} />
+      <polygon points={ks.map(k => at(0.33, k)).join(" ")} fill={ink} />
+      {ks.map(k => (
+        <g key={k}>
+          <path d={`M${at(0.65, k)}L${at(0.83, k + 20)}L${at(1, k + 10)}A${r},${r} 0 0 0 ${at(1, k - 10)}L${at(0.83, k - 20)}Z`} fill={ink} />
+          <path d={`M${at(0.33, k)}L${at(0.65, k)}M${at(0.83, k + 20)}L${at(0.83, k + 52)}`} fill="none" stroke={ink} strokeWidth={r * (icon ? 0.12 : 0.07)} strokeLinecap="round" />
+        </g>
+      ))}
+    </g>
+  )
+}
 const PALETTE = ["#ffffff","#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6","#000000"]
 const SHAPE_FILLS = ["#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6"]
 const BG_PRESETS = ["#0d1117","#1a1a2e","#0f2027","#1b2838","#2c2c2c","#f5f5f0","#ffffff","#1a472a"]
@@ -1638,6 +1661,8 @@ function TacticsBoard() {
         if (e.key === "h" || e.key === "H") sw("pan")
         if (e.key === "1") sw("homePlayer")
         if (e.key === "2") sw("awayPlayer")
+        if (e.key === "x" || e.key === "X") sw("marker")
+        if (e.key === "b" || e.key === "B") sw("ball")
         if (e.key === "a" || e.key === "A") sw("arrow")
         if (e.key === "t" || e.key === "T") sw("text")
         if (e.key === "s" || e.key === "S") sw("shape")
@@ -1782,7 +1807,7 @@ function TacticsBoard() {
       const autoH = tb.text.split("\n").length * lH + 16
       return { ...tb, width: Math.max(60, x - tb.x), manualH: Math.max(autoH, y - tb.y) }
     }))
-    else if (d.kind === "resizePlayer") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, scale: Math.max(0.5, (x - pl.x) / 28) } : pl))
+    else if (d.kind === "resizePlayer") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, scale: Math.max(0.5, (Math.hypot(x - pl.x, y - pl.y) - d.ox) / pieceBase(pl)) } : pl)) // the handle stays under the cursor (ox = where on the handle you grabbed it)
     else if (d.kind === "resizeImage") setImages(i => i.map(im => im.id === d.id ? { ...im, width: Math.max(20, x - im.x), height: Math.max(20, y - im.y) } : im))
     else if (d.kind === "zone") {
       const px = (x - PX - pitchOffXRef.current) / pitchScaleRef.current
@@ -1826,13 +1851,21 @@ function TacticsBoard() {
     if (hasDraggedRef.current) return
     const { x, y } = svgXY(e)
 
+    // A new player's number counts players only, not ✕ markers or the ball
+    const nextNum = String(players.filter(q => !q.kind).length + 1)
     if (tool === "homePlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "", num: String(players.length + 1), ...HOME_COLORS, bg: homeColor, glow: false, scale: 1 }
+      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...HOME_COLORS, bg: homeColor, glow: false, scale: 1 }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "awayPlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "", num: String(players.length + 1), ...AWAY_COLORS, bg: awayColor, glow: false, scale: 1 }
+      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...AWAY_COLORS, bg: awayColor, glow: false, scale: 1 }
+      setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
+    } else if (tool === "marker" || tool === "ball") {
+      snapshot()
+      const p: Player = tool === "marker"
+        ? { id: uid(), x, y, kind: "marker", name: "", num: "", bg: MARKER_COLOR, fg: "#ffffff", ring: "#000000", glow: false, scale: 1 }
+        : { id: uid(), x, y, kind: "ball", name: "", num: "", bg: "#ffffff", fg: "#000000", ring: "#000000", glow: false, scale: 1 }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "arrow") {
       if (!arrowDraft) {
@@ -1876,7 +1909,7 @@ function TacticsBoard() {
     } else if (tool === "select") {
       setSel(null)
     }
-  }, [tool, shapeKind, players.length, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot, arrowDefaultDash, arrowDefaultColor, arrowDefaultW])
+  }, [tool, shapeKind, players, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot, arrowDefaultDash, arrowDefaultColor, arrowDefaultW])
 
   /* ── Canvas pan (alt+drag, middle-button, or pan tool) ── */
   const onCanvasMouseDown = (e: React.PointerEvent) => {
@@ -2286,6 +2319,7 @@ function TacticsBoard() {
             .rl-wrap { position: relative; width: 100%; display: flex; justify-content: center; margin-bottom: 2px; }
             .rl-tip { display: none; position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 6px; padding: 5px 9px; font-size: 11px; color: ${TEXT_PRIMARY}; white-space: nowrap; z-index: 200; pointer-events: none; font-family: 'Inter', sans-serif; }
             .rl-wrap:hover .rl-tip { display: block; }
+            @media (max-height: 640px) { .rl-wrap { margin-bottom: 0; } .rl-wrap > button { height: 32px !important; } }
           `}</style>
 
           {([
@@ -2309,6 +2343,8 @@ function TacticsBoard() {
           {([
             { id: "homePlayer" as Tool, ic: <UserPlus size={17} />, lbl: "Home player", sc: "1", tint: homeColor },
             { id: "awayPlayer" as Tool, ic: <UserPlus size={17} />, lbl: "Away player", sc: "2", tint: awayColor },
+            { id: "marker" as Tool, ic: <X size={17} strokeWidth={3} />, lbl: "✕ marker", sc: "X", tint: MARKER_COLOR },
+            { id: "ball" as Tool, ic: <svg width={17} height={17} viewBox="-12 -12 24 24"><BallGlyph r={10} icon /></svg>, lbl: "Ball", sc: "B", tint: TEXT_PRIMARY },
           ]).map(btn => (
             <div key={btn.id} className="rl-wrap">
               <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
@@ -2443,14 +2479,41 @@ function TacticsBoard() {
               <div className="p-3 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>
-                    {selP ? "Player" : selA ? "Arrow" : selT ? "Text" : selS ? "Shape" : selI ? "Image" : sel.kind === "zone" ? "Zone" : "Element"}
+                    {selP ? (selP.kind === "marker" ? "✕ marker" : selP.kind === "ball" ? "Ball" : "Player") : selA ? "Arrow" : selT ? "Text" : selS ? "Shape" : selI ? "Image" : sel.kind === "zone" ? "Zone" : "Element"}
                   </p>
                   <button onClick={deleteSelected} className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: DS_ERROR }}>
                     <Trash2 size={13} />
                   </button>
                 </div>
 
-                {selP && (
+                {selP && selP.kind === "marker" && (
+                  <div className="flex flex-col gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Label — shown below</span>
+                      <input value={selP.name} onChange={e => updP({ name: e.target.value })}
+                        placeholder="e.g. Space"
+                        className="rounded px-2 py-1 text-xs outline-none"
+                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    <ColorPicker label="Color" colors={PALETTE} selected={selP.bg} onSelect={c => updP({ bg: c })} />
+                    <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
+                      <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
+                      <span style={{ color: TEXT_PRIMARY }}>Glow Highlight</span>
+                    </label>
+                  </div>
+                )}
+
+                {selP && selP.kind === "ball" && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs" style={{ color: TEXT_MUTED }}>Drag to move it. Drag the round handle to resize it.</p>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
+                      <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
+                      <span style={{ color: TEXT_PRIMARY }}>Glow Highlight</span>
+                    </label>
+                  </div>
+                )}
+
+                {selP && selP.kind !== "marker" && selP.kind !== "ball" && (
                   <div className="flex flex-col gap-2">
                     <label className="flex flex-col gap-1">
                       <span className="text-xs" style={{ color: TEXT_MUTED }}>Name — shown below</span>
@@ -2775,11 +2838,11 @@ function TacticsBoard() {
                 <div className="flex flex-col gap-3">
                   <ColorPicker label="Home Color" colors={PALETTE.slice(0, 5)} selected={homeColor} onSelect={c => {
                     setHomeColor(c)
-                    setPlayers(prev => prev.map(p => p.bg === homeColor || p.bg === HOME_COLORS.bg ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
+                    setPlayers(prev => prev.map(p => !p.kind && (p.bg === homeColor || p.bg === HOME_COLORS.bg) ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
                   }} />
                   <ColorPicker label="Away Color" colors={PALETTE.slice(2, 7)} selected={awayColor} onSelect={c => {
                     setAwayColor(c)
-                    setPlayers(prev => prev.map(p => p.bg === awayColor || p.bg === AWAY_COLORS.bg ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
+                    setPlayers(prev => prev.map(p => !p.kind && (p.bg === awayColor || p.bg === AWAY_COLORS.bg) ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
                   }} />
                 </div>
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
@@ -2970,6 +3033,8 @@ function TacticsBoard() {
             {tool === "pan" && "Drag to move · Alt+drag or middle-click also pans · Scroll to zoom"}
             {tool === "homePlayer" && "Click the pitch to place a home player"}
             {tool === "awayPlayer" && "Click the pitch to place an away player"}
+            {tool === "marker" && "Click anywhere to place a ✕ marker"}
+            {tool === "ball" && "Click anywhere to place the ball, even at a player's feet"}
             {tool === "arrow" && "Click once to start, click again to finish"}
             {tool === "text" && "Click anywhere to add a text box"}
             {tool === "shape" && shapeKind === "polygon" && "Click to add points · Double-click to finish · Esc to cancel"}
@@ -3038,6 +3103,9 @@ function TacticsBoard() {
                   onPointerUp={onSVGMouseUp}
                   onPointerDown={onSVGMouseDown}
                   onClick={onSVGClick}
+                  // ✕ markers and the ball go exactly where you click, even on top of a player, zone, shape or arrow
+                  onPointerDownCapture={e => { if (tool === "marker" || tool === "ball") { mouseDownPosRef.current = { x: e.clientX, y: e.clientY }; hasDraggedRef.current = false } }}
+                  onClickCapture={e => { if (tool === "marker" || tool === "ball") { e.stopPropagation(); onSVGClick(e as unknown as React.PointerEvent) } }}
                 >
                   {/* 1. Canvas background */}
                   <rect x={0} y={0} width={CW} height={CH} fill={bgColor} />
@@ -3345,11 +3413,12 @@ function TacticsBoard() {
                       onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])} />
                   ))}
 
-                  {/* 11. Players */}
+                  {/* 11. Players, ✕ markers and the ball */}
                   {players.map(p => {
                     const isSelected = isSel(p.id)
                     const s = p.scale || 1
-                    const r = 28 * s
+                    const r = pieceBase(p) * s
+                    const cross = `M${-r * 0.6},${-r * 0.6}L${r * 0.6},${r * 0.6}M${-r * 0.6},${r * 0.6}L${r * 0.6},${-r * 0.6}` // a ✕ marker's two strokes
                     // p.num = shirt number (inside circle), p.name = player name (below circle, halo text)
                     const numberText = p.num.toUpperCase()
                     const numFontSize = Math.max(10 * s, Math.min(18 * s, r * 0.8) * Math.min(1, 3 / Math.max(3, numberText.length)))
@@ -3374,27 +3443,46 @@ function TacticsBoard() {
                         {p.glow && (
                           <circle r={r + 15} fill={p.bg} fillOpacity={0.4} filter="blur(8px)" />
                         )}
-                        {/* Drop shadow */}
-                        <circle r={r + 1} fill="rgba(0,0,0,0.45)" cx={1.5} cy={2.5} />
-                        {/* Selection ring + resize handle at bottom-right of circle */}
+                        {/* Drop shadow (a ✕ marker also gets an invisible circle, so it's easy to grab) */}
+                        {p.kind === "marker" ? (
+                          <>
+                            <circle r={r} fill="transparent" />
+                            <path d={cross} transform="translate(1.5,2.5)" fill="none" stroke="rgba(0,0,0,0.45)" strokeWidth={r * 0.3} strokeLinecap="round" />
+                          </>
+                        ) : (
+                          <circle r={r + 1} fill="rgba(0,0,0,0.45)" cx={1.5} cy={2.5} />
+                        )}
+                        {p.kind === "marker" ? (
+                          <>
+                            {/* ✕ marker: a dark edge, then the colour */}
+                            <path d={cross} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={r * 0.3 + 2.5} strokeLinecap="round" />
+                            <path d={cross} fill="none" stroke={p.bg} strokeWidth={r * 0.3} strokeLinecap="round" />
+                          </>
+                        ) : p.kind === "ball" ? (
+                          <BallGlyph r={r} />
+                        ) : (
+                          <>
+                            {/* Main circle */}
+                            <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={3 * s} />
+                            {/* Number inside circle */}
+                            {showPlayerLabels && numberText.trim() !== "" && (
+                              <text textAnchor="middle" dominantBaseline="central" y={-1}
+                                fill={p.fg} fontSize={numFontSize} fontWeight="800"
+                                overflow="visible"
+                                style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none" }}>
+                                {numberText}
+                              </text>
+                            )}
+                          </>
+                        )}
+                        {/* Selection ring + resize handle at bottom-right (on top, so the whole handle can be grabbed) */}
                         {isSelected && (
                           <>
                             <circle r={r + 7} fill="none" stroke={ACCENT_SOLID} strokeWidth={2.5} strokeDasharray="5,3" />
                             <circle cx={r * 0.707} cy={r * 0.707} r={6}
                               fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} style={{ cursor: "nwse-resize" }}
-                              onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePlayer", id: p.id, ox: 0, oy: 0 } }} />
+                              onPointerDown={e => { e.stopPropagation(); const q = svgXY(e); dragRef.current = { kind: "resizePlayer", id: p.id, ox: Math.hypot(q.x - p.x, q.y - p.y) - r, oy: 0 } }} />
                           </>
-                        )}
-                        {/* Main circle */}
-                        <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={3 * s} />
-                        {/* Number inside circle */}
-                        {showPlayerLabels && numberText.trim() !== "" && (
-                          <text textAnchor="middle" dominantBaseline="central" y={-1}
-                            fill={p.fg} fontSize={numFontSize} fontWeight="800"
-                            overflow="visible"
-                            style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none" }}>
-                            {numberText}
-                          </text>
                         )}
                         {/* Name below circle — halo text, never shrinks, free overflow */}
                         {showPlayerLabels && p.name.trim() !== "" && (
@@ -3612,14 +3700,14 @@ function TacticsBoard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
           style={{ background: "rgba(0,0,0,0.6)" }}
           onClick={() => setShowShortcuts(false)}>
-          <div style={{ background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 10, maxWidth: 380, width: "100%", padding: "20px 24px" }}
+          <div style={{ background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 10, maxWidth: 380, width: "100%", padding: "20px 24px", maxHeight: "calc(100vh - 32px)", overflowY: "auto" }}
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
               <p style={{ margin: 0, fontSize: 15, fontWeight: 600, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>Keyboard shortcuts</p>
               <button onClick={() => setShowShortcuts(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: TEXT_MUTED, padding: 2 }}><X size={16} /></button>
             </div>
             {([
-              { header: "TOOLS", rows: [["Select","V"],["Pan","H"],["Home player","1"],["Away player","2"],["Arrow","A"],["Text","T"],["Shapes","S"],["Zone","Z"],["Upload image","I"]] },
+              { header: "TOOLS", rows: [["Select","V"],["Pan","H"],["Home player","1"],["Away player","2"],["✕ marker","X"],["Ball","B"],["Arrow","A"],["Text","T"],["Shapes","S"],["Zone","Z"],["Upload image","I"]] },
               { header: "EDIT", rows: [["Undo","Ctrl+Z"],["Redo","Ctrl+Shift+Z"],["Duplicate","Ctrl+D"],["Copy","Ctrl+C"],["Paste","Ctrl+V"],["Delete","Del"]] },
               { header: "VIEW", rows: [["Zoom in","+"],["Zoom out","−"],["Fit to view","0"],["Deselect / cancel","Esc"]] },
               { header: "SELECTION", rows: [["Add to selection","Shift+click"],["Pan canvas","Alt+drag"]] },
