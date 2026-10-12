@@ -33,12 +33,19 @@ type Tool =
 
 type ShapeKind = "polygon" | "circle" | "ellipse" | "rect"
 
+/** How a kit's second colour is laid over its main colour */
+const KIT_PATTERNS = ["solid", "stripes", "hoops", "halves", "sash", "band", "sleeves"] as const
+type KitPattern = typeof KIT_PATTERNS[number]
+
 interface Player {
   id: string; x: number; y: number
   name: string; num: string
   bg: string; fg: string; ring: string
   glow?: boolean
   scale?: number
+  pat?: KitPattern // kit pattern; no pat = a plain colour (every board saved before kits)
+  bg2?: string // the pattern's second colour
+  outline?: boolean // an outline around the shirt number, so it reads on stripes
   kind?: "marker" | "ball" // a ✕ marker or the ball; no kind = a player (every board saved before this)
   locked?: boolean // locked pieces can't be clicked, moved or nudged until you right-click → Unlock (same on every element type)
 }
@@ -112,6 +119,11 @@ interface BoardSettings {
   textLayer: "foreground" | "background"
   showLanes: boolean; show18Zones: boolean
   pitchVisible: boolean // false hides the drawn pitch (grass and lines) so a photo behind it shows; zones and lanes stay
+  homePat: KitPattern; homeC2: string; homeNum: string; homeName: string // the home kit's pattern, second colour and number colour, and the team's name
+  awayPat: KitPattern; awayC2: string; awayNum: string; awayName: string
+  labelSize: "standard" | "large" | "xl" // name and number size on the pieces; bigger stays readable on a phone
+  nameStyle: "halo" | "chip" // names on a dark outline, or on a small dark chip
+  tokenStyle: "classic" | "minimal" // minimal = flat pieces: no drop shadow, a thin ring
 }
 /** What a saved board keeps in canvas_data (version 2). Version 1 boards only had the five element lists. */
 interface BoardData {
@@ -125,6 +137,9 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   pitchScale: 1, pitchOffX: 0, pitchOffY: 0, view3d: false, rotation: 0,
   homeColor: "#fbbf24", awayColor: "#1d4ed8", showPlayerLabels: true, textLayer: "foreground",
   showLanes: false, show18Zones: false, pitchVisible: true,
+  homePat: "solid", homeC2: "#fbbf24", homeNum: "#000000", homeName: "",
+  awayPat: "solid", awayC2: "#1d4ed8", awayNum: "#ffffff", awayName: "",
+  labelSize: "standard", nameStyle: "halo", tokenStyle: "classic",
 }
 /** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
 function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
@@ -148,6 +163,13 @@ function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSet
     textLayer: oneOf(v.textLayer, ["foreground", "background"] as const, d.textLayer),
     showLanes: bool(v.showLanes, d.showLanes), show18Zones: bool(v.show18Zones, d.show18Zones),
     pitchVisible: bool(v.pitchVisible, d.pitchVisible),
+    homePat: oneOf(v.homePat, KIT_PATTERNS, d.homePat), homeC2: str(v.homeC2, d.homeC2), homeNum: str(v.homeNum, d.homeNum),
+    homeName: typeof v.homeName === "string" ? v.homeName.slice(0, 30) : d.homeName,
+    awayPat: oneOf(v.awayPat, KIT_PATTERNS, d.awayPat), awayC2: str(v.awayC2, d.awayC2), awayNum: str(v.awayNum, d.awayNum),
+    awayName: typeof v.awayName === "string" ? v.awayName.slice(0, 30) : d.awayName,
+    labelSize: oneOf(v.labelSize, ["standard", "large", "xl"] as const, d.labelSize),
+    nameStyle: oneOf(v.nameStyle, ["halo", "chip"] as const, d.nameStyle),
+    tokenStyle: oneOf(v.tokenStyle, ["classic", "minimal"] as const, d.tokenStyle),
   }
 }
 /** Reads any saved board, old or new format, and fills in anything missing. */
@@ -266,6 +288,48 @@ const inkOn = (hex: string) => {
   const v = parseInt(m[1], 16)
   return (0.299 * ((v >> 16) & 255) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255)) / 255 > 0.7 ? "#000000" : "#ffffff"
 }
+type Kit = { id: string; name: string; pat: KitPattern; c1: string; c2: string; num: string }
+const kit = (id: string, name: string, pat: KitPattern, c1: string, c2: string, num: string): Kit => ({ id, name, pat, c1, c2, num })
+/** Club-style kits, named by colour only: no club names, no crests */
+const KITS: Kit[] = [
+  kit("white", "White", "solid", "#ffffff", "#ffffff", "#000000"),
+  kit("red", "Red", "solid", "#da291c", "#da291c", "#ffffff"),
+  kit("sky", "Sky blue", "solid", "#6cabdd", "#6cabdd", "#0b1f4b"),
+  kit("royal", "Royal blue", "solid", "#1d4ed8", "#1d4ed8", "#ffffff"),
+  kit("navy", "Navy", "solid", "#0b1f4b", "#0b1f4b", "#ffffff"),
+  kit("yellow", "Yellow", "solid", "#edbb00", "#edbb00", "#000000"),
+  kit("green", "Green", "solid", "#15803d", "#15803d", "#ffffff"),
+  kit("black", "Black", "solid", "#111111", "#111111", "#ffffff"),
+  kit("orange", "Orange", "solid", "#f97316", "#f97316", "#000000"),
+  kit("claret", "Claret", "solid", "#7a263a", "#7a263a", "#ffffff"),
+  kit("blue-garnet-stripes", "Blue & garnet stripes", "stripes", "#1d4ed8", "#a50044", "#ffffff"),
+  kit("red-white-stripes", "Red & white stripes", "stripes", "#da291c", "#ffffff", "#ffffff"),
+  kit("black-white-stripes", "Black & white stripes", "stripes", "#111111", "#ffffff", "#ffffff"),
+  kit("red-black-stripes", "Red & black stripes", "stripes", "#da291c", "#111111", "#ffffff"),
+  kit("green-white-hoops", "Green & white hoops", "hoops", "#15803d", "#ffffff", "#ffffff"),
+  kit("blue-white-hoops", "Blue & white hoops", "hoops", "#1d4ed8", "#ffffff", "#ffffff"),
+  kit("blue-white-halves", "Blue & white halves", "halves", "#1d4ed8", "#ffffff", "#ffffff"),
+  kit("red-yellow-halves", "Red & yellow halves", "halves", "#da291c", "#edbb00", "#ffffff"),
+  kit("white-red-sash", "White with red sash", "sash", "#ffffff", "#da291c", "#000000"),
+  kit("navy-yellow-band", "Navy with yellow band", "band", "#0b1f4b", "#edbb00", "#ffffff"),
+  kit("red-white-sleeves", "Red with white sleeves", "sleeves", "#da291c", "#ffffff", "#ffffff"),
+  kit("white-black-sleeves", "White with black sleeves", "sleeves", "#ffffff", "#111111", "#000000"),
+]
+const GK_KITS: Kit[] = [
+  kit("gk-lime", "Lime", "solid", "#a3e635", "#a3e635", "#000000"),
+  kit("gk-pink", "Pink", "solid", "#f472b6", "#f472b6", "#000000"),
+  kit("gk-purple", "Purple", "solid", "#7c3aed", "#7c3aed", "#ffffff"),
+  kit("gk-grey", "Grey", "solid", "#6b7280", "#6b7280", "#ffffff"),
+  kit("gk-teal", "Teal", "solid", "#0d9488", "#0d9488", "#ffffff"),
+  kit("gk-orange", "Orange", "solid", "#f97316", "#f97316", "#000000"),
+  kit("gk-black-lime-sleeves", "Black with lime sleeves", "sleeves", "#111111", "#a3e635", "#ffffff"),
+]
+/** True when this player is wearing that team kit (a player with no pattern is a plain colour) */
+const wearsKit = (p: Player, k: { pat: KitPattern; c1: string; c2: string }, defaultBg: string) =>
+  !p.kind && (((p.pat ?? "solid") === k.pat && p.bg === k.c1 && (k.pat === "solid" || p.bg2 === k.c2)) || ((p.pat ?? "solid") === "solid" && p.bg === defaultBg))
+/** What a player needs to wear a kit. A plain colour stays exactly as boards always stored it */
+const kitProps = (k: { pat: KitPattern; c1: string; c2: string; num: string }): Partial<Player> =>
+  k.pat === "solid" ? { bg: k.c1, fg: k.num, pat: undefined, bg2: undefined, outline: false } : { bg: k.c1, fg: k.num, pat: k.pat, bg2: k.c2, outline: true }
 const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315, 360]
 
 /* ── Design tokens ──────────────────────────────────────────────
@@ -892,12 +956,24 @@ function TacticsBoard() {
   const [hoveredPitch, setHoveredPitch] = useState(false)
   const [homeColor, setHomeColor] = useState("#fbbf24")
   const [awayColor, setAwayColor] = useState("#1d4ed8")
+  const [homePat, setHomePat] = useState<KitPattern>("solid")
+  const [homeC2, setHomeC2] = useState("#fbbf24")
+  const [homeNum, setHomeNum] = useState("#000000")
+  const [homeName, setHomeName] = useState("")
+  const [awayPat, setAwayPat] = useState<KitPattern>("solid")
+  const [awayC2, setAwayC2] = useState("#1d4ed8")
+  const [awayNum, setAwayNum] = useState("#ffffff")
+  const [awayName, setAwayName] = useState("")
+  const [labelSize, setLabelSize] = useState<BoardSettings["labelSize"]>("standard")
+  const [nameStyle, setNameStyle] = useState<BoardSettings["nameStyle"]>("halo")
+  const [tokenStyle, setTokenStyle] = useState<BoardSettings["tokenStyle"]>("classic")
+  const [kitEditor, setKitEditor] = useState({ home: false, away: false })
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [sideTab, setSideTab] = useState<"selected" | "board">("board")
   const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
-  const [boardGroups, setBoardGroups] = useState({ formation: true, teams: true, zones: false, pitch: false, canvas: false })
+  const [boardGroups, setBoardGroups] = useState({ formation: true, teams: true, labels: false, zones: false, pitch: false, canvas: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [selectedFormation, setSelectedFormation] = useState("4-3-3")
 
@@ -1174,6 +1250,7 @@ function TacticsBoard() {
     settings: settingsFrom({
       workspaceMode, canvasMode, showPitch, pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY,
       view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible,
+      homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
     }),
   })
   /** Puts a saved board's elements, zones and settings back on screen. */
@@ -1188,6 +1265,9 @@ function TacticsBoard() {
     setHomeColor(st.homeColor); setAwayColor(st.awayColor)
     setShowPlayerLabels(st.showPlayerLabels); setTextLayer(st.textLayer)
     setShowLanes(st.showLanes); setShow18Zones(st.show18Zones); setPitchVisible(st.pitchVisible)
+    setHomePat(st.homePat); setHomeC2(st.homeC2); setHomeNum(st.homeNum); setHomeName(st.homeName)
+    setAwayPat(st.awayPat); setAwayC2(st.awayC2); setAwayNum(st.awayNum); setAwayName(st.awayName)
+    setLabelSize(st.labelSize); setNameStyle(st.nameStyle); setTokenStyle(st.tokenStyle)
   }
   /** Opens a board exactly as it was saved. Older boards get today's defaults for anything they didn't store.
    *  boardId = null starts a new, unsaved board (used for templates). */
@@ -1259,7 +1339,8 @@ function TacticsBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, narrative, players, arrows, texts, shapes, images, customZones, workspaceMode, canvasMode, showPitch,
       pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
-      showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, currentBoardId, authUser, saveTick])
+      showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
+      labelSize, nameStyle, tokenStyle, currentBoardId, authUser, saveTick])
 
   // Opening a fresh board: bring back the unsaved board from last time, if there is one
   const restoreCheckedRef = useRef(false)
@@ -1875,6 +1956,77 @@ function TacticsBoard() {
     }
   }, [selection, players, snapshot])
 
+  /** How much bigger the names and numbers on the pieces are drawn */
+  const labelScale = labelSize === "xl" ? 1.7 : labelSize === "large" ? 1.35 : 1
+
+  /* ── Team kits ── */
+  const kitOf = (team: "home" | "away") =>
+    team === "home" ? { pat: homePat, c1: homeColor, c2: homeC2, num: homeNum } : { pat: awayPat, c1: awayColor, c2: awayC2, num: awayNum }
+  /** What a new player on this team wears (a plain colour adds nothing extra, so those boards save exactly as before) */
+  const teamKit = (team: "home" | "away") => {
+    const k = kitOf(team)
+    return k.pat === "solid" ? { bg: k.c1, fg: k.num } : { bg: k.c1, fg: k.num, pat: k.pat, bg2: k.c2, outline: true }
+  }
+  /** Gives a team a new kit; everyone on that team changes with it. One undo step. */
+  const applyTeamKit = (team: "home" | "away", k: { pat: KitPattern; c1: string; c2: string; num: string }, key?: string) => {
+    const cur = kitOf(team)
+    const base = team === "home" ? HOME_COLORS.bg : AWAY_COLORS.bg
+    undoPoint(key)
+    if (team === "home") { setHomeColor(k.c1); setHomePat(k.pat); setHomeC2(k.c2); setHomeNum(k.num) }
+    else { setAwayColor(k.c1); setAwayPat(k.pat); setAwayC2(k.c2); setAwayNum(k.num) }
+    setPlayers(prev => prev.map(p => wearsKit(p, cur, base) ? { ...p, ...kitProps(k) } : p))
+  }
+  const teamKitBlock = (team: "home" | "away") => {
+    const k = kitOf(team)
+    const label = team === "home" ? "Home" : "Away"
+    const name = team === "home" ? homeName : awayName
+    const open = kitEditor[team]
+    const match = KITS.find(x => x.pat === k.pat && x.c1 === k.c1 && (k.pat === "solid" || x.c2 === k.c2))
+    return (
+      <div key={team} className="flex flex-col gap-2.5 pb-3" style={{ borderBottom: team === "home" ? `1px solid ${DS_BORDER}` : "none" }}>
+        <div className="flex items-center gap-2">
+          <KitDisc id={`${team}-head`} size={24} pat={k.pat} c1={k.c1} c2={k.c2} />
+          <input value={name} maxLength={30} aria-label={`${label} team name`} placeholder={`${label} team name`}
+            onChange={e => { undoPoint(`${team}Name`); (team === "home" ? setHomeName : setAwayName)(e.target.value) }}
+            className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none"
+            style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+        </div>
+        <ColorPicker label={`${label} colour`} colors={PALETTE} selected={k.c1}
+          onSelect={c => applyTeamKit(team, { ...k, c1: c, num: k.pat === "solid" ? inkOn(c) : k.num }, `${team}Colour`)} />
+        <div>
+          <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Kit · {match ? match.name : "Custom"}</p>
+          <div className="flex flex-wrap gap-1">
+            {KITS.map(x => {
+              const on = match?.id === x.id
+              return (
+                <button key={x.id} title={x.name} aria-label={`${label} kit: ${x.name}`} aria-pressed={on} onClick={() => applyTeamKit(team, x)}
+                  className="rounded-full transition-transform hover:scale-110"
+                  style={{ padding: 2, border: `2px solid ${on ? ACCENT_SOLID : "transparent"}`, background: "transparent" }}>
+                  <KitDisc id={`${team}-${x.id}`} size={22} pat={x.pat} c1={x.c1} c2={x.c2} />
+                </button>
+              )
+            })}
+          </div>
+        </div>
+        <button onClick={() => setKitEditor(e => ({ ...e, [team]: !e[team] }))} aria-expanded={open}
+          className="flex items-center gap-1.5 text-xs font-semibold"
+          style={{ color: TEXT_MUTED, background: "transparent", border: "none", textAlign: "left", padding: 0 }}>
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}Pattern and colours
+        </button>
+        {open && (
+          <div className="flex flex-col gap-2.5">
+            <PatternRow value={k.pat}
+              onChange={pt => applyTeamKit(team, { ...k, pat: pt, c2: pt !== "solid" && k.c2 === k.c1 ? (k.c1 === "#ffffff" ? "#111111" : "#ffffff") : k.c2 })} />
+            {k.pat !== "solid" && (
+              <ColorPicker label="Second colour" colors={PALETTE} selected={k.c2} onSelect={c => applyTeamKit(team, { ...k, c2: c }, `${team}Second`)} />
+            )}
+            <ColorPicker label="Number colour" colors={PALETTE} selected={k.num} onSelect={c => applyTeamKit(team, { ...k, num: c }, `${team}Number`)} />
+          </div>
+        )}
+      </div>
+    )
+  }
+
   /* ── Add formation ── */
   const addFormation = useCallback((formationName: string, team: "home" | "away") => {
     const formation = FORMATIONS.find(f => f.name === formationName)
@@ -1886,7 +2038,9 @@ function TacticsBoard() {
         ? PX + pos.x
         : PX + (PW - pos.x)
       const cy = PY + pos.y
-      const colors = team === "home" ? { ...HOME_COLORS, bg: homeColor } : { ...AWAY_COLORS, bg: awayColor }
+      const colors = team === "home"
+        ? { ...HOME_COLORS, ...teamKit("home") }
+        : { ...AWAY_COLORS, ...teamKit("away") }
       return {
         id: uid(),
         x: cx,
@@ -2020,11 +2174,11 @@ function TacticsBoard() {
     const nextNum = String(players.filter(q => !q.kind).length + 1)
     if (tool === "homePlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...HOME_COLORS, bg: homeColor, glow: false, scale: 1 }
+      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...HOME_COLORS, ...teamKit("home"), glow: false, scale: 1 }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "awayPlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...AWAY_COLORS, bg: awayColor, glow: false, scale: 1 }
+      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...AWAY_COLORS, ...teamKit("away"), glow: false, scale: 1 }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "marker" || tool === "ball") {
       snapshot()
@@ -2074,7 +2228,8 @@ function TacticsBoard() {
     } else if (tool === "select") {
       setSel(null)
     }
-  }, [tool, shapeKind, players, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot, arrowDefaultDash, arrowDefaultColor, arrowDefaultW])
+  }, [tool, shapeKind, players, arrowDraft, polyDraft, shapes.length, textLayer, svgXY, snapshot, arrowDefaultDash, arrowDefaultColor, arrowDefaultW,
+      homeColor, homePat, homeC2, homeNum, awayColor, awayPat, awayC2, awayNum])
 
   /* ── Canvas pan (alt+drag, middle-button, or pan tool) ── */
   const onCanvasMouseDown = (e: React.PointerEvent) => {
@@ -2693,8 +2848,29 @@ function TacticsBoard() {
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
                     <ColorPicker label="Kit colour" colors={PALETTE} selected={selP.bg}
-                      onSelect={c => updP({ bg: c, fg: inkOn(c) })} />
+                      onSelect={c => updP({ bg: c, ...((selP.pat ?? "solid") === "solid" ? { fg: inkOn(c) } : {}) })} />
+                    <PatternRow value={selP.pat ?? "solid"}
+                      onChange={pt => updP(pt === "solid" ? { pat: undefined, bg2: undefined, outline: false } : { pat: pt, bg2: selP.bg2 ?? (selP.bg === "#ffffff" ? "#111111" : "#ffffff"), outline: true })} />
+                    {(selP.pat ?? "solid") !== "solid" && (
+                      <ColorPicker label="Second colour" colors={PALETTE} selected={selP.bg2 ?? "#ffffff"} onSelect={c => updP({ bg2: c })} />
+                    )}
+                    <ColorPicker label="Number colour" colors={PALETTE} selected={selP.fg} onSelect={c => updP({ fg: c })} />
+                    <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
+                      <input type="checkbox" checked={selP.outline || false} onChange={e => updP({ outline: e.target.checked })} className="accent-green-400" />
+                      <span style={{ color: TEXT_PRIMARY }}>Number outline</span>
+                    </label>
                     <ColorPicker label="Ring colour" colors={PALETTE} selected={selP.ring} onSelect={c => updP({ ring: c })} allowTransparent={true} />
+                    <div>
+                      <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Goalkeeper kit</p>
+                      <div className="flex flex-wrap gap-1">
+                        {GK_KITS.map(x => (
+                          <button key={x.id} title={x.name} aria-label={`Goalkeeper kit: ${x.name}`} onClick={() => updP(kitProps(x))}
+                            className="rounded-full transition-transform hover:scale-110" style={{ padding: 2, border: "2px solid transparent", background: "transparent" }}>
+                            <KitDisc id={`sel-${x.id}`} size={22} pat={x.pat} c1={x.c1} c2={x.c2} />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
                       <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
                       <span style={{ color: TEXT_PRIMARY }}>Glow highlight</span>
@@ -2967,12 +3143,12 @@ function TacticsBoard() {
                 <div className="flex gap-1.5">
                   <button onClick={() => { addFormation(selectedFormation, "home"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
                     className="flex-1 py-1.5 rounded text-xs font-semibold"
-                    style={{ background: homeColor, color: homeColor === "#ffffff" || homeColor === "#fbbf24" ? "#000" : "#fff" }}>
+                    style={{ background: homeColor, color: inkOn(homeColor) }}>
                     + Home
                   </button>
                   <button onClick={() => { addFormation(selectedFormation, "away"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
                     className="flex-1 py-1.5 rounded text-xs font-semibold"
-                    style={{ background: awayColor, color: awayColor === "#ffffff" || awayColor === "#fbbf24" ? "#000" : "#fff" }}>
+                    style={{ background: awayColor, color: inkOn(awayColor) }}>
                     + Away
                   </button>
                 </div>
@@ -2991,22 +3167,34 @@ function TacticsBoard() {
             </button>
             {boardGroups.teams && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <div className="flex flex-col gap-3">
-                  <ColorPicker label="Home colour" colors={PALETTE} selected={homeColor} onSelect={c => {
-                    undoPoint("homeColour")
-                    setHomeColor(c)
-                    setPlayers(prev => prev.map(p => !p.kind && (p.bg === homeColor || p.bg === HOME_COLORS.bg) ? { ...p, bg: c, fg: inkOn(c) } : p))
-                  }} />
-                  <ColorPicker label="Away colour" colors={PALETTE} selected={awayColor} onSelect={c => {
-                    undoPoint("awayColour")
-                    setAwayColor(c)
-                    setPlayers(prev => prev.map(p => !p.kind && (p.bg === awayColor || p.bg === AWAY_COLORS.bg) ? { ...p, bg: c, fg: inkOn(c) } : p))
-                  }} />
-                </div>
+                {teamKitBlock("home")}
+                {teamKitBlock("away")}
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
                   <input type="checkbox" checked={showPlayerLabels} onChange={e => { undoPoint(); setShowPlayerLabels(e.target.checked) }} className="accent-green-400" />
                   <span style={{ color: TEXT_PRIMARY }}>Show names and numbers</span>
                 </label>
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Kits are named by colour only. PitchStudio is not affiliated with any club, league or player.</p>
+              </div>
+            )}
+
+            <button aria-expanded={boardGroups.labels}
+              onClick={() => setBoardGroups(g => ({ ...g, labels: !g.labels }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.labels ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Readability
+            </button>
+            {boardGroups.labels && (
+              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                <Segmented label="Label size" value={labelSize} onChange={v => { undoPoint(); setLabelSize(v) }}
+                  options={[["standard", "Standard"], ["large", "Large"], ["xl", "Extra large"]]} />
+                <Segmented label="Names" value={nameStyle} onChange={v => { undoPoint(); setNameStyle(v) }}
+                  options={[["halo", "Outline"], ["chip", "Chip"]]} />
+                <Segmented label="Pieces" value={tokenStyle} onChange={v => { undoPoint(); setTokenStyle(v) }}
+                  options={[["classic", "Classic"], ["minimal", "Minimal"]]} />
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Larger labels, name chips and minimal pieces stay readable when a board is viewed on a phone.</p>
               </div>
             )}
 
@@ -3561,7 +3749,8 @@ function TacticsBoard() {
                     const cross = `M${-r * 0.6},${-r * 0.6}L${r * 0.6},${r * 0.6}M${-r * 0.6},${r * 0.6}L${r * 0.6},${-r * 0.6}` // a ✕ marker's two strokes
                     // p.num = shirt number (inside circle), p.name = player name (below circle, halo text)
                     const numberText = p.num.toUpperCase()
-                    const numFontSize = Math.max(10 * s, Math.min(18 * s, r * 0.8) * Math.min(1, 3 / Math.max(3, numberText.length)))
+                    const numFontSize = Math.max(10 * s, Math.min(18 * s * labelScale, r * (labelScale > 1 ? 0.9 : 0.8)) * Math.min(1, 3 / Math.max(3, numberText.length)))
+                    const ringW = (tokenStyle === "minimal" ? 1.5 : 3) * s // minimal pieces are flat: a thin ring and no drop shadow
                     return (
                       <g key={p.id} transform={`translate(${p.x},${p.y})`}
                         onPointerDown={e => {
@@ -3591,7 +3780,7 @@ function TacticsBoard() {
                             <circle r={r} fill="transparent" />
                             <path d={cross} transform="translate(1.5,2.5)" fill="none" stroke="rgba(0,0,0,0.45)" strokeWidth={r * 0.3} strokeLinecap="round" />
                           </>
-                        ) : (
+                        ) : tokenStyle === "minimal" ? null : (
                           <circle r={r + 1} fill="rgba(0,0,0,0.45)" cx={1.5} cy={2.5} />
                         )}
                         {p.kind === "marker" ? (
@@ -3604,12 +3793,21 @@ function TacticsBoard() {
                           <BallGlyph r={r} />
                         ) : (
                           <>
-                            {/* Main circle */}
-                            <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={3 * s} />
+                            {/* Main circle (a patterned kit lays its second colour on top, then the ring) */}
+                            {(p.pat ?? "solid") === "solid" ? (
+                              <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={ringW} />
+                            ) : (
+                              <>
+                                <KitFill cid={`kc-${p.id}`} r={r} pat={p.pat!} c1={p.bg} c2={p.bg2 ?? "#ffffff"} />
+                                <circle r={r} fill="none" stroke={p.ring} strokeWidth={ringW} />
+                              </>
+                            )}
                             {/* Number inside circle */}
                             {showPlayerLabels && numberText.trim() !== "" && (
                               <text textAnchor="middle" dominantBaseline="central" y={-1}
                                 fill={p.fg} fontSize={numFontSize} fontWeight="800"
+                                stroke={p.outline ? inkOn(p.fg) : undefined} strokeWidth={p.outline ? 3 * s : undefined}
+                                paintOrder={p.outline ? "stroke" : undefined} strokeLinejoin="round"
                                 overflow="visible"
                                 style={{ fontFamily: "'Barlow Condensed',sans-serif", pointerEvents: "none" }}>
                                 {numberText}
@@ -3626,16 +3824,10 @@ function TacticsBoard() {
                               onPointerDown={e => { e.stopPropagation(); const q = svgXY(e); dragRef.current = { kind: "resizePlayer", id: p.id, ox: Math.hypot(q.x - p.x, q.y - p.y) - r, oy: 0 } }} />
                           </>
                         )}
-                        {/* Name below circle — halo text, never shrinks, free overflow */}
+                        {/* Name below circle — on a dark outline or a chip, never shrinks, free overflow */}
                         {showPlayerLabels && p.name.trim() !== "" && (
-                          <text textAnchor="middle" x={0} y={r + 6 * s + 13 * s}
-                            fill="#ffffff" fontSize={13 * s} fontWeight={700}
-                            stroke="rgba(0,0,0,0.9)" strokeWidth={3 * s}
-                            paintOrder="stroke" strokeLinejoin="round"
-                            overflow="visible"
-                            style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.03em", pointerEvents: "none", textTransform: "uppercase" }}>
-                            {p.name}
-                          </text>
+                          <NameLabel text={p.name} y={r + 6 * s + 13 * s * labelScale} size={13 * s * labelScale}
+                            halo={3 * s * labelScale} pad={6 * s * labelScale} chip={nameStyle === "chip"} />
                         )}
                       </g>
                     )
@@ -3682,13 +3874,38 @@ function TacticsBoard() {
                       fill="rgba(124,92,255,0.1)" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="5,3" style={{ pointerEvents: "none" }} />
                   )}
 
-                  {/* 13. Watermark — always last, always visible: your handle (once you've chosen one) and PITCHSTUDIO */}
+                  {/* Team legend: the kit and name of each named team, bottom left */}
+                  {(homeName.trim() !== "" || awayName.trim() !== "") && (
+                    <g style={{ pointerEvents: "none" }}>
+                      {(["home", "away"] as const).filter(team => (team === "home" ? homeName : awayName).trim() !== "").map((team, i, arr) => {
+                        const k = kitOf(team)
+                        return (
+                          <g key={team} transform={`translate(30,${CH - 26 - (arr.length - 1 - i) * 28})`}>
+                            <KitFill cid={`kl-${team}`} r={10} pat={k.pat} c1={k.c1} c2={k.c2} />
+                            <circle r={10} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={1.5} />
+                            <text x={19} y={1} dominantBaseline="central" fill="#ffffff" fontSize={17} fontWeight={700}
+                              stroke="rgba(0,0,0,0.85)" strokeWidth={3.5} paintOrder="stroke" strokeLinejoin="round"
+                              style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                              {(team === "home" ? homeName : awayName).trim()}
+                            </text>
+                          </g>
+                        )
+                      })}
+                    </g>
+                  )}
+
+                  {/* 13. Creator seal — always last, always visible: the PS seal, your handle (once you've chosen one) and PITCHSTUDIO */}
                   <g style={{ pointerEvents: "none" }}>
-                    <rect x={CW - 18 - wmWidth} y={CH - 26} width={wmWidth + 10} height={20} rx={3} fill="rgba(0,0,0,0.45)" />
-                    <text ref={wmTextRef} x={CW - 13} y={CH - 11} textAnchor="end" fontSize={12}
+                    <rect x={CW - 14 - (wmWidth + 48)} y={CH - 42} width={wmWidth + 48} height={28} rx={14} fill="rgba(0,0,0,0.62)" />
+                    <circle cx={CW - 14 - (wmWidth + 48) + 17} cy={CH - 28} r={11} fill={PS_VOLT} />
+                    <text x={CW - 14 - (wmWidth + 48) + 17} y={CH - 27.5} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#0a0c0f"
+                      style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.02em" }}>
+                      PS
+                    </text>
+                    <text ref={wmTextRef} x={CW - 26} y={CH - 22} textAnchor="end" fontSize={17}
                       style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
-                      {creatorHandle && <tspan fill="rgba(255,255,255,0.6)" fontWeight="600" style={{ letterSpacing: "0.04em" }}>@{creatorHandle}</tspan>}
-                      <tspan dx={creatorHandle ? 7 : 0} fill="rgba(255,255,255,0.75)" fontWeight="700" style={{ letterSpacing: "0.12em" }}>PITCHSTUDIO</tspan>
+                      {creatorHandle && <tspan fill="rgba(255,255,255,0.78)" fontWeight="600" style={{ letterSpacing: "0.04em" }}>@{creatorHandle}</tspan>}
+                      <tspan dx={creatorHandle ? 8 : 0} fill="rgba(255,255,255,0.95)" fontWeight="700" style={{ letterSpacing: "0.12em" }}>PITCHSTUDIO</tspan>
                     </text>
                   </g>
                 </svg>
@@ -4620,6 +4837,102 @@ const readRecentColours = (): string[] => {
 const rememberColour = (hex: string) => {
   try { localStorage.setItem(RECENT_COLOURS_KEY, JSON.stringify([hex.toLowerCase(), ...readRecentColours().filter(c => c !== hex.toLowerCase())].slice(0, 10))) }
   catch { /* private window: recent colours just aren't kept */ }
+}
+
+/** The fill of a kit circle: the main colour, with the second colour laid over it in the kit's pattern. Clipped to the circle. */
+function KitFill({ cid, r, pat, c1, c2 }: { cid: string; r: number; pat: KitPattern; c1: string; c2: string }) {
+  const w = (2 * r) / 5
+  return (
+    <>
+      <clipPath id={cid}><circle r={r} /></clipPath>
+      <circle r={r} fill={c1} />
+      {pat !== "solid" && (
+        <g clipPath={`url(#${cid})`} fill={c2}>
+          {pat === "stripes" && <><rect x={-r + w} y={-r} width={w} height={2 * r} /><rect x={-r + 3 * w} y={-r} width={w} height={2 * r} /></>}
+          {pat === "hoops" && <><rect x={-r} y={-r + w} width={2 * r} height={w} /><rect x={-r} y={-r + 3 * w} width={2 * r} height={w} /></>}
+          {pat === "halves" && <rect x={0} y={-r} width={r} height={2 * r} />}
+          {pat === "sash" && <rect x={-1.5 * r} y={-r * 0.3} width={3 * r} height={r * 0.6} transform="rotate(45)" />}
+          {pat === "band" && <rect x={-r} y={-r * 0.3} width={2 * r} height={r * 0.6} />}
+          {pat === "sleeves" && <><rect x={-r} y={-r} width={r * 0.42} height={2 * r} /><rect x={r * 0.58} y={-r} width={r * 0.42} height={2 * r} /></>}
+        </g>
+      )}
+    </>
+  )
+}
+
+/** A player's name under the piece: on a dark outline (halo) or on a small dark chip that fits the name */
+function NameLabel({ text, y, size, halo, pad, chip }: { text: string; y: number; size: number; halo: number; pad: number; chip: boolean }) {
+  const ref = useRef<SVGTextElement>(null)
+  const [w, setW] = useState(0)
+  useLayoutEffect(() => {
+    if (!chip) return
+    const measure = () => { const tw = ref.current?.getComputedTextLength(); if (tw) setW(Math.ceil(tw)) }
+    measure()
+    document.fonts?.ready.then(measure)
+  }, [chip, text, size])
+  return (
+    <>
+      {chip && w > 0 && (
+        <rect x={-w / 2 - pad} y={y - size * 0.925} width={w + pad * 2} height={size * 1.15} rx={size * 0.3}
+          fill="rgba(10,12,15,0.86)" stroke="rgba(255,255,255,0.16)" strokeWidth={1} style={{ pointerEvents: "none" }} />
+      )}
+      <text ref={ref} textAnchor="middle" x={0} y={y}
+        fill="#ffffff" fontSize={size} fontWeight={700}
+        stroke={chip ? undefined : "rgba(0,0,0,0.9)"} strokeWidth={chip ? undefined : halo}
+        paintOrder={chip ? undefined : "stroke"} strokeLinejoin="round"
+        overflow="visible"
+        style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.03em", pointerEvents: "none", textTransform: "uppercase" }}>
+        {text}
+      </text>
+    </>
+  )
+}
+
+/** A row of choices where exactly one is on */
+function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <div>
+      <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>{label}</p>
+      <div className="flex flex-wrap gap-1">
+        {options.map(([v, text]) => (
+          <button key={v} onClick={() => onChange(v)} aria-pressed={value === v}
+            className="px-2 py-1 rounded text-xs font-medium transition-colors"
+            style={{ background: value === v ? ACCENT_GRADIENT : SURFACE_2, color: value === v ? "#fff" : TEXT_MUTED }}>
+            {text}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** A small round preview of a kit, for the pickers */
+function KitDisc({ id, size, pat, c1, c2 }: { id: string; size: number; pat: KitPattern; c1: string; c2: string }) {
+  return (
+    <svg width={size} height={size} viewBox="-12 -12 24 24" aria-hidden="true" style={{ display: "block" }}>
+      <KitFill cid={`kd-${id}`} r={11} pat={pat} c1={c1} c2={c2} />
+      <circle r={11} fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth={1} />
+    </svg>
+  )
+}
+
+const PATTERN_LABELS: Record<KitPattern, string> = { solid: "Solid", stripes: "Stripes", hoops: "Hoops", halves: "Halves", sash: "Sash", band: "Band", sleeves: "Sleeves" }
+/** Pick how the second colour sits on the shirt */
+function PatternRow({ value, onChange }: { value: KitPattern; onChange: (p: KitPattern) => void }) {
+  return (
+    <div>
+      <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Pattern</p>
+      <div className="flex flex-wrap gap-1">
+        {KIT_PATTERNS.map(p => (
+          <button key={p} onClick={() => onChange(p)} aria-pressed={value === p}
+            className="px-2 py-1 rounded text-xs font-medium transition-colors"
+            style={{ background: value === p ? ACCENT_GRADIENT : SURFACE_2, color: value === p ? "#fff" : TEXT_MUTED }}>
+            {PATTERN_LABELS[p]}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 /** Swatches plus a "+" for any colour: pick it, type its hex, or reuse one of your last ten. */
