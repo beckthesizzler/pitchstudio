@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback, useEffect, Component } from "react"
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, Component } from "react"
 import type { ReactNode } from "react"
 import React from "react"
-import { toPng, toJpeg } from "html-to-image"
+import { toPng, toJpeg, getFontEmbedCSS } from "html-to-image"
 import jsPDF from "jspdf"
 import {
   MousePointer2, UserPlus, ArrowUpRight, Type, Pentagon,
@@ -178,6 +178,8 @@ function withTimeout<T>(make: (signal: AbortSignal) => PromiseLike<T>, ms: numbe
 }
 /** What one save writes, decided at the moment it was asked for. */
 type SaveSnap = { epoch: number; uid: string; title: string; narrative: string; data: BoardData }
+/** The board's fonts, ready to put into exported pictures (fetched on the first export). */
+let exportFontCSS: Promise<string> | null = null
 /** Why the "leaving the board" dialog is showing. */
 type LeaveReason = "new" | "failed" | "conflict" | "saving"
 /** Saves still on their way. The hub's list waits for them (up to maxMs), so it doesn't show an older version of a board. */
@@ -891,14 +893,17 @@ function TacticsBoard() {
 
   // Name shown on the account button: display name, else handle (never the email)
   const [accountName, setAccountName] = useState("")
+  const [creatorHandle, setCreatorHandle] = useState("") // shown in the watermark, once you've chosen a handle yourself
   useEffect(() => {
-    if (!authUser) { setAccountName(""); return }
+    if (!authUser) { setAccountName(""); setCreatorHandle(""); return }
     let cancelled = false
     supabase.from("profiles").select("display_name, handle").eq("id", authUser.id).maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
         const raw = (data as any)?.display_name || (data as any)?.handle || ""
         setAccountName(stripHandleSuffix(raw, authUser.id, authUser.email))
+        const handle: string = (data as any)?.handle || ""
+        setCreatorHandle(handle && stripHandleSuffix(handle, authUser.id, authUser.email) === handle ? handle : "")
       })
     return () => { cancelled = true }
   }, [authUser?.id])
@@ -1921,24 +1926,42 @@ function TacticsBoard() {
   /* ── Export ── */
   const doExport = async (fmt: "png" | "jpeg" | "pdf") => {
     if (!pitchRef.current) return
+    const node = pitchRef.current
+    const keepSelection = selection
+    const name = (title.trim() || "PitchStudio board").replace(/[\\/:*?"<>|]+/g, "").slice(0, 80) // the file is named after the board
     try {
+      // No selection rings or handles in the picture
+      setSelection([])
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
+      // The board's fonts go into the picture too, otherwise numbers and names come out in a fallback font (fetched once)
+      if (!exportFontCSS) exportFontCSS = getFontEmbedCSS(document.body).catch(() => { exportFontCSS = null; return "" })
+      const fontEmbedCSS = await exportFontCSS
       if (fmt === "png") {
-        const url = await toPng(pitchRef.current, { pixelRatio: 2 })
-        const a = document.createElement("a"); a.href = url; a.download = "tactics.png"; a.click()
+        const url = await toPng(node, { pixelRatio: 2, fontEmbedCSS })
+        const a = document.createElement("a"); a.href = url; a.download = `${name}.png`; a.click()
       } else if (fmt === "jpeg") {
-        const url = await toJpeg(pitchRef.current, { quality: 0.95, pixelRatio: 2, backgroundColor: bgColor })
-        const a = document.createElement("a"); a.href = url; a.download = "tactics.jpg"; a.click()
+        const url = await toJpeg(node, { quality: 0.95, pixelRatio: 2, backgroundColor: bgColor, fontEmbedCSS })
+        const a = document.createElement("a"); a.href = url; a.download = `${name}.jpg`; a.click()
       } else {
-        const url = await toPng(pitchRef.current, { pixelRatio: 2 })
+        const url = await toPng(node, { pixelRatio: 2, fontEmbedCSS })
         const img = new Image(); img.src = url
         await new Promise(r => { img.onload = r })
         const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [img.width, img.height] })
         pdf.addImage(url, "PNG", 0, 0, img.width, img.height)
-        pdf.save("tactics.pdf")
+        pdf.save(`${name}.pdf`)
       }
       ;(window as any).posthog?.capture("board_exported", { format: fmt })
     } catch (err) { console.error(err) }
+    finally { setSelection(keepSelection) }
   }
+  // The watermark's background fits its text (a handle can be any length)
+  const wmTextRef = useRef<SVGTextElement>(null)
+  const [wmWidth, setWmWidth] = useState(92)
+  useLayoutEffect(() => {
+    const measure = () => { const w = wmTextRef.current?.getComputedTextLength(); if (w) setWmWidth(Math.ceil(w)) }
+    measure()
+    document.fonts?.ready.then(measure)
+  }, [creatorHandle])
 
   /* ── Templates ── */
   const getCanvasState = (): CanvasState => ({
@@ -3360,13 +3383,13 @@ function TacticsBoard() {
                     </>
                   )}
 
-                  {/* 13. Watermark — always last, always visible */}
-                  <g>
-                    <rect x={CW - 110} y={CH - 26} width={102} height={20} rx={3} fill="rgba(0,0,0,0.45)" />
-                    <text x={CW - 10} y={CH - 11} textAnchor="end"
-                      fill="rgba(255,255,255,0.75)" fontSize={12} fontWeight="700"
-                      style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.12em", pointerEvents: "none" }}>
-                      PITCHSTUDIO
+                  {/* 13. Watermark — always last, always visible: your handle (once you've chosen one) and PITCHSTUDIO */}
+                  <g style={{ pointerEvents: "none" }}>
+                    <rect x={CW - 18 - wmWidth} y={CH - 26} width={wmWidth + 10} height={20} rx={3} fill="rgba(0,0,0,0.45)" />
+                    <text ref={wmTextRef} x={CW - 13} y={CH - 11} textAnchor="end" fontSize={12}
+                      style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
+                      {creatorHandle && <tspan fill="rgba(255,255,255,0.6)" fontWeight="600" style={{ letterSpacing: "0.04em" }}>@{creatorHandle}</tspan>}
+                      <tspan dx={creatorHandle ? 7 : 0} fill="rgba(255,255,255,0.75)" fontWeight="700" style={{ letterSpacing: "0.12em" }}>PITCHSTUDIO</tspan>
                     </text>
                   </g>
                 </svg>
