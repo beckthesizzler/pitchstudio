@@ -1164,7 +1164,7 @@ function TacticsBoard() {
     const t = boardTitle || "Untitled board"
     const n = boardNarrative ?? ""
     boardEpochRef.current += 1 // anything still saving belongs to the previous board
-    histRef.current = []; histIdx.current = -1 // undo can't bring back another board's content
+    histRef.current = []; histIdx.current = -1; editRef.current = null // undo can't bring back another board's content
     applyBoardData(d)
     setTitle(t); setNarrative(n); setNarrativeOpen(false)
     setSelection([])
@@ -1371,36 +1371,41 @@ function TacticsBoard() {
     id: string; ox: number; oy: number
   } | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
+  const dragStartedRef = useRef(false) // the current drag has already marked its undo point
 
   /* ── History ── */
-  type Snap = { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]; customZones: CustomZone[] }
+  // Each entry is the whole board just before one change (pieces and board settings), so one undo takes back exactly one action
+  type Snap = BoardData
   const histRef = useRef<Snap[]>([])
   const histIdx = useRef(-1)
-
-  const snapshot = useCallback(() => {
-    const s: Snap = {
-      players: players.map(x => ({ ...x })),
-      arrows: arrows.map(x => ({ ...x })),
-      texts: texts.map(x => ({ ...x })),
-      shapes: shapes.map(x => ({ ...x, pts: [...x.pts] })),
-      images: images.map(x => ({ ...x })),
-      customZones: customZones.map(x => ({ ...x })),
-    }
+  const editRef = useRef<{ key: string; at: number } | null>(null) // a change still in progress (typing, a slider): it stays one step
+  const boardNowRef = useRef(collectBoard)
+  boardNowRef.current = collectBoard
+  const copySnap = (d: BoardData): Snap => ({
+    ...d,
+    players: d.players.map(x => ({ ...x })), arrows: d.arrows.map(x => ({ ...x })), texts: d.texts.map(x => ({ ...x })),
+    shapes: d.shapes.map(x => ({ ...x, pts: [...x.pts] })), images: d.images.map(x => ({ ...x })),
+    customZones: d.customZones.map(x => ({ ...x })), settings: { ...d.settings },
+  })
+  /** Call just before changing the board, so undo can come back to this point.
+   *  Changes with the same key less than a second apart (typing a name, dragging a slider) count as one step. */
+  const undoPoint = (key?: string) => {
+    const now = Date.now(), last = editRef.current
+    if (key && last && last.key === key && now - last.at < 1000) { last.at = now; return }
     histRef.current = histRef.current.slice(0, histIdx.current + 1)
-    histRef.current.push(s)
+    histRef.current.push(copySnap(boardNowRef.current()))
     histIdx.current = histRef.current.length - 1
-  }, [players, arrows, texts, shapes, images, customZones])
+    editRef.current = key ? { key, at: now } : null
+  }
+  const undoPointRef = useRef(undoPoint)
+  undoPointRef.current = undoPoint
+  const snapshot = useCallback(() => undoPointRef.current(), [players, arrows, texts, shapes, images, customZones])
+  // Undo and redo leave the view alone (rotation, 3D) and the default layer for new text
+  const restoreSnap = (s: Snap) => applyBoardData(copySnap({ ...s, settings: { ...s.settings, view3d, rotation, textLayer } }))
 
   const undo = () => {
     if (histIdx.current < 0) return
-    const live: Snap = {
-      players: players.map(x => ({ ...x })),
-      arrows: arrows.map(x => ({ ...x })),
-      texts: texts.map(x => ({ ...x })),
-      shapes: shapes.map(x => ({ ...x, pts: [...x.pts] })),
-      images: images.map(x => ({ ...x })),
-      customZones: customZones.map(x => ({ ...x })),
-    }
+    const live = copySnap(boardNowRef.current())
     const target = histRef.current[histIdx.current]
     const redoIdx = histIdx.current + 1
     if (redoIdx < histRef.current.length) {
@@ -1409,15 +1414,14 @@ function TacticsBoard() {
       histRef.current.push(live)
     }
     histIdx.current--
-    setPlayers(target.players); setArrows(target.arrows); setTexts(target.texts)
-    setShapes(target.shapes); setImages(target.images); setCustomZones(target.customZones); setSelection([])
+    editRef.current = null
+    restoreSnap(target); setSelection([])
   }
   const redo = () => {
     if (histIdx.current + 2 >= histRef.current.length) return
     histIdx.current++
-    const s = histRef.current[histIdx.current + 1]
-    setPlayers(s.players); setArrows(s.arrows); setTexts(s.texts)
-    setShapes(s.shapes); setImages(s.images); setCustomZones(s.customZones)
+    editRef.current = null
+    restoreSnap(histRef.current[histIdx.current + 1])
   }
 
   /* ── SVG coordinate helper (handles all CSS transforms) ── */
@@ -1530,6 +1534,7 @@ function TacticsBoard() {
             opacity: zoneOpacityRef.current,
             label: "",
           }
+          undoPointRef.current()
           setCustomZones(z => [...z, newZ])
           setSel({ kind: "zone", id: newZ.id })
         }
@@ -1648,8 +1653,10 @@ function TacticsBoard() {
         setShapeDraftPreview(null); setSel(null)
         if (tool !== "select") setTool("select")
       }
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z") undo()
-      if ((e.ctrlKey || e.metaKey) && (e.shiftKey && e.key === "z" || e.key === "y")) redo()
+      // With Shift (or Caps Lock) the key arrives as "Z". preventDefault stops the browser also undoing the last text you typed in a box.
+      const k = e.key.toLowerCase()
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && k === "z") { e.preventDefault(); undo() }
+      if ((e.ctrlKey || e.metaKey) && (e.shiftKey && k === "z" || k === "y")) { e.preventDefault(); redo() }
       if ((e.ctrlKey || e.metaKey) && e.key === "d") { e.preventDefault(); if (!typing) duplicate() }
       if ((e.ctrlKey || e.metaKey) && e.key === "c") { e.preventDefault(); if (!typing) copy() }
       if ((e.ctrlKey || e.metaKey) && e.key === "v") { e.preventDefault(); if (!typing) paste() }
@@ -1784,8 +1791,10 @@ function TacticsBoard() {
       setZoneDraft({ x1: zoneDrawRef.current.x, y1: zoneDrawRef.current.y, x2: px, y2: py })
     }
 
-    if (!dragRef.current) return
+    if (!dragRef.current) { dragStartedRef.current = false; return }
     const d = dragRef.current
+    // The first move of a drag marks the undo point, so one undo puts everything back where it was before the drag
+    if (!dragStartedRef.current) { dragStartedRef.current = true; undoPointRef.current() }
     if (d.kind === "player" && multiDragStartRef.current) {
       const md = multiDragStartRef.current
       const dx2 = x - md.startCursorX
@@ -1829,8 +1838,9 @@ function TacticsBoard() {
   }, [svgXY, shapeKind])
 
   const onSVGMouseUp = useCallback(() => {
-    if (dragRef.current) { snapshot(); dragRef.current = null; multiDragStartRef.current = null }
-  }, [snapshot])
+    if (dragRef.current) { dragRef.current = null; multiDragStartRef.current = null }
+    dragStartedRef.current = false
+  }, [])
 
   const onSVGMouseDown = useCallback((e: React.PointerEvent) => {
     mouseDownPosRef.current = { x: e.clientX, y: e.clientY }
@@ -2046,11 +2056,13 @@ function TacticsBoard() {
   const selS = sel?.kind === "shape" ? shapes.find(s => s.id === sel.id) : null
   const selI = sel?.kind === "image" ? images.find(i => i.id === sel.id) : null
 
-  const updP = (patch: Partial<Player>) => setPlayers(p => p.map(x => x.id === sel!.id ? { ...x, ...patch } : x))
-  const updA = (patch: Partial<Arrow>) => setArrows(a => a.map(x => x.id === sel!.id ? { ...x, ...patch } : x))
-  const updT = (patch: Partial<TextBox>) => setTexts(t => t.map(x => x.id === sel!.id ? { ...x, ...patch } : x))
-  const updS = (patch: Partial<Shape>) => setShapes(s => s.map(x => x.id === sel!.id ? { ...x, ...patch } : x))
-  const updI = (patch: Partial<UploadedImage>) => setImages(i => i.map(x => x.id === sel!.id ? { ...x, ...patch } : x))
+  // Every edit in the side panel is its own undo step (typing a name or sliding a slider stays one step)
+  const editKey = (patch: object) => `${sel!.kind}:${sel!.id}:${Object.keys(patch).sort().join(",")}`
+  const updP = (patch: Partial<Player>) => { undoPoint(editKey(patch)); setPlayers(p => p.map(x => x.id === sel!.id ? { ...x, ...patch } : x)) }
+  const updA = (patch: Partial<Arrow>) => { undoPoint(editKey(patch)); setArrows(a => a.map(x => x.id === sel!.id ? { ...x, ...patch } : x)) }
+  const updT = (patch: Partial<TextBox>) => { undoPoint(editKey(patch)); setTexts(t => t.map(x => x.id === sel!.id ? { ...x, ...patch } : x)) }
+  const updS = (patch: Partial<Shape>) => { undoPoint(editKey(patch)); setShapes(s => s.map(x => x.id === sel!.id ? { ...x, ...patch } : x)) }
+  const updI = (patch: Partial<UploadedImage>) => { undoPoint(editKey(patch)); setImages(i => i.map(x => x.id === sel!.id ? { ...x, ...patch } : x)) }
 
   /* ── Rotation ── */
   const handleRotation = (val: number) => {
@@ -2095,6 +2107,7 @@ function TacticsBoard() {
             style={{ background: ACCENT_SOLID, color: "#ffffff", fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
           <div className="hidden sm:block flex-shrink-0">
             <WorkspaceModeSelector mode={workspaceMode} onChange={m => {
+              undoPoint()
               setWorkspaceMode(m)
               if (m === "report") { setCanvasMode("blank"); setBgColor("#f5f5f0"); setShowPitch(false) }
               else if (m === "brainstorm") { setCanvasMode("blank"); setBgColor("#0d1117"); setShowPitch(false) }
@@ -2701,8 +2714,10 @@ function TacticsBoard() {
                 {sel.kind === "zone" && (() => {
                   const z = customZones.find(x => x.id === sel.id)
                   if (!z) return null
-                  const updZ = (patch: Partial<CustomZone>) =>
+                  const updZ = (patch: Partial<CustomZone>) => {
+                    undoPoint(editKey(patch))
                     setCustomZones(zones => zones.map(x => x.id === sel.id ? { ...x, ...patch } : x))
+                  }
                   return (
                     <div className="flex flex-col gap-2">
                       <label className="flex flex-col gap-1">
@@ -2837,16 +2852,18 @@ function TacticsBoard() {
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                 <div className="flex flex-col gap-3">
                   <ColorPicker label="Home Color" colors={PALETTE.slice(0, 5)} selected={homeColor} onSelect={c => {
+                    undoPoint()
                     setHomeColor(c)
                     setPlayers(prev => prev.map(p => !p.kind && (p.bg === homeColor || p.bg === HOME_COLORS.bg) ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
                   }} />
                   <ColorPicker label="Away Color" colors={PALETTE.slice(2, 7)} selected={awayColor} onSelect={c => {
+                    undoPoint()
                     setAwayColor(c)
                     setPlayers(prev => prev.map(p => !p.kind && (p.bg === awayColor || p.bg === AWAY_COLORS.bg) ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
                   }} />
                 </div>
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input type="checkbox" checked={showPlayerLabels} onChange={e => setShowPlayerLabels(e.target.checked)} className="accent-green-400" />
+                  <input type="checkbox" checked={showPlayerLabels} onChange={e => { undoPoint(); setShowPlayerLabels(e.target.checked) }} className="accent-green-400" />
                   <span style={{ color: TEXT_PRIMARY }}>Show Player Names / Numbers</span>
                 </label>
               </div>
@@ -2863,7 +2880,7 @@ function TacticsBoard() {
             </button>
             {boardGroups.zones && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <button onClick={() => setShow18Zones(v => !v)}
+                <button onClick={() => { undoPoint(); setShow18Zones(v => !v) }}
                   className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
                   style={{ background: show18Zones ? "rgba(249,115,22,0.15)" : SURFACE_2, borderColor: show18Zones ? "#f97316" : DS_BORDER, color: show18Zones ? "#f97316" : TEXT_PRIMARY }}>
                   <span>⬛ 18 Zones</span>
@@ -2872,7 +2889,7 @@ function TacticsBoard() {
                     {show18Zones ? "ON" : "OFF"}
                   </span>
                 </button>
-                <button onClick={() => setShowLanes(v => !v)}
+                <button onClick={() => { undoPoint(); setShowLanes(v => !v) }}
                   className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
                   style={{ background: showLanes ? "rgba(249,115,22,0.15)" : SURFACE_2, borderColor: showLanes ? "#f97316" : DS_BORDER, color: showLanes ? "#f97316" : TEXT_PRIMARY }}>
                   <span>≡ Lanes</span>
@@ -2901,7 +2918,7 @@ function TacticsBoard() {
                     {tool === "zone" ? "🖊 Drawing zone…" : "+ Draw Custom Zone"}
                   </button>
                   {customZones.length > 0 && (
-                    <button onClick={() => { setCustomZones([]); setSel(null) }}
+                    <button onClick={() => { snapshot(); setCustomZones([]); setSel(null) }}
                       className="w-full py-1 rounded text-xs hover:bg-red-500/20 transition-colors"
                       style={{ color: DS_ERROR }}>
                       Clear all zones ({customZones.length})
@@ -2926,7 +2943,7 @@ function TacticsBoard() {
                   <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Canvas Mode</p>
                   <div className="flex flex-col gap-1.5">
                     {(["full","half","blank"] as const).map(mode => (
-                      <button key={mode} onClick={() => setCanvasMode(mode)}
+                      <button key={mode} onClick={() => { undoPoint(); setCanvasMode(mode) }}
                         className="px-3 py-1.5 rounded text-xs font-medium transition-colors text-left"
                         style={{ background: canvasMode === mode ? ACCENT_GRADIENT : SURFACE_2, color: canvasMode === mode ? "#fff" : TEXT_MUTED }}>
                         {mode === "full" ? "Full Pitch" : mode === "half" ? "Half Pitch" : "Blank / Custom"}
@@ -2938,12 +2955,12 @@ function TacticsBoard() {
                   <div>
                     <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch Color</p>
                     <div className="flex gap-1.5">
-                      <button onClick={() => setPitchColor("green")}
+                      <button onClick={() => { undoPoint(); setPitchColor("green") }}
                         className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
                         style={{ background: pitchColor === "green" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "green" ? "#fff" : TEXT_MUTED }}>
                         Green
                       </button>
-                      <button onClick={() => setPitchColor("white")}
+                      <button onClick={() => { undoPoint(); setPitchColor("white") }}
                         className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
                         style={{ background: pitchColor === "white" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "white" ? "#fff" : TEXT_MUTED }}>
                         White Lines
@@ -2955,15 +2972,15 @@ function TacticsBoard() {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch Size</p>
-                      <button onClick={() => { setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
+                      <button onClick={() => { undoPoint(); setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
                         className="text-xs px-2 py-0.5 rounded hover:bg-white/10 transition-colors"
                         style={{ color: TEXT_MUTED }}>Reset</button>
                     </div>
                     <input type="range" min={30} max={200} value={Math.round(pitchScale * 100)}
-                      onChange={e => setPitchScale(+e.target.value / 100)} className="w-full accent-green-400" />
+                      onChange={e => { undoPoint("pitchScale"); setPitchScale(+e.target.value / 100) }} className="w-full accent-green-400" />
                     <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>{Math.round(pitchScale * 100)}% · hover pitch → corners to resize</p>
                     {(pitchOffX !== 0 || pitchOffY !== 0) && (
-                      <button onClick={() => { setPitchOffX(0); setPitchOffY(0) }}
+                      <button onClick={() => { undoPoint(); setPitchOffX(0); setPitchOffY(0) }}
                         className="mt-1.5 w-full py-1 rounded text-xs hover:bg-white/10 transition-colors"
                         style={{ color: TEXT_MUTED }}>Re-center pitch</button>
                     )}
@@ -2987,17 +3004,17 @@ function TacticsBoard() {
                 <div>
                   <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Canvas Color</p>
                   <div className="flex items-center gap-2 mb-2">
-                    <input type="color" value={bgColor} onChange={e => setBgColor(e.target.value)}
+                    <input type="color" value={bgColor} onChange={e => { undoPoint("bgColor"); setBgColor(e.target.value) }}
                       className="w-9 h-9 rounded cursor-pointer"
                       style={{ padding: 2, border: `1px solid ${DS_BORDER}`, background: "transparent" }} />
                     <input type="text" value={bgColor}
-                      onChange={e => { if (/^#[0-9a-fA-F]{0,6}$/.test(e.target.value)) setBgColor(e.target.value) }}
+                      onChange={e => { if (/^#[0-9a-fA-F]{0,6}$/.test(e.target.value)) { undoPoint("bgColor"); setBgColor(e.target.value) } }}
                       className="flex-1 rounded px-2 py-1 text-xs font-mono outline-none"
                       style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {BG_PRESETS.map(c => (
-                      <button key={c} onClick={() => setBgColor(c)}
+                      <button key={c} onClick={() => { undoPoint(); setBgColor(c) }}
                         className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
                         style={{ background: c, borderColor: bgColor === c ? ACCENT_SOLID : DS_BORDER }} />
                     ))}
