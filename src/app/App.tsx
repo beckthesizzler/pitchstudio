@@ -15,6 +15,7 @@ import {
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
+  Grid3x3, Rows3, PenLine, Pencil, Waypoints, Lightbulb, Eye, EyeOff,
 } from "lucide-react"
 import { createClient } from "@supabase/supabase-js"
 import { projectId, publicAnonKey } from "../../utils/supabase/info"
@@ -110,6 +111,7 @@ interface BoardSettings {
   showPlayerLabels: boolean
   textLayer: "foreground" | "background"
   showLanes: boolean; show18Zones: boolean
+  pitchVisible: boolean // false hides the drawn pitch (grass and lines) so a photo behind it shows; zones and lanes stay
 }
 /** What a saved board keeps in canvas_data (version 2). Version 1 boards only had the five element lists. */
 interface BoardData {
@@ -122,7 +124,7 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   workspaceMode: "tactics", canvasMode: "full", showPitch: true, pitchColor: "green", bgColor: "#0d1117",
   pitchScale: 1, pitchOffX: 0, pitchOffY: 0, view3d: false, rotation: 0,
   homeColor: "#fbbf24", awayColor: "#1d4ed8", showPlayerLabels: true, textLayer: "foreground",
-  showLanes: false, show18Zones: false,
+  showLanes: false, show18Zones: false, pitchVisible: true,
 }
 /** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
 function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
@@ -145,6 +147,7 @@ function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSet
     showPlayerLabels: bool(v.showPlayerLabels, d.showPlayerLabels),
     textLayer: oneOf(v.textLayer, ["foreground", "background"] as const, d.textLayer),
     showLanes: bool(v.showLanes, d.showLanes), show18Zones: bool(v.show18Zones, d.show18Zones),
+    pitchVisible: bool(v.pitchVisible, d.pitchVisible),
   }
 }
 /** Reads any saved board, old or new format, and fills in anything missing. */
@@ -247,9 +250,22 @@ function BallGlyph({ r, icon = false }: { r: number; icon?: boolean }) {
     </g>
   )
 }
-const PALETTE = ["#ffffff","#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6","#000000"]
+/** PS Volt: the PitchStudio signature highlight. Reserved for the one key idea on a board. */
+const PS_VOLT = "#d7ff3c"
+// The first ten are the original swatches (same order, so nothing moves); the rest are colours clubs wear, named by colour only
+const PALETTE = ["#ffffff","#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6","#000000",
+  "#e5e7eb","#6b7280","#da291c","#a50044","#7a263a","#6cabdd","#1d4ed8","#0b1f4b","#15803d","#edbb00","#f97316","#7c3aed","#92400e", PS_VOLT]
 const SHAPE_FILLS = ["#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6"]
-const BG_PRESETS = ["#0d1117","#1a1a2e","#0f2027","#1b2838","#2c2c2c","#f5f5f0","#ffffff","#1a472a"]
+// The last two are the Night and Paper looks
+const BG_PRESETS = ["#0d1117","#1a1a2e","#0f2027","#1b2838","#2c2c2c","#f5f5f0","#ffffff","#1a472a","#0a0c0f","#f1ebdf"]
+const ZONE_COLOURS = ["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"]
+/** Black or white, whichever reads better on this colour (kit numbers). Same answer as before for the original swatches. */
+const inkOn = (hex: string) => {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex)
+  if (!m) return "#ffffff"
+  const v = parseInt(m[1], 16)
+  return (0.299 * ((v >> 16) & 255) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255)) / 255 > 0.7 ? "#000000" : "#ffffff"
+}
 const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315, 360]
 
 /* ── Design tokens ──────────────────────────────────────────────
@@ -740,21 +756,21 @@ function TemplateModal({
           {tab === "library" && (
             <>
               {published.length === 0 && (
-                <p className="text-center py-8 text-sm" style={{ color: "#8b949e" }}>
+                <p className="text-center py-8 text-sm" style={{ color: TEXT_MUTED }}>
                   No published templates yet.{isAdmin ? " Publish one from My Templates." : ""}
                 </p>
               )}
               <div className="grid grid-cols-2 gap-3">
                 {published.map(t => (
                   <div key={t.id} className="rounded-lg border p-3 flex flex-col gap-2"
-                    style={{ borderColor: "rgba(255,255,255,0.1)", background: "#21262d" }}>
+                    style={{ borderColor: "rgba(255,255,255,0.1)", background: SURFACE_2 }}>
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>
                         {t.name}
                       </span>
                       <Star size={12} style={{ color: ACCENT_SOLID, flexShrink: 0 }} />
                     </div>
-                    <p className="text-xs" style={{ color: "#8b949e" }}>
+                    <p className="text-xs" style={{ color: TEXT_MUTED }}>
                       {t.data.players.length} players · {t.data.arrows.length} arrows · {t.data.shapes.length} shapes
                     </p>
                     <div className="flex gap-1.5 mt-1">
@@ -784,7 +800,7 @@ function TemplateModal({
                 <input value={newName} onChange={e => setNewName(e.target.value)}
                   placeholder="Template name..."
                   className="flex-1 rounded px-3 py-1.5 text-sm outline-none"
-                  style={{ background: "#21262d", color: "#e6edf3", border: "1px solid rgba(255,255,255,0.12)" }}
+                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: "1px solid rgba(255,255,255,0.12)" }}
                   onKeyDown={e => { if (e.key === "Enter" && newName.trim()) { onSave(newName.trim()); setNewName("") } }}
                 />
                 <button onClick={() => { if (newName.trim()) { onSave(newName.trim()); setNewName("") } }}
@@ -795,16 +811,16 @@ function TemplateModal({
               </div>
 
               {mine.length === 0 && (
-                <p className="text-center py-6 text-sm" style={{ color: "#8b949e" }}>No saved templates. Save your current layout above.</p>
+                <p className="text-center py-6 text-sm" style={{ color: TEXT_MUTED }}>No saved templates. Save your current layout above.</p>
               )}
               <div className="grid grid-cols-2 gap-3">
                 {mine.map(t => (
                   <div key={t.id} className="rounded-lg border p-3 flex flex-col gap-2"
-                    style={{ borderColor: "rgba(255,255,255,0.1)", background: "#21262d" }}>
+                    style={{ borderColor: "rgba(255,255,255,0.1)", background: SURFACE_2 }}>
                     <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>
                       {t.name}
                     </span>
-                    <p className="text-xs" style={{ color: "#8b949e" }}>
+                    <p className="text-xs" style={{ color: TEXT_MUTED }}>
                       {t.data.players.length} players · {t.data.arrows.length} arrows
                     </p>
                     <div className="flex gap-1.5 mt-1">
@@ -1133,6 +1149,7 @@ function TacticsBoard() {
 
   /* ── Zone overlays ── */
   const [show18Zones, setShow18Zones] = useState(false)
+  const [pitchVisible, setPitchVisible] = useState(true)
   const [showLanes, setShowLanes] = useState(false)
   const [customZones, setCustomZones] = useState<CustomZone[]>([])
   const [zoneColor, setZoneColor] = useState("#3fb950")
@@ -1156,7 +1173,7 @@ function TacticsBoard() {
     players, arrows, texts, shapes, images, customZones,
     settings: settingsFrom({
       workspaceMode, canvasMode, showPitch, pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY,
-      view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones,
+      view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible,
     }),
   })
   /** Puts a saved board's elements, zones and settings back on screen. */
@@ -1170,7 +1187,7 @@ function TacticsBoard() {
     setView3d(st.view3d); setRotation(st.rotation)
     setHomeColor(st.homeColor); setAwayColor(st.awayColor)
     setShowPlayerLabels(st.showPlayerLabels); setTextLayer(st.textLayer)
-    setShowLanes(st.showLanes); setShow18Zones(st.show18Zones)
+    setShowLanes(st.showLanes); setShow18Zones(st.show18Zones); setPitchVisible(st.pitchVisible)
   }
   /** Opens a board exactly as it was saved. Older boards get today's defaults for anything they didn't store.
    *  boardId = null starts a new, unsaved board (used for templates). */
@@ -1242,7 +1259,7 @@ function TacticsBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, narrative, players, arrows, texts, shapes, images, customZones, workspaceMode, canvasMode, showPitch,
       pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
-      showPlayerLabels, textLayer, showLanes, show18Zones, currentBoardId, authUser, saveTick])
+      showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, currentBoardId, authUser, saveTick])
 
   // Opening a fresh board: bring back the unsaved board from last time, if there is one
   const restoreCheckedRef = useRef(false)
@@ -2230,7 +2247,7 @@ function TacticsBoard() {
 
       {/* ── Top Header ── (on narrower screens the less-used controls move into the ⋯ menu) */}
       <header className="flex items-center gap-2 lg:gap-3 px-2 sm:px-3 py-2 border-b flex-shrink-0"
-        style={{ borderColor: "rgba(255,255,255,0.08)", background: "#161b22", minHeight: 48 }}>
+        style={{ borderColor: "rgba(255,255,255,0.08)", background: SURFACE_1, minHeight: 48 }}>
         {headerMenu && <div className="fixed inset-0 z-40" onClick={() => setHeaderMenu(null)} />}
         {/* Logo + Workspace Mode Selector + Title */}
         <div className="flex items-center gap-2 min-w-0">
@@ -2260,14 +2277,14 @@ function TacticsBoard() {
               title="Click to rename">
               <span className="font-bold text-sm truncate max-w-28 xl:max-w-44"
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>{title}</span>
-              <span className="text-xs opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: ACCENT_SOLID }}>✏</span>
+              <Pencil size={11} className="opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: ACCENT_SOLID }} />
             </button>
           )}
         </div>
 
         <div className="flex-1 hidden lg:flex items-center gap-2 justify-center">
           {/* Rotation control */}
-          <div className="flex items-center gap-1.5 rounded px-2 py-1" style={{ background: "#21262d" }}>
+          <div className="flex items-center gap-1.5 rounded px-2 py-1" style={{ background: SURFACE_2 }}>
             <RefreshCw size={13} style={{ color: TEXT_MUTED }} />
             <input type="range" min={0} max={360} value={rotation}
               onChange={e => handleRotation(+e.target.value)}
@@ -2277,9 +2294,9 @@ function TacticsBoard() {
               onChange={e => handleRotation(+e.target.value)}
               onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
               className="w-12 rounded px-1 py-0.5 text-xs font-mono text-center outline-none"
-              style={{ background: "#161b22", color: "#c9d1d9", border: "1px solid rgba(255,255,255,0.1)" }}
+              style={{ background: SURFACE_1, color: TEXT_PRIMARY, border: "1px solid rgba(255,255,255,0.1)" }}
               title="Type exact angle" />
-            <span className="text-xs" style={{ color: "#555e6b" }}>°</span>
+            <span className="text-xs" style={{ color: TEXT_MUTED }}>°</span>
             <button onClick={() => setSnapRot(s => !s)} title={snapRot ? "45° snap ON — click to disable" : "Enable 45° snap"}
               className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs transition-colors"
               style={{ background: snapRot ? "#fbbf2420" : "transparent", color: snapRot ? "#fbbf24" : TEXT_MUTED }}>
@@ -2295,7 +2312,7 @@ function TacticsBoard() {
           {/* 3D toggle */}
           <button onClick={() => setView3d(v => !v)}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
-            style={{ background: view3d ? ACCENT_SOLID : SURFACE_2, color: view3d ? "#ffffff" : "#c9d1d9" }}>
+            style={{ background: view3d ? ACCENT_SOLID : SURFACE_2, color: view3d ? "#ffffff" : TEXT_PRIMARY }}>
             <Layers size={13} />
             {view3d ? "3D" : "2D"}
           </button>
@@ -2306,14 +2323,14 @@ function TacticsBoard() {
           {/* Templates */}
           <button onClick={() => setShowTemplates(true)} title="Templates"
             className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
-            style={{ background: "#21262d", color: "#c9d1d9" }}>
+            style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
             <BookOpen size={13} /> <span className="hidden xl:inline">Templates</span>
           </button>
           {/* My Boards */}
           {authUser && (
             <button onClick={() => setShowMyBoards(true)} title="My Boards"
               className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
-              style={{ background: "#21262d", color: "#c9d1d9" }}>
+              style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
               <FolderOpen size={13} /> <span className="hidden xl:inline">My Boards</span>
             </button>
           )}
@@ -2368,7 +2385,7 @@ function TacticsBoard() {
             <div className="relative hidden lg:block">
               <button onClick={() => setHeaderMenu(m => (m === "account" ? null : "account"))} aria-expanded={headerMenu === "account"}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium"
-                style={{ background: "#21262d", color: "#c9d1d9" }}>
+                style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
                 <User size={13} />
                 <span className="max-w-20 truncate hidden xl:inline">{accountName || authUser.email?.split("@")[0]}</span>
                 <ChevronDown size={11} />
@@ -2429,7 +2446,7 @@ function TacticsBoard() {
           <div className="relative lg:hidden">
             <button onClick={() => setHeaderMenu(m => (m === "more" ? null : "more"))} aria-expanded={headerMenu === "more"}
               aria-label="More" title="More"
-              className="p-1.5 rounded hover:bg-white/10 transition-colors" style={{ color: "#c9d1d9" }}>
+              className="p-1.5 rounded hover:bg-white/10 transition-colors" style={{ color: TEXT_PRIMARY }}>
               <MoreHorizontal size={16} />
             </button>
             {headerMenu === "more" && (
@@ -2641,10 +2658,10 @@ function TacticsBoard() {
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
-                    <ColorPicker label="Color" colors={PALETTE} selected={selP.bg} onSelect={c => updP({ bg: c })} />
+                    <ColorPicker label="Colour" colors={PALETTE} selected={selP.bg} onSelect={c => updP({ bg: c })} />
                     <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
                       <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
-                      <span style={{ color: TEXT_PRIMARY }}>Glow Highlight</span>
+                      <span style={{ color: TEXT_PRIMARY }}>Glow highlight</span>
                     </label>
                   </div>
                 )}
@@ -2654,7 +2671,7 @@ function TacticsBoard() {
                     <p className="text-xs" style={{ color: TEXT_MUTED }}>Drag to move it. Drag the round handle to resize it.</p>
                     <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
                       <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
-                      <span style={{ color: TEXT_PRIMARY }}>Glow Highlight</span>
+                      <span style={{ color: TEXT_PRIMARY }}>Glow highlight</span>
                     </label>
                   </div>
                 )}
@@ -2675,12 +2692,12 @@ function TacticsBoard() {
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
-                    <ColorPicker label="Kit color" colors={PALETTE} selected={selP.bg}
-                      onSelect={c => updP({ bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" })} />
-                    <ColorPicker label="Ring color" colors={PALETTE} selected={selP.ring} onSelect={c => updP({ ring: c })} allowTransparent={true} />
+                    <ColorPicker label="Kit colour" colors={PALETTE} selected={selP.bg}
+                      onSelect={c => updP({ bg: c, fg: inkOn(c) })} />
+                    <ColorPicker label="Ring colour" colors={PALETTE} selected={selP.ring} onSelect={c => updP({ ring: c })} allowTransparent={true} />
                     <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
                       <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
-                      <span style={{ color: TEXT_PRIMARY }}>Glow Highlight</span>
+                      <span style={{ color: TEXT_PRIMARY }}>Glow highlight</span>
                     </label>
                   </div>
                 )}
@@ -2693,7 +2710,7 @@ function TacticsBoard() {
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
-                    <ColorPicker label="Color" colors={PALETTE} selected={selA.color} onSelect={c => updA({ color: c })} />
+                    <ColorPicker label="Colour" colors={PALETTE} selected={selA.color} onSelect={c => updA({ color: c })} />
                     <div>
                       <p className="text-xs mb-1" style={{ color: TEXT_MUTED }}>Style</p>
                       <div className="flex gap-1">
@@ -2758,7 +2775,7 @@ function TacticsBoard() {
                       <input type="range" min={80} max={500} value={selT.width}
                         onChange={e => updT({ width: +e.target.value })} className="w-full accent-green-400" />
                     </label>
-                    <ColorPicker label="Text color" colors={PALETTE} selected={selT.fg} onSelect={c => updT({ fg: c })} />
+                    <ColorPicker label="Text colour" colors={PALETTE} selected={selT.fg} onSelect={c => updT({ fg: c })} />
                     <ColorPicker label="Background" colors={PALETTE} selected={selT.bg} onSelect={c => updT({ bg: c })} allowTransparent={true} />
                     <ColorPicker label="Border" colors={PALETTE} selected={selT.border} onSelect={c => updT({ border: c })} allowTransparent={true} />
                     <div className="flex gap-2">
@@ -2859,16 +2876,7 @@ function TacticsBoard() {
                           className="rounded px-2 py-1 text-xs outline-none"
                           style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                       </label>
-                      <div>
-                        <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Color</p>
-                        <div className="flex gap-1.5 flex-wrap">
-                          {["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"].map(c => (
-                            <button key={c} onClick={() => updZ({ color: c })}
-                              className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
-                              style={{ background: c, borderColor: z.color === c ? "#fff" : "transparent" }} />
-                          ))}
-                        </div>
-                      </div>
+                      <ColorPicker label="Colour" colors={ZONE_COLOURS} selected={z.color} onSelect={c => updZ({ color: c })} />
                       <label className="flex flex-col gap-1">
                         <span className="text-xs" style={{ color: TEXT_MUTED }}>Opacity {Math.round(z.opacity * 100)}%</span>
                         <input type="range" min={5} max={80} value={Math.round(z.opacity * 100)}
@@ -2893,7 +2901,7 @@ function TacticsBoard() {
                     ))}
                   </div>
                 </div>
-                <ColorPicker label="Color" colors={PALETTE} selected={arrowDefaultColor} onSelect={setArrowDefaultColor} />
+                <ColorPicker label="Colour" colors={PALETTE} selected={arrowDefaultColor} onSelect={setArrowDefaultColor} />
                 <label className="flex flex-col gap-1">
                   <span className="text-xs" style={{ color: TEXT_MUTED }}>Width {arrowDefaultW}px</span>
                   <input type="range" min={1} max={8} value={arrowDefaultW}
@@ -2984,20 +2992,20 @@ function TacticsBoard() {
             {boardGroups.teams && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                 <div className="flex flex-col gap-3">
-                  <ColorPicker label="Home Color" colors={PALETTE.slice(0, 5)} selected={homeColor} onSelect={c => {
-                    undoPoint()
+                  <ColorPicker label="Home colour" colors={PALETTE} selected={homeColor} onSelect={c => {
+                    undoPoint("homeColour")
                     setHomeColor(c)
-                    setPlayers(prev => prev.map(p => !p.kind && (p.bg === homeColor || p.bg === HOME_COLORS.bg) ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
+                    setPlayers(prev => prev.map(p => !p.kind && (p.bg === homeColor || p.bg === HOME_COLORS.bg) ? { ...p, bg: c, fg: inkOn(c) } : p))
                   }} />
-                  <ColorPicker label="Away Color" colors={PALETTE.slice(2, 7)} selected={awayColor} onSelect={c => {
-                    undoPoint()
+                  <ColorPicker label="Away colour" colors={PALETTE} selected={awayColor} onSelect={c => {
+                    undoPoint("awayColour")
                     setAwayColor(c)
-                    setPlayers(prev => prev.map(p => !p.kind && (p.bg === awayColor || p.bg === AWAY_COLORS.bg) ? { ...p, bg: c, fg: c === "#ffffff" || c === "#fbbf24" ? "#000000" : "#ffffff" } : p))
+                    setPlayers(prev => prev.map(p => !p.kind && (p.bg === awayColor || p.bg === AWAY_COLORS.bg) ? { ...p, bg: c, fg: inkOn(c) } : p))
                   }} />
                 </div>
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
                   <input type="checkbox" checked={showPlayerLabels} onChange={e => { undoPoint(); setShowPlayerLabels(e.target.checked) }} className="accent-green-400" />
-                  <span style={{ color: TEXT_PRIMARY }}>Show Player Names / Numbers</span>
+                  <span style={{ color: TEXT_PRIMARY }}>Show names and numbers</span>
                 </label>
               </div>
             )}
@@ -3015,31 +3023,25 @@ function TacticsBoard() {
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                 <button onClick={() => { undoPoint(); setShow18Zones(v => !v) }}
                   className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                  style={{ background: show18Zones ? "rgba(249,115,22,0.15)" : SURFACE_2, borderColor: show18Zones ? "#f97316" : DS_BORDER, color: show18Zones ? "#f97316" : TEXT_PRIMARY }}>
-                  <span>⬛ 18 Zones</span>
+                  style={{ background: show18Zones ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: show18Zones ? ACCENT_SOLID : DS_BORDER, color: show18Zones ? ACCENT_SOLID : TEXT_PRIMARY }}>
+                  <span className="flex items-center gap-2"><Grid3x3 size={14} />18 zones</span>
                   <span className="px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: show18Zones ? "#f97316" : SURFACE_1, color: show18Zones ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
+                    style={{ background: show18Zones ? ACCENT_SOLID : SURFACE_1, color: show18Zones ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
                     {show18Zones ? "ON" : "OFF"}
                   </span>
                 </button>
                 <button onClick={() => { undoPoint(); setShowLanes(v => !v) }}
                   className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                  style={{ background: showLanes ? "rgba(249,115,22,0.15)" : SURFACE_2, borderColor: showLanes ? "#f97316" : DS_BORDER, color: showLanes ? "#f97316" : TEXT_PRIMARY }}>
-                  <span>≡ Lanes</span>
+                  style={{ background: showLanes ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: showLanes ? ACCENT_SOLID : DS_BORDER, color: showLanes ? ACCENT_SOLID : TEXT_PRIMARY }}>
+                  <span className="flex items-center gap-2"><Rows3 size={14} />Lanes</span>
                   <span className="px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: showLanes ? "#f97316" : SURFACE_1, color: showLanes ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
+                    style={{ background: showLanes ? ACCENT_SOLID : SURFACE_1, color: showLanes ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
                     {showLanes ? "ON" : "OFF"}
                   </span>
                 </button>
                 <div className="flex flex-col gap-2">
-                  <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Custom Zones</p>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"].map(c => (
-                      <button key={c} onClick={() => setZoneColor(c)}
-                        className="w-6 h-6 rounded border-2 transition-transform hover:scale-110 flex-shrink-0"
-                        style={{ background: c, borderColor: zoneColor === c ? "#fff" : "transparent" }} />
-                    ))}
-                  </div>
+                  <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Custom zones</p>
+                  <ColorPicker label="Colour for new zones" colors={ZONE_COLOURS} selected={zoneColor} onSelect={setZoneColor} />
                   <label className="flex flex-col gap-1">
                     <span className="text-xs" style={{ color: TEXT_MUTED }}>Fill opacity {Math.round(zoneOpacity * 100)}%</span>
                     <input type="range" min={5} max={80} value={Math.round(zoneOpacity * 100)}
@@ -3047,8 +3049,8 @@ function TacticsBoard() {
                   </label>
                   <button onClick={() => { setTool("zone"); setSel(null) }}
                     className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-colors"
-                    style={{ background: tool === "zone" ? "#f97316" : SURFACE_2, color: tool === "zone" ? "#fff" : TEXT_PRIMARY, border: `1px solid ${tool === "zone" ? "#f97316" : DS_BORDER}` }}>
-                    {tool === "zone" ? "🖊 Drawing zone…" : "+ Draw Custom Zone"}
+                    style={{ background: tool === "zone" ? ACCENT_SOLID : SURFACE_2, color: tool === "zone" ? "#fff" : TEXT_PRIMARY, border: `1px solid ${tool === "zone" ? ACCENT_SOLID : DS_BORDER}` }}>
+                    {tool === "zone" ? <><PenLine size={13} />Drawing a zone…</> : <><Plus size={13} />Draw a zone</>}
                   </button>
                   {customZones.length > 0 && (
                     <button onClick={() => { snapshot(); setCustomZones([]); setSel(null) }}
@@ -3073,20 +3075,20 @@ function TacticsBoard() {
             {boardGroups.pitch && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                 <div>
-                  <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Canvas Mode</p>
+                  <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Canvas mode</p>
                   <div className="flex flex-col gap-1.5">
                     {(["full","half","blank"] as const).map(mode => (
                       <button key={mode} onClick={() => { undoPoint(); setCanvasMode(mode) }}
                         className="px-3 py-1.5 rounded text-xs font-medium transition-colors text-left"
                         style={{ background: canvasMode === mode ? ACCENT_GRADIENT : SURFACE_2, color: canvasMode === mode ? "#fff" : TEXT_MUTED }}>
-                        {mode === "full" ? "Full Pitch" : mode === "half" ? "Half Pitch" : "Blank / Custom"}
+                        {mode === "full" ? "Full pitch" : mode === "half" ? "Half pitch" : "Blank canvas"}
                       </button>
                     ))}
                   </div>
                 </div>
                 {canvasMode !== "blank" && (
                   <div>
-                    <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch Color</p>
+                    <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch colour</p>
                     <div className="flex gap-1.5">
                       <button onClick={() => { undoPoint(); setPitchColor("green") }}
                         className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
@@ -3096,7 +3098,7 @@ function TacticsBoard() {
                       <button onClick={() => { undoPoint(); setPitchColor("white") }}
                         className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
                         style={{ background: pitchColor === "white" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "white" ? "#fff" : TEXT_MUTED }}>
-                        White Lines
+                        White lines
                       </button>
                     </div>
                   </div>
@@ -3104,22 +3106,37 @@ function TacticsBoard() {
                 {canvasMode !== "blank" && (
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch Size</p>
+                      <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch size</p>
                       <button onClick={() => { undoPoint(); setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
                         className="text-xs px-2 py-0.5 rounded hover:bg-white/10 transition-colors"
                         style={{ color: TEXT_MUTED }}>Reset</button>
                     </div>
                     <input type="range" min={30} max={200} value={Math.round(pitchScale * 100)}
                       onChange={e => { undoPoint("pitchScale"); setPitchScale(+e.target.value / 100) }} className="w-full accent-green-400" />
-                    <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>{Math.round(pitchScale * 100)}% · hover pitch → corners to resize</p>
+                    <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>{Math.round(pitchScale * 100)}% · or drag a corner of the pitch</p>
                     {(pitchOffX !== 0 || pitchOffY !== 0) && (
                       <button onClick={() => { undoPoint(); setPitchOffX(0); setPitchOffY(0) }}
                         className="mt-1.5 w-full py-1 rounded text-xs hover:bg-white/10 transition-colors"
-                        style={{ color: TEXT_MUTED }}>Re-center pitch</button>
+                        style={{ color: TEXT_MUTED }}>Re-centre pitch</button>
                     )}
                   </div>
                 )}
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>Hide pitch markings when using a game background photo.</p>
+                {canvasMode !== "blank" ? (
+                  <div className="flex flex-col gap-1.5">
+                    <button onClick={() => { undoPoint(); setPitchVisible(v => !v) }} aria-pressed={pitchVisible}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
+                      style={{ background: pitchVisible ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: pitchVisible ? ACCENT_SOLID : DS_BORDER, color: pitchVisible ? ACCENT_SOLID : TEXT_PRIMARY }}>
+                      <span className="flex items-center gap-2">{pitchVisible ? <Eye size={14} /> : <EyeOff size={14} />}Show pitch</span>
+                      <span className="px-1.5 py-0.5 rounded font-bold"
+                        style={{ background: pitchVisible ? ACCENT_SOLID : SURFACE_1, color: pitchVisible ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
+                        {pitchVisible ? "ON" : "OFF"}
+                      </span>
+                    </button>
+                    <p className="text-xs" style={{ color: TEXT_MUTED }}>Turn it off to see a photo behind the board. Zones and lanes stay.</p>
+                  </div>
+                ) : (
+                  <p className="text-xs" style={{ color: TEXT_MUTED }}>A blank canvas has no pitch. Pick Full or Half pitch to draw one.</p>
+                )}
               </div>
             )}
 
@@ -3134,29 +3151,7 @@ function TacticsBoard() {
             </button>
             {boardGroups.canvas && (
               <div className="p-3 flex flex-col gap-4" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <div>
-                  <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Canvas Color</p>
-                  <div className="flex items-center gap-2 mb-2">
-                    <input type="color" value={bgColor} onChange={e => { undoPoint("bgColor"); setBgColor(e.target.value) }}
-                      className="w-9 h-9 rounded cursor-pointer"
-                      style={{ padding: 2, border: `1px solid ${DS_BORDER}`, background: "transparent" }} />
-                    <input type="text" value={bgColor}
-                      onChange={e => { if (/^#[0-9a-fA-F]{0,6}$/.test(e.target.value)) { undoPoint("bgColor"); setBgColor(e.target.value) } }}
-                      className="flex-1 rounded px-2 py-1 text-xs font-mono outline-none"
-                      style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {BG_PRESETS.map(c => (
-                      <button key={c} onClick={() => { undoPoint(); setBgColor(c) }}
-                        className="w-6 h-6 rounded border-2 transition-transform hover:scale-110"
-                        style={{ background: c, borderColor: bgColor === c ? ACCENT_SOLID : DS_BORDER }} />
-                    ))}
-                  </div>
-                </div>
-                <div className="rounded p-2 text-xs" style={{ background: SURFACE_2, color: TEXT_MUTED }}>
-                  <p>Canvas: {CW} × {CH}px</p>
-                  <p>Pitch: {PW} × {PH}px at ({PX}, {PY})</p>
-                </div>
+                <ColorPicker label="Canvas colour" colors={BG_PRESETS} selected={bgColor} onSelect={c => { undoPoint("bgColor"); setBgColor(c) }} />
                 {images.length > 0 && (
                   <div>
                     <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Images ({images.length})</p>
@@ -3297,7 +3292,7 @@ function TacticsBoard() {
                       onMouseEnter={() => setHoveredPitch(true)}
                       onMouseLeave={() => setHoveredPitch(false)}>
                       <g style={{ clipPath: canvasMode === "half" ? `url(#half-pitch-clip)` : undefined }}>
-                        <PitchSVG pitchColor={pitchColor} />
+                        {pitchVisible && <PitchSVG pitchColor={pitchColor} />}
                         {/* ── Zone overlays (pitch-local coords) ── */}
                         {show18Zones && <EighteenZonesOverlay />}
                         {showLanes && <LanesOverlay />}
@@ -3703,21 +3698,21 @@ function TacticsBoard() {
 
           {/* ── Zoom controls ── */}
           <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-lg px-2 py-1.5 border"
-            style={{ background: "#161b22", borderColor: "rgba(255,255,255,0.1)", zIndex: 10 }}>
+            style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", zIndex: 10 }}>
             <button onClick={() => applyZoom(0.87)} className="p-1 rounded hover:bg-white/10 transition-colors"><Minus size={13} /></button>
-            <span className="text-xs font-mono w-12 text-center" style={{ color: "#c9d1d9" }}>
+            <span className="text-xs font-mono w-12 text-center" style={{ color: TEXT_PRIMARY }}>
               {Math.round(zoom * 100)}%
             </span>
             <button onClick={() => applyZoom(1.15)} className="p-1 rounded hover:bg-white/10 transition-colors"><Plus size={13} /></button>
             <div className="w-px h-4 mx-1" style={{ background: "rgba(255,255,255,0.12)" }} />
             <button onClick={fitToView} className="px-1.5 py-0.5 rounded text-xs hover:bg-white/10 transition-colors"
-              style={{ color: "#8b949e" }}>Fit</button>
+              style={{ color: TEXT_MUTED }}>Fit</button>
           </div>
 
           {/* Rotation snap indicator */}
           {snapRot && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-lg px-3 py-1.5 border text-xs"
-              style={{ background: "#161b22", borderColor: "rgba(255,255,255,0.1)", color: "#fbbf24", zIndex: 10 }}>
+              style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", color: "#fbbf24", zIndex: 10 }}>
               <Magnet size={12} /> Snap: {Math.round(rotation)}°
             </div>
           )}
@@ -3751,12 +3746,6 @@ function TacticsBoard() {
             })()}
           </div>
 
-          {/* Canvas dimensions badge */}
-          <div className="absolute top-3 right-3 text-xs rounded px-2 py-1"
-            style={{ background: "rgba(0,0,0,0.45)", color: "rgba(255,255,255,0.4)", zIndex: 10, fontFamily: "monospace" }}>
-            {CW}×{CH}
-          </div>
-
           {/* Brainstorm watermark */}
           {workspaceMode === "brainstorm" && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 1 }}>
@@ -3779,7 +3768,7 @@ function TacticsBoard() {
         {/* ── Narrative: the written story that goes under the pitch (not on Braindump boards) ── */}
         {workspaceMode !== "brainstorm" && (
         <section aria-label="Narrative" className="flex-shrink-0 border-t" style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-          <style>{`.ps-narrative:focus { border-color: ${ACCENT_SOLID} !important; }`}</style>
+          <style>{`.ps-narrative:focus { border-color: ${ACCENT_SOLID} !important; } input.accent-green-400, input.accent-orange-400 { accent-color: ${ACCENT_SOLID}; }`}</style>
           <button type="button" onClick={() => setNarrativeOpen(o => !o)} aria-expanded={narrativeOpen} aria-controls="ps-narrative-text"
             className="w-full flex items-center gap-2 px-4 text-left hover:bg-white/5 transition-colors" style={{ height: 40 }}>
             <AlignLeft size={14} style={{ color: TEXT_MUTED, flexShrink: 0 }} />
@@ -4489,19 +4478,19 @@ const WORKSPACE_MODES = [
   {
     id: "tactics" as const,
     label: "Tactics Board",
-    icon: "⬜",
+    icon: <Waypoints size={15} />,
     desc: "Full pitch — plan formations, movements & shapes",
   },
   {
     id: "report" as const,
     label: "Report",
-    icon: "📄",
+    icon: <FileText size={15} />,
     desc: "Clean white canvas — build scouting reports & layouts",
   },
   {
     id: "brainstorm" as const,
     label: "Brainstorm",
-    icon: "💡",
+    icon: <Lightbulb size={15} />,
     desc: "Empty space — think freely without constraints",
   },
 ]
@@ -4517,13 +4506,13 @@ function WorkspaceModeSelector({
         onClick={() => setOpen(v => !v)}
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors border"
         style={{
-          background: open ? "#21262d" : "#161b22",
+          background: open ? SURFACE_2 : SURFACE_1,
           borderColor: open ? ACCENT_SOLID : "rgba(255,255,255,0.15)",
-          color: "#e6edf3",
+          color: TEXT_PRIMARY,
           minWidth: 150,
         }}
       >
-        <span>{current.icon}</span>
+        <span className="flex items-center">{current.icon}</span>
         <span style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 13 }}>
           {current.label.toUpperCase()}
         </span>
@@ -4548,10 +4537,10 @@ function WorkspaceModeSelector({
                 className="flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5"
                 style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
               >
-                <span style={{ fontSize: 20, lineHeight: 1, marginTop: 1 }}>{m.icon}</span>
+                <span className="flex items-center justify-center rounded-md flex-shrink-0" style={{ width: 28, height: 28, background: SURFACE_2, color: mode === m.id ? ACCENT_SOLID : TEXT_MUTED }}>{m.icon}</span>
                 <div className="flex flex-col gap-0.5 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", color: "#e6edf3" }}>
+                    <span className="text-xs font-bold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", color: TEXT_PRIMARY }}>
                       {m.label.toUpperCase()}
                     </span>
                     {mode === m.id && (
@@ -4620,27 +4609,107 @@ function AlignBtn({ icon: Icon, title, onClick }: { icon: React.ElementType; tit
   )
 }
 
+const isHexColour = (v: string) => /^#[0-9a-fA-F]{6}$/.test(v)
+const RECENT_COLOURS_KEY = "ps-recent-colours"
+const readRecentColours = (): string[] => {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_COLOURS_KEY) || "[]")
+    return Array.isArray(v) ? v.filter((c: unknown): c is string => typeof c === "string" && isHexColour(c)).slice(0, 10) : []
+  } catch { return [] }
+}
+const rememberColour = (hex: string) => {
+  try { localStorage.setItem(RECENT_COLOURS_KEY, JSON.stringify([hex.toLowerCase(), ...readRecentColours().filter(c => c !== hex.toLowerCase())].slice(0, 10))) }
+  catch { /* private window: recent colours just aren't kept */ }
+}
+
+/** Swatches plus a "+" for any colour: pick it, type its hex, or reuse one of your last ten. */
 function ColorPicker({ label, colors, selected, onSelect, allowTransparent }: {
   label: string; colors: string[]; selected: string; onSelect: (c: string) => void; allowTransparent?: boolean
 }) {
+  const [pop, setPop] = useState<null | { x: number; y: number }>(null)
+  const [hex, setHex] = useState("")
+  const [recent, setRecent] = useState<string[]>([])
+  const rootRef = useRef<HTMLDivElement>(null)
+  const selRef = useRef(selected)
+  selRef.current = selected
+  const startRef = useRef(selected)
+  const custom = isHexColour(selected) && !colors.includes(selected)
+  const openPop = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const box = rootRef.current?.getBoundingClientRect() ?? r
+    startRef.current = selected
+    setHex(isHexColour(selected) ? selected : "#ffffff"); setRecent(readRecentColours())
+    // beside the panel, so the swatches stay visible while you try colours
+    setPop({ x: Math.max(8, Math.min(box.right + 10, window.innerWidth - 232)), y: Math.max(8, Math.min(r.top - 40, window.innerHeight - 250)) })
+  }
+  const closePop = () => {
+    if (isHexColour(selRef.current) && selRef.current !== startRef.current) rememberColour(selRef.current)
+    setPop(null)
+  }
+  const dot = (c: string) => (
+    <button key={c} title={c} aria-label={c} onClick={() => onSelect(c)}
+      className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110"
+      style={{ background: c, borderColor: selected === c ? ACCENT_SOLID : "transparent", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.18)" }} />
+  )
   return (
-    <div>
+    <div ref={rootRef}>
       <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>{label}</p>
       <div className="flex flex-wrap gap-1">
         {allowTransparent && (
-          <button onClick={() => onSelect("transparent")}
+          <button title="No colour" aria-label="No colour" onClick={() => onSelect("transparent")}
             className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center relative overflow-hidden"
             style={{ borderColor: selected === "transparent" ? ACCENT_SOLID : "transparent" }}>
             <div className="absolute inset-0 bg-white" />
             <div className="absolute inset-0 w-full h-full bg-[repeating-linear-gradient(45deg,transparent,transparent_3px,rgba(255,0,0,0.5)_3px,rgba(255,0,0,0.5)_4px)]" />
           </button>
         )}
-        {colors.map(c => (
-          <button key={c} onClick={() => onSelect(c)}
-            className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110"
-            style={{ background: c, borderColor: selected === c ? ACCENT_SOLID : "transparent" }} />
-        ))}
+        {colors.map(c => dot(c))}
+        {custom && dot(selected)}
+        <button title="Any colour" aria-label="Any colour" onClick={openPop}
+          className="w-5 h-5 rounded-full border transition-transform hover:scale-110 flex items-center justify-center"
+          style={{ borderStyle: "dashed", borderColor: "rgba(255,255,255,0.35)", color: TEXT_MUTED, background: "transparent" }}>
+          <Plus size={11} />
+        </button>
       </div>
+      {pop && (
+        <div className="fixed inset-0 z-50" onPointerDown={closePop}>
+          <div className="absolute rounded-lg border shadow-xl p-3 flex flex-col gap-3" onPointerDown={e => e.stopPropagation()}
+            style={{ left: pop.x, top: pop.y, width: 216, background: SURFACE_1, borderColor: DS_BORDER }}>
+            <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>{label}</p>
+            <div className="flex items-center gap-2">
+              <input type="color" aria-label="Pick a colour" value={isHexColour(hex) ? hex : "#ffffff"}
+                onChange={e => { setHex(e.target.value); onSelect(e.target.value) }}
+                className="rounded cursor-pointer flex-shrink-0"
+                style={{ width: 36, height: 36, padding: 2, border: `1px solid ${DS_BORDER}`, background: "transparent" }} />
+              <input type="text" aria-label="Hex colour" value={hex} maxLength={7} spellCheck={false} placeholder="#ffffff"
+                onChange={e => {
+                  let v = e.target.value.trim()
+                  if (v && v[0] !== "#") v = "#" + v
+                  v = v.slice(0, 7)
+                  setHex(v)
+                  if (isHexColour(v)) onSelect(v.toLowerCase())
+                }}
+                onKeyDown={e => { if (e.key === "Enter") closePop() }}
+                className="flex-1 min-w-0 rounded px-2 py-1.5 text-xs font-mono outline-none"
+                style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+            </div>
+            <div>
+              <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Recent</p>
+              {recent.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {recent.map(c => (
+                    <button key={c} title={c} aria-label={`Recent ${c}`} onClick={() => { setHex(c); onSelect(c) }}
+                      className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110"
+                      style={{ background: c, borderColor: selected === c ? ACCENT_SOLID : "transparent", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.18)" }} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Colours you pick appear here.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
