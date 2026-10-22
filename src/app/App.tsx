@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, Component } from "react"
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Component } from "react"
 import type { ReactNode } from "react"
 import React from "react"
-import { toPng, toJpeg, toBlob, getFontEmbedCSS } from "html-to-image"
+import { toPng, toJpeg, toBlob, toCanvas as nodeToCanvas, getFontEmbedCSS } from "html-to-image"
 import jsPDF from "jspdf"
 import {
   MousePointer2, UserPlus, ArrowUpRight, Type, Pentagon,
@@ -15,7 +15,7 @@ import {
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
-  Grid3x3, Rows3, PenLine, Pencil, Waypoints, Lightbulb, Eye, EyeOff,
+  Grid3x3, Rows3, PenLine, Pencil, Waypoints, Lightbulb, Eye, EyeOff, Play,
 } from "lucide-react"
 import { createClient } from "@supabase/supabase-js"
 import { projectId, publicAnonKey } from "../../utils/supabase/info"
@@ -105,6 +105,7 @@ interface CanvasState {
   shapes: Shape[]; images: UploadedImage[]
   title: string; bgColor: string; showPitch: boolean
   customZones?: CustomZone[]; settings?: BoardSettings
+  steps?: BoardStep[]; step?: number // a move in steps (a drop can come with one)
 }
 interface Template {
   id: string; name: string
@@ -145,6 +146,7 @@ interface BoardSettings {
   homeScore: string; awayScore: string; scoreNote: string // the score strip: the goals each side scored, and a note such as FT
   caption: string // the line (or two) under the board
   showLegend: boolean; cropMarks: boolean; showEdition: boolean
+  animSpeed: "slow" | "normal" | "fast"; endCard: boolean // how fast the steps play, and the animated end card on GIF and video exports
 }
 /** What a saved board keeps in canvas_data (version 2). Version 1 boards only had the five element lists. */
 interface BoardData {
@@ -152,6 +154,7 @@ interface BoardData {
   players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]
   customZones: CustomZone[]
   settings: BoardSettings
+  steps?: BoardStep[]; step?: number // a move in steps: every step (this one too) and which is on screen. Only boards with 2 or more steps have them
 }
 const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   workspaceMode: "tactics", canvasMode: "full", showPitch: true, pitchColor: "green", bgColor: "#0d1117",
@@ -164,7 +167,7 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto",
   homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
   pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "",
-  showLegend: true, cropMarks: true, showEdition: true,
+  showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true,
 }
 /** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
 function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
@@ -211,6 +214,7 @@ function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSet
     scoreNote: typeof v.scoreNote === "string" ? v.scoreNote.slice(0, 12) : d.scoreNote,
     caption: typeof v.caption === "string" ? v.caption.slice(0, 160) : d.caption,
     showLegend: bool(v.showLegend, d.showLegend), cropMarks: bool(v.cropMarks, d.cropMarks), showEdition: bool(v.showEdition, d.showEdition),
+    animSpeed: oneOf(v.animSpeed, ["slow", "normal", "fast"] as const, d.animSpeed), endCard: bool(v.endCard, d.endCard),
   }
 }
 /** Reads any saved board, old or new format, and fills in anything missing. */
@@ -223,13 +227,26 @@ function normalizeBoardData(raw: unknown): BoardData {
     shapes: list<Shape>(r.shapes), images: list<UploadedImage>(r.images),
     customZones: list<CustomZone>(r.customZones),
     settings: settingsFrom(r.settings as Record<string, unknown> | undefined),
+    ...stepsFrom(r.steps, r.step),
   }
+}
+/** A board's steps, when it has 2 or more (anything else is a board without steps) */
+function stepsFrom(raw: unknown, at: unknown): { steps?: BoardStep[]; step?: number } {
+  const list = <T,>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : [])
+  const steps = list<Record<string, unknown>>(raw).filter(f => f && typeof f === "object").map(f => ({
+    players: list<Player>(f.players), arrows: list<Arrow>(f.arrows), texts: list<TextBox>(f.texts),
+    shapes: list<Shape>(f.shapes), customZones: list<CustomZone>(f.customZones), note: typeof f.note === "string" ? f.note.slice(0, 48) : "",
+  }))
+  if (steps.length < 2) return {}
+  const i = typeof at === "number" && Number.isFinite(at) ? Math.round(at) : 0
+  return { steps, step: Math.max(0, Math.min(steps.length - 1, i)) }
 }
 /** A short way to compare "what's on screen" with "what was last saved". */
 const boardFingerprint = (title: string, narrative: string, data: BoardData) => JSON.stringify([title, narrative, data])
 /** The pieces a board is made of, in a fixed order. Lists are compared as objects, so an edit shows up the moment it happens. */
 const boardParts = (title: string, narrative: string, d: BoardData): unknown[] =>
-  [title, narrative, d.players, d.arrows, d.texts, d.shapes, d.images, d.customZones, ...Object.values(d.settings)]
+  [title, narrative, d.players, d.arrows, d.texts, d.shapes, d.images, d.customZones, ...Object.values(d.settings),
+    d.step, ...(d.steps ?? []).flatMap(f => [f.players, f.arrows, f.texts, f.shapes, f.customZones, f.note])]
 const sameParts = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
 /** The same data always gives the same text, whatever order the keys come back in from the database. */
 function canonicalJson(x: unknown): string {
@@ -314,7 +331,7 @@ const FRAME_SIZES: Record<BoardSettings["frameRatio"], [number, number] | null> 
   auto: null, "16:9": [1920, 1080], "4:5": [1080, 1350], "1:1": [1080, 1080], "9:16": [1080, 1920],
 }
 /** The part of the board you see and export: the whole board, or the pitch, a half or a third with room for names and the seal, widened to the export shape */
-const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"], ed?: { strip: boolean; lines: number } | null) => {
+const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"], ed?: { strip: boolean; lines: number; pitch?: boolean } | null) => {
   let r = { x: 0, y: 0, w: CW, h: CH }
   if (focus !== "board") {
     const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
@@ -327,6 +344,12 @@ const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSetting
   if (ed && focus !== "board") {
     const top = 104 + (ed.strip && r.w < 1100 ? 58 : 0), bottom = 40 + (ed.lines ? ed.lines * 22 + 14 : 0)
     r = { ...r, y: r.y - top, h: r.h + top + bottom }
+  }
+  // On the whole board, the slate and a long caption must clear the pitch too (an upright pitch reaches almost to the edges)
+  if (ed?.pitch && focus === "board") {
+    const p = pitchRect(g, 0, 0, PW, PH)
+    const top = Math.max(0, 104 - (p.y - r.y)), bottom = Math.max(0, (ed.lines ? 84 + (ed.lines - 1) * 22 : 52) - (r.y + r.h - p.y - p.h))
+    if (top || bottom) r = { ...r, y: r.y - top, h: r.h + top + bottom }
   }
   const size = FRAME_SIZES[ratio]
   if (size) {
@@ -1054,17 +1077,27 @@ const readEdition = () => { try { const n = parseInt(localStorage.getItem(EDITIO
 type EdTeam = { name: string; score: string; pat: KitPattern; c1: string; c2: string }
 type LegendItem = { kind: LineKind | "ghost"; color: string; label: string }
 /** The slate across the top (kicker, title, score strip), the caption and the legend underneath, crop marks at the corners and the edition number. It sits on the board, so every export carries it. */
-function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, legend, crop, edition }: {
+function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, legend, crop, edition, band, step }: {
   frame: { x: number; y: number; w: number; h: number }; k: number; ink: string
   title: string; kicker: string; strip: { home: EdTeam; away: EdTeam } | null; note: string
   caption: string[]; legend: LegendItem[]; crop: boolean; edition: string | null
+  band?: { color: string; top: number; bottom: number } | null // a band in the canvas colour above top and below bottom (the pitch carries on under a half or a third)
+  step?: { n: number; of: number; note: string; fade: number } | null // the step on screen, shown in the slate after the kicker
 }) {
   const x0 = frame.x, y0 = frame.y, x1 = frame.x + frame.w, y1 = frame.y + frame.h, m = 36 * k
   const narrow = frame.w < 1100
   const cut = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + "…" : t)
   const font = { fontFamily: "'Barlow Condensed',sans-serif" }
-  const titleY = y0 + (kicker ? 88 : 70) * k
-  const stripY = narrow ? y0 + (kicker ? 146 : 128) * k : y0 + 62 * k
+  const titleY = y0 + (kicker || step ? 88 : 70) * k
+  const stripY = narrow ? y0 + (kicker || step ? 146 : 128) * k : y0 + 62 * k
+  // How wide the kicker is, so the step can sit just after it
+  const kickRef = useRef<SVGTextElement>(null)
+  const [kickW, setKickW] = useState(0)
+  useLayoutEffect(() => {
+    const measure = () => { let w = 0; try { w = kickRef.current?.getBBox().width ?? 0 } catch { /* not drawn yet */ } setKickW(w) }
+    measure()
+    document.fonts?.ready.then(measure)
+  }, [kicker, k])
   const cx = narrow ? (x0 + x1) / 2 : x1 - m - 310 * k
   const ks = narrow ? k * 0.85 : k // a narrow frame gets a slightly smaller strip
   const side = (t: EdTeam, dir: 1 | -1, id: string) => {
@@ -1085,12 +1118,32 @@ function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, le
   let lx = x0 + m
   return (
     <g style={{ pointerEvents: "none" }}>
+      {/* On a half or a third the pitch carries on under the slate and the caption: a band in the canvas colour keeps them on clean ground */}
+      {band && (
+        <g>
+          <defs>
+            <linearGradient id="ed-band-top" x1="0" y1="0" x2="0" y2="1">
+              <stop offset={Math.max(0, (band.top - 30 * k - y0) / Math.max(1, band.top - y0))} stopColor={band.color} />
+              <stop offset={1} stopColor={band.color} stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="ed-band-bottom" x1="0" y1="0" x2="0" y2="1">
+              <stop offset={0} stopColor={band.color} stopOpacity={0} />
+              <stop offset={Math.min(1, (30 * k) / Math.max(1, y1 - band.bottom))} stopColor={band.color} />
+            </linearGradient>
+          </defs>
+          {band.top > y0 && <rect x={x0 - 2} y={y0 - 2} width={x1 - x0 + 4} height={band.top - y0 + 2} fill="url(#ed-band-top)" />}
+          {band.bottom < y1 && <rect x={x0 - 2} y={band.bottom} width={x1 - x0 + 4} height={y1 - band.bottom + 2} fill="url(#ed-band-bottom)" />}
+        </g>
+      )}
       {/* Slate */}
       {kicker && (
         <g>
           <rect x={x0 + m} y={y0 + 24 * k} width={10 * k} height={10 * k} fill={PS_VOLT} stroke={ink === "#000000" ? ink : "none"} strokeWidth={1.2} />
-          <text x={x0 + m + 20 * k} y={y0 + 34 * k} fill={ink} fillOpacity={0.78} fontSize={15 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.22em", textTransform: "uppercase" }}>{kicker}</text>
+          <text ref={kickRef} x={x0 + m + 20 * k} y={y0 + 34 * k} fill={ink} fillOpacity={0.78} fontSize={15 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.22em", textTransform: "uppercase" }}>{kicker}</text>
         </g>
+      )}
+      {step && (
+        <StepTag x={kicker ? x0 + m + 20 * k + (kickW || kicker.length * 10.5 * k) + 18 * k : x0 + m} y={y0 + 15.5 * k} k={k * 0.9} n={step.n} of={step.of} note={step.note} fade={step.fade} />
       )}
       {title && (
         <text x={x0 + m} y={titleY} fill={ink} fontSize={46 * k} fontWeight={800} style={{ ...font, letterSpacing: "0.01em", textTransform: "uppercase" }}>
@@ -1133,7 +1186,7 @@ function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, le
         })}
       </g>
       {/* Edition number */}
-      {edition && <text x={x1 - 14 * k} y={y1 - 52 * k} textAnchor="end" fill={ink} fillOpacity={0.62} fontSize={14 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.16em" }}>{edition}</text>}
+      {edition && <text x={x1 - (crop ? 24 : 14) * k} y={y1 - (crop ? 62 : 52) * k} textAnchor="end" fill={ink} fillOpacity={0.62} fontSize={14 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.16em" }}>{edition}</text>}
       {/* Crop marks */}
       {crop && (
         <g stroke={ink} strokeOpacity={0.6} strokeWidth={1.4} fill="none" strokeLinecap="square">
@@ -1174,6 +1227,467 @@ function renderShapePath(s: Shape, extra?: React.SVGProps<SVGElement>) {
   return null
 }
 
+/* ─────────────────────────── Steps and animation ───────────── */
+/** One step of a move: where everything is at that moment. Pieces keep their ids from step to step, so the animation knows who goes where. */
+interface BoardStep { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; customZones: CustomZone[]; note: string }
+const MAX_STEPS = 8
+/** What stays the same about a player in every step (who they are and their kit); where they stand is up to each step */
+const IDENTITY_KEYS = ["name", "num", "bg", "fg", "ring", "pat", "bg2", "outline", "glow", "scale", "kind", "team"] as const
+/** Brings a stored step in line with the step on screen, so a renamed player or a new kit shows in every step. Gives the same step back when nothing changed. */
+function syncIdentity(f: BoardStep, live: Map<string, Player>): BoardStep {
+  let changed = false
+  const players = f.players.map(p => {
+    const q = live.get(p.id)
+    if (!q || IDENTITY_KEYS.every(k => p[k] === q[k])) return p
+    changed = true
+    const out = { ...p } as Record<string, unknown>
+    for (const k of IDENTITY_KEYS) out[k] = q[k]
+    return out as unknown as Player
+  })
+  return changed ? { ...f, players } : f
+}
+type XY = { x: number; y: number }
+/** A line attached to pieces, moved to where those pieces are (the bend moves half as far), as on the board */
+const followLine = (a: Arrow, at: Map<string, XY>, ends: "both" | "end" = "both") => {
+  const P = a.fromId && ends === "both" ? at.get(a.fromId) : undefined, Q = a.toId ? at.get(a.toId) : undefined
+  const dx1 = P ? P.x - a.x1 : 0, dy1 = P ? P.y - a.y1 : 0, dx2 = Q ? Q.x - a.x2 : 0, dy2 = Q ? Q.y - a.y2 : 0
+  if (!dx1 && !dy1 && !dx2 && !dy2) return a
+  return { ...a, x1: a.x1 + dx1, y1: a.y1 + dy1, x2: a.x2 + dx2, y2: a.y2 + dy2, cpx: a.cpx + (dx1 + dx2) / 2, cpy: a.cpy + (dy1 + dy2) / 2 }
+}
+/** A team shape's points sit on the pieces they're attached to */
+const followShape = (s: Shape, at: Map<string, XY>) => {
+  if (!s.ids) return s
+  let moved = false
+  const pts = s.pts.map((pt, i) => {
+    const P = s.ids![i] ? at.get(s.ids![i]) : undefined
+    if (!P || (P.x === pt[0] && P.y === pt[1])) return pt
+    moved = true
+    return [P.x, P.y] as [number, number]
+  })
+  return moved ? { ...s, pts } : s
+}
+/** A point on a line's curve, bent so it starts at a and ends at b (a piece that isn't exactly on its line still follows the line's shape) */
+const alongLine = (l: Arrow, t: number, a: XY, b: XY) => {
+  const p = curveAt(l.x1, l.y1, l.cpx, l.cpy, l.x2, l.y2, t)
+  return { x: p.x + (a.x - l.x1) * (1 - t) + (b.x - l.x2) * t, y: p.y + (a.y - l.y1) * (1 - t) + (b.y - l.y2) * t }
+}
+/** One movement in a step: a piece goes along a line from one spot to another, between two moments of the step (0 = its start, 1 = its end) */
+type Move = { line: Arrow; t0: number; t1: number; from: XY; to: XY; ball?: boolean }
+/** What happens between a step and the next one */
+type Plan = { moves: Map<string, Move[]>; ends: Map<string, XY>; used: Map<string, [number, number]>; gone: Set<string>; phases: number }
+// Works out a step's movement. Runs and dribbles take their player to where the line ends (onto the ghost there, if there is one);
+// the ball goes with a dribbling player and then along each pass from whoever has it. Numbered lines play in order (1, then 2…);
+// lines without a number take the whole step. A ghost showing where someone was is gone in the next step.
+function planStep(f: BoardStep): Plan {
+  const byId = new Map(f.players.map(p => [p.id, p]))
+  const moves = new Map<string, Move[]>(), ends = new Map<string, XY>(), used = new Map<string, [number, number]>(), gone = new Set<string>()
+  const acts = f.arrows.filter(a => a.fromId && byId.has(a.fromId) && (a.kind === "run" || a.kind === "dribble" || a.kind === "pass" || a.kind === "shot"))
+  const phases = Math.max(0, ...acts.map(a => a.step || 0))
+  const win = (a: Arrow): [number, number] => (a.step && phases ? [(a.step - 1) / phases, a.step / phases] : [0, 1])
+  const byStep = (a: Arrow, b: Arrow) => (a.step || 99) - (b.step || 99)
+  for (const a of acts) {
+    const G = byId.get(a.fromId!)!, Q = a.toId ? byId.get(a.toId) : undefined
+    if (G.ghost && a.kind === "run" && Q && !Q.ghost) { gone.add(G.id); used.set(a.id, [0, 0.35]) }
+  }
+  for (const a of [...acts].sort(byStep)) {
+    if (a.kind !== "run" && a.kind !== "dribble") continue
+    const P = byId.get(a.fromId!)!
+    if (P.ghost || P.kind || moves.has(P.id) || used.has(a.id)) continue
+    const Q = a.toId ? byId.get(a.toId) : undefined
+    const to = Q ? { x: Q.x, y: Q.y } : { x: a.x2, y: a.y2 }
+    if (Q?.ghost) gone.add(Q.id)
+    const [t0, t1] = win(a)
+    moves.set(P.id, [{ line: a, t0, t1, from: { x: P.x, y: P.y }, to }]); ends.set(P.id, to); used.set(a.id, [t0, t1])
+  }
+  // A second line from a player to the ghost where they end up anyway is done too, and the ghost goes
+  for (const a of acts) {
+    const Q = a.toId ? byId.get(a.toId) : undefined, e = ends.get(a.fromId!), m = moves.get(a.fromId!)?.[0]
+    if (used.has(a.id) || !Q?.ghost || !e || !m || Math.hypot(e.x - Q.x, e.y - Q.y) > 40) continue
+    gone.add(Q.id); used.set(a.id, [m.t0, m.t1])
+  }
+  const ball = f.players.find(p => p.kind === "ball")
+  if (ball) {
+    let pos: XY = { x: ball.x, y: ball.y }
+    const dist = (p: XY) => Math.hypot(p.x - pos.x, p.y - pos.y)
+    // Who has it: of the players at the ball, the one with a pass, a shot or a dribble to make (else the nearest)
+    const plays = (p: Player) => acts.some(a => a.fromId === p.id && (a.kind === "pass" || a.kind === "shot" || a.kind === "dribble"))
+    let owner: Player | undefined = f.players.filter(p => !p.kind && !p.ghost && dist(p) <= pieceBase(p) * (p.scale || 1) + 26)
+      .sort((p, q) => Number(plays(q)) - Number(plays(p)) || dist(p) - dist(q))[0]
+    let last = 0
+    const segs: Move[] = []
+    for (let guard = 0; guard < 8; guard++) {
+      const run = owner ? moves.get(owner.id)?.[0] : undefined
+      if (owner && run && run.line.kind === "dribble" && !segs.some(s => s.line === run.line) && (run.line.step || 0) >= last) {
+        const off = { x: pos.x - owner.x, y: pos.y - owner.y } // the ball stays at the dribbler's feet
+        const to = { x: run.to.x + off.x, y: run.to.y + off.y }
+        segs.push({ ...run, from: pos, to, ball: true }); pos = to; last = run.line.step || last
+        continue
+      }
+      const from: Player | undefined = owner
+      const pass: Arrow | undefined = f.arrows.filter(a => !segs.some(s => s.line === a) && (a.kind === "pass" || a.kind === "shot") && (a.fromId === ball.id || (from && a.fromId === from.id)) && (a.step || 0) >= last).sort(byStep)[0]
+      if (!pass) break
+      // The receiver: the player it's passed to, or a team-mate who gets to where it's played
+      const R: Player | undefined = (pass.toId ? byId.get(pass.toId) : undefined) ?? f.players
+        .filter(p => !p.kind && !p.ghost && p.id !== from?.id)
+        .map(p => ({ p, d: Math.hypot((ends.get(p.id) ?? p).x - pass.x2, (ends.get(p.id) ?? p).y - pass.y2) }))
+        .filter(x => x.d < 45).sort((a, b) => a.d - b.d)[0]?.p
+      let to: XY = { x: pass.x2, y: pass.y2 }
+      if (R && !R.kind) {
+        // Where they take it: at the end of their own run if they make it before or while the ball travels, otherwise where they stand
+        const rm = moves.get(R.id)?.[0], arrives = pass.step && phases ? win(pass)[1] : 1
+        const e = rm && rm.t0 < arrives ? rm.to : { x: R.x, y: R.y }, d = Math.hypot(e.x - pos.x, e.y - pos.y) || 1, r = pieceBase(R) * (R.scale || 1) * 0.8
+        to = { x: e.x - ((e.x - pos.x) / d) * r, y: e.y - ((e.y - pos.y) / d) * r } // at the receiver's feet, on the side it came from
+      }
+      segs.push({ line: pass, t0: 0, t1: 1, from: pos, to, ball: true }); pos = to; last = pass.step || last
+      owner = R && !R.kind ? R : undefined
+      if (!owner) break
+    }
+    if (segs.length) {
+      // When: a numbered line in its turn; otherwise one after another
+      segs.forEach((s, j) => {
+        if (s.line.step && phases) [s.t0, s.t1] = win(s.line)
+        else if (!phases) { s.t0 = j / segs.length; s.t1 = (j + 1) / segs.length }
+        else { s.t0 = j ? segs[j - 1].t1 : 0; const nx = segs.slice(j + 1).find(x => x.line.step); s.t1 = Math.max(s.t0, nx ? win(nx.line)[0] : 1) }
+        used.set(s.line.id, [s.t0, s.t1])
+        // a dribbler moves exactly as long as the ball does
+        if (s.line.kind === "dribble") for (const ms of moves.values()) for (const m of ms) if (m.line === s.line) { m.t0 = s.t0; m.t1 = s.t1 }
+      })
+      moves.set(ball.id, segs); ends.set(ball.id, pos)
+    }
+  }
+  // A pass or shot with no ball to carry still plays out: the line runs to its end
+  for (const a of acts) if ((a.kind === "pass" || a.kind === "shot") && !used.has(a.id)) used.set(a.id, win(a))
+  return { moves, ends, used, gone, phases }
+}
+/** The next step: everyone who had a run or a dribble is where it ended, the ball is where its passes took it, and those lines are done */
+function nextStep(f: BoardStep): BoardStep {
+  const plan = planStep(f)
+  const players = f.players.filter(p => !plan.gone.has(p.id)).map(p => { const e = plan.ends.get(p.id); return e ? { ...p, x: e.x, y: e.y } : p })
+  const at = new Map<string, XY>(players.map(p => [p.id, p]))
+  const arrows = f.arrows
+    .filter(a => !plan.used.has(a.id) && !(a.fromId && plan.gone.has(a.fromId)) && !(a.toId && plan.gone.has(a.toId)))
+    .map(a => followLine(a, at))
+  return { players, arrows, texts: f.texts, shapes: f.shapes.map(s => followShape(s, at)), customZones: f.customZones, note: "" }
+}
+/** How long the parts of an animation last, at normal speed (seconds) */
+const SPEEDS = { slow: 1.4, normal: 1, fast: 0.7 } as const
+const END_CARD_SECONDS = 2.6, END_CARD_ANIM = 1.7
+type Timeline = { frames: BoardStep[]; plans: Plan[]; parts: { kind: "hold" | "move" | "end"; i: number; t: number; d: number }[]; total: number }
+function makeTimeline(frames: BoardStep[], speed: BoardSettings["animSpeed"], endCard: boolean): Timeline {
+  const k = SPEEDS[speed], plans = frames.slice(0, -1).map(planStep), parts: Timeline["parts"] = []
+  let t = 0
+  const push = (kind: "hold" | "move" | "end", i: number, d: number) => { parts.push({ kind, i, t, d }); t += d }
+  frames.forEach((_, i) => {
+    push("hold", i, (i === 0 ? 1.2 : i === frames.length - 1 ? 1.6 : 0.9) * k)
+    if (i < frames.length - 1) push("move", i, Math.max(1.5, 0.95 * plans[i].phases) * k)
+  })
+  if (endCard) push("end", frames.length - 1, END_CARD_SECONDS)
+  return { frames, plans, parts, total: t }
+}
+/** What's on the board at one moment of an animation, with how faded each thing is */
+type MotionView = { players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; customZones: CustomZone[]; fade: Map<string, number>; step: number; note: string; noteFade: number; end: number | null }
+const c01 = (x: number) => Math.max(0, Math.min(1, x))
+const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
+const easeOut = (x: number) => 1 - (1 - x) * (1 - x)
+const mixN = (a: number, b: number, k: number) => a + (b - a) * k
+/** The board part of the way (u, 0 to 1) from step A to step B */
+function tween(A: BoardStep, B: BoardStep, plan: Plan, u: number) {
+  const fade = new Map<string, number>()
+  const out = () => 1 - c01(u / 0.35), inn = () => c01((u - 0.65) / 0.35)
+  const local = (t0: number, t1: number) => (t1 > t0 ? c01((u - t0) / (t1 - t0)) : u >= t1 ? 1 : 0)
+  const k = easeInOut(u)
+  const allMoves = [...plan.moves.values()].flat()
+  const Bp = new Map(B.players.map(p => [p.id, p])), Ap = new Set(A.players.map(p => p.id))
+  const players: Player[] = []
+  for (const p of A.players) {
+    const q = Bp.get(p.id)
+    if (!q) {
+      players.push(p)
+      const arrive = allMoves.find(m => m.line.toId === p.id) // a ghost goes as the runner reaches it
+      fade.set(p.id, arrive ? 1 - local(arrive.t1 - (arrive.t1 - arrive.t0) * 0.3, arrive.t1) : out())
+      continue
+    }
+    const ms = plan.moves.get(p.id), planned = plan.ends.get(p.id)
+    let pos: XY
+    if (ms && planned && Math.hypot(planned.x - q.x, planned.y - q.y) < 40) {
+      pos = { x: p.x, y: p.y }
+      for (const m of ms) {
+        if (u < m.t0) break
+        const v = local(m.t0, m.t1)
+        pos = alongLine(m.line, m.ball ? easeOut(v) : easeInOut(v), m.from, m.to)
+      }
+      pos = { x: pos.x + (q.x - planned.x) * k, y: pos.y + (q.y - planned.y) * k } // the next step may have nudged where they end up
+    } else pos = { x: mixN(p.x, q.x, k), y: mixN(p.y, q.y, k) }
+    const look = u < 0.5 ? p : q
+    players.push(pos.x === look.x && pos.y === look.y ? look : { ...look, x: pos.x, y: pos.y })
+  }
+  for (const q of B.players) if (!Ap.has(q.id)) { players.push(q); fade.set(q.id, inn()) }
+  const at = new Map<string, XY>(players.map(p => [p.id, p]))
+  const Ba = new Map(B.arrows.map(a => [a.id, a])), Aa = new Set(A.arrows.map(a => a.id))
+  const arrows: Arrow[] = []
+  for (const a of A.arrows) {
+    const w = plan.used.get(a.id)
+    if (w && !Ba.has(a.id)) {
+      // A line being played out: what's left of it gets shorter as the player or the ball goes along it
+      const v = local(w[0], w[1])
+      if (v >= 1) continue
+      const m = allMoves.find(x => x.line.id === a.id)
+      const s = m?.ball ? easeOut(v) : easeInOut(v)
+      const b = followLine(a, at, "end")
+      if (s <= 0) { arrows.push(followLine(a, at)); continue }
+      const p0 = curveAt(b.x1, b.y1, b.cpx, b.cpy, b.x2, b.y2, s)
+      arrows.push({ ...b, x1: p0.x, y1: p0.y, cpx: mixN(b.cpx, b.x2, s), cpy: mixN(b.cpy, b.y2, s), fromId: undefined, step: undefined, label: "", dist: undefined })
+      continue
+    }
+    const q = Ba.get(a.id)
+    if (!q) { arrows.push(followLine(a, at)); fade.set(a.id, out()); continue }
+    const same = q.x1 === a.x1 && q.y1 === a.y1 && q.x2 === a.x2 && q.y2 === a.y2 && q.cpx === a.cpx && q.cpy === a.cpy
+    const g = same ? a : { ...(u < 0.5 ? a : q), x1: mixN(a.x1, q.x1, k), y1: mixN(a.y1, q.y1, k), x2: mixN(a.x2, q.x2, k), y2: mixN(a.y2, q.y2, k), cpx: mixN(a.cpx, q.cpx, k), cpy: mixN(a.cpy, q.cpy, k) }
+    arrows.push(followLine(g, at))
+  }
+  for (const q of B.arrows) if (!Aa.has(q.id)) { arrows.push(followLine(q, at)); fade.set(q.id, inn()) }
+  const Bt = new Map(B.texts.map(t => [t.id, t])), At = new Set(A.texts.map(t => t.id))
+  const texts: TextBox[] = []
+  for (const t of A.texts) {
+    const q = Bt.get(t.id)
+    if (!q) { texts.push(t); fade.set(t.id, out()); continue }
+    if (q.text !== t.text || q.fg !== t.fg || q.size !== t.size || q.width !== t.width) { texts.push(u < 0.5 ? t : q); fade.set(t.id, Math.abs(1 - 2 * u)); continue }
+    texts.push(q.x === t.x && q.y === t.y ? t : { ...t, x: mixN(t.x, q.x, k), y: mixN(t.y, q.y, k) })
+  }
+  for (const q of B.texts) if (!At.has(q.id)) { texts.push(q); fade.set(q.id, inn()) }
+  const Bs = new Map(B.shapes.map(s => [s.id, s])), As = new Set(A.shapes.map(s => s.id))
+  const shapes: Shape[] = []
+  for (const s of A.shapes) {
+    const q = Bs.get(s.id)
+    if (!q) { shapes.push(followShape(s, at)); fade.set(s.id, out()); continue }
+    const fits = s.kind === q.kind && s.pts.length === q.pts.length
+    if (!fits) fade.set(s.id, Math.abs(1 - 2 * u))
+    shapes.push(followShape(!fits ? (u < 0.5 ? s : q) : {
+      ...q, x: mixN(s.x, q.x, k), y: mixN(s.y, q.y, k), w: mixN(s.w, q.w, k), h: mixN(s.h, q.h, k),
+      pts: s.pts.map(([x, y], i) => [mixN(x, q.pts[i][0], k), mixN(y, q.pts[i][1], k)] as [number, number]),
+    }, at))
+  }
+  for (const q of B.shapes) if (!As.has(q.id)) { shapes.push(followShape(q, at)); fade.set(q.id, inn()) }
+  const Bz = new Map(B.customZones.map(z => [z.id, z])), Az = new Set(A.customZones.map(z => z.id))
+  const customZones: CustomZone[] = []
+  for (const z of A.customZones) {
+    const q = Bz.get(z.id)
+    if (!q) { customZones.push(z); fade.set(z.id, out()); continue }
+    customZones.push(q.x === z.x && q.y === z.y && q.w === z.w && q.h === z.h ? (u < 0.5 ? z : q) : { ...(u < 0.5 ? z : q), x: mixN(z.x, q.x, k), y: mixN(z.y, q.y, k), w: mixN(z.w, q.w, k), h: mixN(z.h, q.h, k) })
+  }
+  for (const q of B.customZones) if (!Az.has(q.id)) { customZones.push(q); fade.set(q.id, inn()) }
+  return { players, arrows, texts, shapes, customZones, fade }
+}
+/** The board t seconds into an animation */
+function viewAt(tl: Timeline, t: number): MotionView {
+  const part = tl.parts.find(p => t < p.t + p.d) ?? tl.parts[tl.parts.length - 1]
+  if (part.kind === "move") {
+    const u = c01((t - part.t) / part.d), to = part.i + (u >= 0.5 ? 1 : 0)
+    return { ...tween(tl.frames[part.i], tl.frames[part.i + 1], tl.plans[part.i], u), step: to, note: tl.frames[to].note, noteFade: Math.abs(1 - 2 * u), end: null }
+  }
+  const f = tl.frames[part.i]
+  return { players: f.players, arrows: f.arrows, texts: f.texts, shapes: f.shapes, customZones: f.customZones, fade: new Map(), step: part.i, note: f.note, noteFade: 1, end: part.kind === "end" ? t - part.t : null }
+}
+/** "2/3" and the step's note, in the top corner of the pitch */
+function StepTag({ x, y, k, n, of, note, fade }: { x: number; y: number; k: number; n: number; of: number; note: string; fade: number }) {
+  // The note's backing fits its text
+  const ref = useRef<SVGTextElement>(null)
+  const [tw, setTw] = useState(0)
+  useLayoutEffect(() => {
+    const measure = () => { let v = 0; try { v = ref.current?.getBBox().width ?? 0 } catch { /* not drawn yet */ } setTw(v) }
+    measure()
+    document.fonts?.ready.then(measure)
+  }, [note, k])
+  const w = 52 * k, h = 30 * k, nw = note ? (tw || note.length * 7.6 * k) + 24 * k : 0
+  const font = { fontFamily: "'Barlow Condensed',sans-serif" }
+  return (
+    <g transform={`translate(${x},${y})`} style={{ pointerEvents: "none" }}>
+      {note && <rect width={w + nw} height={h} rx={4 * k} fill="rgba(10,12,15,0.86)" opacity={fade} />}
+      <rect width={w} height={h} rx={4 * k} fill={PS_VOLT} />
+      <text x={w / 2} y={h / 2 + 0.5 * k} textAnchor="middle" dominantBaseline="central" fill="#0a0c0f" fontSize={18 * k} fontWeight={800} style={{ ...font, letterSpacing: "0.04em" }}>{n}/{of}</text>
+      {note && <text ref={ref} x={w + 12 * k} y={h / 2 + 0.5 * k} dominantBaseline="central" fill="#ffffff" opacity={fade} fontSize={16 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.06em", textTransform: "uppercase" }}>{note}</text>}
+    </g>
+  )
+}
+/** The end card on GIF and video exports: the PS seal stamps down, then the handle and PITCHSTUDIO come up, like a broadcaster's sting */
+function EndCard({ frame, k, t, handle, bg, ink, edition }: { frame: { x: number; y: number; w: number; h: number }; k: number; t: number; handle: string; bg: string; ink: string; edition: string | null }) {
+  const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2 - 34 * k, R = 66 * k
+  const back = (x: number) => { const y = x - 1; return 1 + y * y * (2.7 * y + 1.7) } // a stamp that lands with a little bounce
+  const p = c01((t - 0.25) / 0.45), ring = c01((t - 0.62) / 0.55)
+  const h = c01((t - 0.8) / 0.4), w = c01((t - 1.0) / 0.4), ed = c01((t - 1.2) / 0.4)
+  const font = { fontFamily: "'Barlow Condensed',sans-serif" }
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      <rect x={frame.x - 4} y={frame.y - 4} width={frame.w + 8} height={frame.h + 8} fill={bg} opacity={c01(t / 0.3)} />
+      {ring > 0 && ring < 1 && <circle cx={cx} cy={cy} r={R * (1 + 0.9 * easeOut(ring))} fill="none" stroke={PS_VOLT} strokeWidth={5 * k * (1 - ring)} opacity={0.85 * (1 - ring)} />}
+      {p > 0 && (
+        <g transform={`translate(${cx},${cy}) rotate(${-14 * (1 - easeOut(p))}) scale(${2.4 - 1.4 * back(p)})`} opacity={c01(p * 3)}>
+          <circle r={R + 12 * k} fill="none" stroke={ink} strokeOpacity={0.25} strokeWidth={1.5 * k} strokeDasharray={`${3 * k},${5 * k}`} />
+          <circle r={R} fill={PS_VOLT} />
+          <text y={2 * k} textAnchor="middle" dominantBaseline="central" fontSize={60 * k} fontWeight={800} fill="#0a0c0f" style={{ ...font, letterSpacing: "0.02em" }}>PS</text>
+        </g>
+      )}
+      {handle && (
+        <text x={cx} y={cy + R + 66 * k + 16 * k * (1 - easeOut(h))} textAnchor="middle" fill={ink} opacity={h} fontSize={44 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.04em" }}>@{handle}</text>
+      )}
+      <text x={cx} y={cy + R + (handle ? 108 : 70) * k + 12 * k * (1 - easeOut(w))} textAnchor="middle" fill={ink} fillOpacity={0.88} opacity={w} fontSize={(handle ? 21 : 30) * k} fontWeight={700} style={{ ...font, letterSpacing: "0.42em" }}>PITCHSTUDIO</text>
+      {edition && <text x={cx} y={frame.y + frame.h - 40 * k} textAnchor="middle" fill={ink} fillOpacity={0.6} opacity={ed} fontSize={15 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.16em" }}>{edition}</text>}
+    </g>
+  )
+}
+/* ── Making GIF and MP4 files (no outside libraries) ── */
+/** A growing list of bytes */
+function byteSink() {
+  let buf = new Uint8Array(1 << 20), n = 0
+  const room = (k: number) => { if (n + k > buf.length) { const b = new Uint8Array(Math.max(buf.length * 2, n + k)); b.set(buf); buf = b } }
+  return {
+    byte(v: number) { room(1); buf[n++] = v },
+    bytes(a: ArrayLike<number>) { room(a.length); buf.set(a, n); n += a.length },
+    u16(v: number) { room(2); buf[n++] = v & 255; buf[n++] = (v >> 8) & 255 },
+    done: () => buf.slice(0, n),
+  }
+}
+type ByteSink = ReturnType<typeof byteSink>
+/** GIF picture data: LZW-compressed colour numbers in blocks of up to 255 bytes */
+function gifLzw(s: ByteSink, idx: Uint8Array) {
+  s.byte(8)
+  const block = new Uint8Array(255)
+  let bn = 0, acc = 0, bits = 0, size = 9, next = 258
+  const flush = () => { if (bn) { s.byte(bn); s.bytes(block.subarray(0, bn)); bn = 0 } }
+  const emit = (code: number) => {
+    acc |= code << bits; bits += size
+    while (bits >= 8) { block[bn++] = acc & 255; acc >>>= 8; bits -= 8; if (bn === 255) flush() }
+  }
+  const table = new Map<number, number>()
+  emit(256)
+  let cur = idx[0]
+  for (let i = 1; i < idx.length; i++) {
+    const c = idx[i], key = (cur << 8) | c, hit = table.get(key)
+    if (hit !== undefined) { cur = hit; continue }
+    emit(cur)
+    if (next === 4096) { emit(256); next = 258; size = 9; table.clear() }
+    else { if (next >= 1 << size) size++; table.set(key, next++) }
+    cur = c
+  }
+  emit(cur); emit(257)
+  if (bits > 0) { block[bn++] = acc & 255; if (bn === 255) flush() }
+  flush(); s.byte(0)
+}
+/** Up to 256 colours that best cover some sample pictures (flat graphics have few colours, so the commonest ones cover them) */
+function gifPalette(samples: Uint8ClampedArray[]): Uint8Array {
+  const count = new Uint32Array(32768), sum = new Float64Array(32768 * 3)
+  for (const d of samples) for (let i = 0; i < d.length; i += 4) {
+    const key = ((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3)
+    count[key]++; sum[key * 3] += d[i]; sum[key * 3 + 1] += d[i + 1]; sum[key * 3 + 2] += d[i + 2]
+  }
+  const keys: number[] = []
+  for (let key = 0; key < 32768; key++) if (count[key]) keys.push(key)
+  keys.sort((a, b) => count[b] - count[a])
+  const pal = new Uint8Array(768), picked: number[][] = []
+  for (const key of keys) {
+    if (picked.length === 256) break
+    const c = [0, 1, 2].map(j => Math.round(sum[key * 3 + j] / count[key]))
+    if (picked.length < 200 || !picked.some(q => Math.abs(q[0] - c[0]) + Math.abs(q[1] - c[1]) + Math.abs(q[2] - c[2]) < 12)) picked.push(c)
+  }
+  picked.forEach((c, i) => pal.set(c, i * 3))
+  return pal
+}
+/** Turns RGBA pixels into palette numbers (each colour is looked up once) */
+function gifIndexer(pal: Uint8Array) {
+  const cache = new Int16Array(32768).fill(-1)
+  return (d: Uint8ClampedArray, out: Uint8Array) => {
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+      const key = ((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3)
+      let c = cache[key]
+      if (c < 0) {
+        let best = 1e9
+        for (let q = 0; q < 256; q++) {
+          const dr = pal[q * 3] - d[i], dg = pal[q * 3 + 1] - d[i + 1], db = pal[q * 3 + 2] - d[i + 2], e = 2 * dr * dr + 4 * dg * dg + 3 * db * db
+          if (e < best) { best = e; c = q }
+        }
+        cache[key] = c
+      }
+      out[j] = c
+    }
+  }
+}
+/** A looping GIF written one frame at a time. Each frame keeps only the box that changed; a frame that changes nothing makes the one before last longer. */
+function gifWriter(w: number, h: number, pal: Uint8Array) {
+  const s = byteSink()
+  s.bytes([71, 73, 70, 56, 57, 97]); s.u16(w); s.u16(h); s.byte(0xf7); s.byte(0); s.byte(0); s.bytes(pal)
+  s.bytes([0x21, 0xff, 11, 78, 69, 84, 83, 67, 65, 80, 69, 50, 46, 48, 3, 1, 0, 0, 0]) // NETSCAPE2.0: loop for ever
+  let prev: Uint8Array | null = null, pending: { x: number; y: number; w: number; h: number; idx: Uint8Array; cs: number } | null = null
+  const write = () => {
+    if (!pending) return
+    const p = pending
+    s.bytes([0x21, 0xf9, 4, 4]); s.u16(Math.max(2, Math.round(p.cs))); s.byte(0); s.byte(0)
+    s.byte(0x2c); s.u16(p.x); s.u16(p.y); s.u16(p.w); s.u16(p.h); s.byte(0)
+    gifLzw(s, p.idx)
+    pending = null
+  }
+  return {
+    /** A frame shown for cs hundredths of a second */
+    add(idx: Uint8Array, cs: number) {
+      let x0 = 0, y0 = 0, x1 = w - 1, y1 = h - 1
+      if (prev) {
+        x0 = w; y0 = h; x1 = -1; y1 = -1
+        for (let y = 0; y < h; y++) {
+          const o = y * w
+          for (let x = 0; x < w; x++) if (idx[o + x] !== prev[o + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y }
+        }
+        if (x1 < 0) { if (pending) pending.cs += cs; return }
+      }
+      write()
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1, sub = new Uint8Array(bw * bh)
+      for (let y = 0; y < bh; y++) sub.set(idx.subarray((y0 + y) * w + x0, (y0 + y) * w + x0 + bw), y * bw)
+      pending = { x: x0, y: y0, w: bw, h: bh, idx: sub, cs }
+      prev = idx
+    },
+    finish() { write(); s.byte(0x3b); return s.done() },
+  }
+}
+/** An MP4 file around encoded video frames (one track, frames in order, the index at the front so it starts playing straight away) */
+function mp4File(o: { w: number; h: number; fps: number; codec: string; config: Uint8Array | null; frames: { data: Uint8Array; key: boolean }[] }): Blob {
+  const u32 = (v: number) => [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255]
+  const u16 = (v: number) => [(v >> 8) & 255, v & 255]
+  const str = (t: string) => Array.from(t, c => c.charCodeAt(0))
+  const zeros = (n: number) => new Array(n).fill(0)
+  const box = (type: string, ...parts: ArrayLike<number>[]) => {
+    const len = 8 + parts.reduce((n, p) => n + p.length, 0), out = new Uint8Array(len)
+    out.set(u32(len)); out.set(str(type), 4)
+    let at = 8
+    for (const p of parts) { out.set(p, at); at += p.length }
+    return out
+  }
+  const full = (type: string, version: number, flags: number, ...parts: ArrayLike<number>[]) => box(type, [version, (flags >> 16) & 255, (flags >> 8) & 255, flags & 255], ...parts)
+  const avc = o.codec.startsWith("avc1"), n = o.frames.length, scale = o.fps * 1000, ms = Math.round((n * 1000) / o.fps)
+  const matrix = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000].flatMap(u32)
+  const ftyp = box("ftyp", str("isom"), u32(512), str("isom"), str("iso2"), str(avc ? "avc1" : "mp42"), str("mp41"))
+  const mvhd = full("mvhd", 0, 0, u32(0), u32(0), u32(1000), u32(ms), u32(0x10000), u16(0x100), zeros(10), matrix, zeros(24), u32(2))
+  const tkhd = full("tkhd", 0, 3, u32(0), u32(0), u32(1), u32(0), u32(ms), zeros(8), u16(0), u16(0), u16(0), u16(0), matrix, u32(o.w * 65536), u32(o.h * 65536))
+  const mdhd = full("mdhd", 0, 0, u32(0), u32(0), u32(scale), u32(n * 1000), u16(0x55c4), u16(0))
+  const hdlr = full("hdlr", 0, 0, u32(0), str("vide"), zeros(12), str("PitchStudio"), [0])
+  const vmhd = full("vmhd", 0, 1, zeros(8))
+  const dinf = box("dinf", full("dref", 0, 0, u32(1), full("url ", 0, 1)))
+  const colr = box("colr", str("nclx"), u16(1), u16(1), u16(1), [0]) // BT.709, limited range
+  const conf = avc ? box("avcC", o.config ?? []) : full("vpcC", 1, 0, [0, 40, 0x82, 1, 1, 1], u16(0))
+  const entry = box(avc ? "avc1" : "vp09", zeros(6), u16(1), zeros(16), u16(o.w), u16(o.h), u32(0x480000), u32(0x480000), u32(0), u16(1), zeros(32), u16(0x18), u16(0xffff), conf, colr)
+  const keys = o.frames.flatMap((f, i) => (f.key ? [i + 1] : []))
+  const table = [
+    full("stsd", 0, 0, u32(1), entry),
+    full("stts", 0, 0, u32(1), u32(n), u32(1000)),
+    full("stss", 0, 0, u32(keys.length), keys.flatMap(u32)),
+    full("stsc", 0, 0, u32(1), u32(1), u32(n), u32(1)),
+    full("stsz", 0, 0, u32(0), u32(n), o.frames.flatMap(f => u32(f.data.length))),
+  ]
+  const moov = (offset: number) => box("moov", mvhd, box("trak", tkhd, box("mdia", mdhd, hdlr, box("minf", vmhd, dinf, box("stbl", ...table, full("stco", 0, 0, u32(1), u32(offset)))))))
+  const head = moov(ftyp.length + moov(0).length + 8)
+  const size = o.frames.reduce((a, f) => a + f.data.length, 0)
+  return new Blob([ftyp, head, new Uint8Array([...u32(size + 8), ...str("mdat")]), ...o.frames.map(f => f.data)] as BlobPart[], { type: "video/mp4" })
+}
+/** A file name from the board's title (no characters a file name can't have) */
+const safeFileName = (t: string) => Array.from(t.trim() || "PitchStudio board").filter(c => c.charCodeAt(0) > 31 && c.charCodeAt(0) !== 92 && !'/:*?"<>|'.includes(c)).join("").slice(0, 80) || "PitchStudio board"
+
 /* ─────────────────────────── Template Modal ────────────────── */
 /* ─────────────────────────── The drop library ───────────────── */
 // Numbered, ready-made boards: a real situation, drawn once, to open and make your own. Each one opens in the editorial frame.
@@ -1196,6 +1710,8 @@ interface DropApi {
   link: (ps: Player[], closed?: boolean) => void
   gap: (a: Player, b: Player) => void
   small: (k: number) => void
+  note: (text: string) => void // the note for the step being drawn
+  next: (note?: string) => void // starts the next step: the runs and passes drawn so far play out, then draw what happens next
 }
 interface Drop { no: number; name: string; cat: DropCat; blurb: string; style: "night" | "paper"; make: (d: DropApi) => void; view?: Partial<BoardSettings>; crop?: [number, number, number, number] } // view: the part of the pitch it opens on; crop: the part shown on its card (pitch coordinates)
 /** Draws a drop on a fresh board (new ids every time) */
@@ -1204,6 +1720,12 @@ function buildDrop(drop: Drop): CanvasState {
   const paper = drop.style === "paper"
   const ink = paper ? "#1d1b16" : "#ffffff", hot = paper ? "#b45309" : PS_VOLT
   const players: Player[] = [], arrows: Arrow[] = [], texts: TextBox[] = [], shapes: Shape[] = [], zones: CustomZone[] = []
+  const frames: BoardStep[] = [] // the steps drawn so far, when the drop is a move
+  let stepNote = ""
+  const snap = (): BoardStep => ({
+    players: players.map(p => ({ ...p })), arrows: arrows.map(a => ({ ...a })), texts: texts.map(t => ({ ...t })),
+    shapes: shapes.map(s => ({ ...s, pts: s.pts.map(q => [q[0], q[1]] as [number, number]) })), customZones: zones.map(z => ({ ...z })), note: stepNote,
+  })
   const cv = (x: number, y: number) => toCanvas(g, x, y)
   const squad = (side: "home" | "away", f: string, dx = 0) => {
     const form = FORMATIONS.find(x => x.name === f)!
@@ -1241,20 +1763,36 @@ function buildDrop(drop: Drop): CanvasState {
       arrows.push({ id: uid(), x1: from.x, y1: from.y, x2: end.x, y2: end.y, cpx: (from.x + end.x) / 2, cpy: (from.y + end.y) / 2, color: ink, strokeW: 3, dash: "dashed", label: "", twoWay: false, kind: "run", fromId: from.id, toId: end.id })
       return gh
     },
-    label: (x, y, text, w = 260) => { const c = cv(x, y); texts.push({ id: uid(), x: c.x, y: c.y, text, fg: ink, bg: "transparent", border: "transparent", dash: false, size: 15, bold: true, width: w, layer: "foreground", noBox: true }) },
+    // a label can also mark a new line with a backslash and n (drop 03 was written that way)
+    label: (x, y, text, w = 260) => { const c = cv(x, y); texts.push({ id: uid(), x: c.x, y: c.y, text: text.split(String.fromCharCode(92, 110)).join(String.fromCharCode(10)), fg: ink, bg: "transparent", border: "transparent", dash: false, size: 15, bold: true, width: w, layer: "foreground", noBox: true }) },
     zone: (x, y, w, h, label = "") => { zones.push({ id: uid(), x, y, w, h, color: hot, opacity: 0.16, label }) },
     link: (ps, closed = false) => {
       shapes.push({ id: uid(), kind: "polygon", pts: ps.map(p => [p.x, p.y] as [number, number]), closed, ids: ps.map(p => p.id), x: 0, y: 0, w: 0, h: 0, fill: hot, fillOpacity: closed ? 0.16 : 0, stroke: hot, strokeW: closed ? 2 : 3, strokeDash: closed, label: "" })
     },
     small: k => { for (const p of players) if (!p.kind) p.scale = k },
     gap: (a, b) => { arrows.push({ id: uid(), x1: a.x, y1: a.y, x2: b.x, y2: b.y, cpx: (a.x + b.x) / 2, cpy: (a.y + b.y) / 2, color: ink, strokeW: 2, dash: "dotted", label: "", twoWay: false, kind: "line", fromId: a.id, toId: b.id, dist: true }) },
+    note: text => { stepNote = text },
+    next: (note = "") => {
+      const done = snap()
+      frames.push(done)
+      const nx = nextStep(done), at = new Map(nx.players.map(p => [p.id, p]))
+      for (let i = players.length - 1; i >= 0; i--) { const q = at.get(players[i].id); if (!q) players.splice(i, 1); else { players[i].x = q.x; players[i].y = q.y } }
+      arrows.splice(0, arrows.length, ...nx.arrows.map(a => ({ ...a })))
+      shapes.splice(0, shapes.length, ...nx.shapes.map(s => ({ ...s, pts: s.pts.map(q => [q[0], q[1]] as [number, number]) })))
+      stepNote = note
+    },
   }
   drop.make(api)
   const settings = settingsFrom({
     pitchStyle: drop.style, bgColor: PITCH_LOOKS[drop.style].bg, editorial: true,
     kicker: `Drop ${String(drop.no).padStart(2, "0")} · ${drop.cat}`, caption: drop.blurb, ...drop.view,
   })
-  return { players, arrows, texts, shapes, images: [], title: drop.name, bgColor: settings.bgColor, showPitch: true, customZones: zones, settings }
+  const all = frames.length ? [...frames, snap()] : null // a move opens on its first step
+  const first = all ? all[0] : snap()
+  return {
+    players: first.players, arrows: first.arrows, texts: first.texts, shapes: first.shapes, images: [], title: drop.name, bgColor: settings.bgColor, showPitch: true,
+    customZones: first.customZones, settings, ...(all ? { steps: all, step: 0 } : {}),
+  }
 }
 const DROPS: Drop[] = [
   {
@@ -1347,9 +1885,18 @@ const DROPS: Drop[] = [
       d.only(a, [3, 5, 4, 8, 6, 11])
       d.mv(h[10], 720, 505); d.mv(h[2], 600, 600); d.mv(h[7], 610, 410); d.mv(h[9], 850, 350)
       d.mv(a[11], 700, 580); d.mv(a[3], 850, 545); d.mv(a[5], 920, 430); d.mv(a[4], 920, 260); d.mv(a[8], 780, 330); d.mv(a[6], 780, 430)
-      d.dribble(h[10], [790, 440], { step: 1 }); d.run(h[2], [920, 630], { step: 2, bend: -14 }); d.pass(h[10], [920, 630], { step: 3, bend: -30 })
+      d.dribble(h[10], [800, 500], { step: 1 }); d.run(h[2], [920, 630], { step: 2, bend: -14 }); d.pass(h[10], [920, 630], { step: 3, bend: -30 })
       d.ghost(h[2], 920, 630, true)
       d.label(380, 20, "The winger drives in, the full-back goes round", 440)
+      d.ball(740, 522)
+      d.note("The winger drives in")
+      d.next("Overlap: cross it in")
+      d.mv(a[3], 880, 570); d.mv(a[5], 965, 400)
+      d.run(h[9], [990, 300], { step: 1, bend: 12 }); d.pass(h[2], h[9], { step: 2, bend: -60 })
+      d.next("Finish at the near post")
+      d.mv(a[4], 950, 240)
+      d.shot(h[9], [1050, 318])
+      d.next()
     },
   },
   {
@@ -1388,6 +1935,9 @@ const DROPS: Drop[] = [
       d.mv(a[8], 740, 150); d.mv(a[6], 740, 260); d.mv(a[3], 880, 560); d.mv(a[5], 900, 190); d.mv(a[4], 900, 300); d.mv(a[2], 860, 90)
       d.pass(h[11], h[6], { step: 1 }); d.pass(h[6], h[8], { step: 2 }); d.pass(h[8], h[10], { step: 3, bend: -40 }); d.dribble(h[10], [930, 600], { step: 4 })
       d.label(360, 20, "Overload on the left, then switch right", 420)
+      d.ball(718, 104)
+      d.note("Draw them to the left")
+      d.next("Switch: one v one on the right")
     },
   },
   {
@@ -1413,6 +1963,14 @@ const DROPS: Drop[] = [
       d.mv(a[5], 860, 295); d.mv(a[4], 860, 385)
       d.dribble(h[8], [600, 340], { step: 1 }); d.run(h[11], [900, 130], { step: 2 }); d.run(h[10], [900, 550], { step: 2 }); d.run(h[9], [800, 340], { step: 2 })
       d.label(250, 20, "Win it, then run: three v two", 360)
+      d.ball(492, 362)
+      d.note("Win it and go")
+      d.next("Draw a defender, slip it through")
+      d.mv(a[5], 690, 330); d.mv(a[4], 830, 420)
+      d.run(h[10], [960, 470], { step: 1, bend: 10 }); d.pass(h[8], h[10], { step: 1, bend: 24 }); d.run(h[9], [990, 250], { step: 1, bend: -10 })
+      d.next("Finish across the keeper")
+      d.shot(h[10], [1050, 315])
+      d.next()
     },
   },
   {
@@ -1462,11 +2020,15 @@ const DROPS: Drop[] = [
       const h = d.home("4-3-3"), a = d.away("4-4-2")
       d.only(h, [3, 9, 5, 4, 6, 8]); d.only(a, [1, 3, 2, 5, 4, 8, 6])
       d.mv(h[3], 1040, 12); d.mv(h[9], 985, 282); d.mv(h[5], 930, 340); d.mv(h[4], 900, 440); d.mv(h[6], 890, 190); d.mv(h[8], 860, 350)
-      d.mv(a[1], 1040, 340); d.mv(a[3], 1040, 255); d.mv(a[2], 1040, 425); d.mv(a[5], 990, 340); d.mv(a[4], 990, 400); d.mv(a[8], 950, 225); d.mv(a[6], 955, 470)
+      d.mv(a[1], 1040, 340); d.mv(a[3], 1040, 255); d.mv(a[2], 1040, 425); d.mv(a[5], 990, 340); d.mv(a[4], 990, 400); d.mv(a[8], 950, 225); d.mv(a[6], 935, 490)
       d.ball(1050, 0)
       d.pass(h[3], h[9], { step: 1, bend: 20 }); d.pass(h[9], [965, 455], { step: 2, bend: -18 }); d.run(h[4], [985, 440], { step: 2, bend: 8 })
       d.label(760, 40, "Near-post flick, then attack the back post", 320)
       d.small(0.7)
+      d.note("Near-post ball, flick it on")
+      d.next("Back post: finish")
+      d.shot(h[4], [1050, 374])
+      d.next()
     },
     view: { vertical: true, focus: "third", focusEnd: "attack" }, crop: [736, 0, 314, 480],
   },
@@ -1498,7 +2060,7 @@ const DROPS: Drop[] = [
       d.ball(600, 0)
       d.pass(h[3], h[6], { step: 1, bend: -16 }); d.pass(h[6], h[11], { step: 2, bend: -10 }); d.run(h[3], [700, 45], { step: 3, bend: 14 })
       d.link([h[3], h[6], h[11]], true)
-      d.label(830, 40, "Short, in behind, thrower supports", 320)
+      d.label(880, 40, "Short, in behind, thrower supports", 320)
       d.small(0.8)
     },
     view: { vertical: true, focus: "half", focusEnd: "attack" }, crop: [440, 0, 314, 480],
@@ -1613,9 +2175,17 @@ function TemplateModal({
                   <div key={x.no} className="rounded-lg border overflow-hidden flex flex-col" style={{ borderColor: "rgba(255,255,255,0.1)", background: SURFACE_2 }}>
                     <DropThumb data={dropPreview(x)} crop={x.crop} />
                     <div className="p-2.5 flex flex-col gap-1.5 flex-1">
-                      <span className="text-xs font-semibold" style={{ color: PS_VOLT, letterSpacing: "0.12em", fontFamily: "'Barlow Condensed', sans-serif" }}>
-                        DROP {String(x.no).padStart(2, "0")} · {x.cat.toUpperCase()}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold" style={{ color: PS_VOLT, letterSpacing: "0.12em", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                          DROP {String(x.no).padStart(2, "0")} · {x.cat.toUpperCase()}
+                        </span>
+                        {(dropPreview(x).steps?.length ?? 0) > 1 && (
+                          <span className="ml-auto flex items-center gap-1 px-1.5 rounded text-xs font-semibold" title="This drop is a move: open it and press Play"
+                            style={{ background: "rgba(215,255,60,0.14)", color: PS_VOLT, letterSpacing: "0.08em", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                            <Play size={9} fill="currentColor" /> {dropPreview(x).steps!.length} STEPS
+                          </span>
+                        )}
+                      </div>
                       <span className="font-semibold leading-tight" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.03em", fontSize: 16 }}>{x.name}</span>
                       <p className="text-xs flex-1" style={{ color: TEXT_MUTED }}>{x.blurb}</p>
                       <button onClick={() => onLoad({ id: `drop-${x.no}`, name: x.name, data: buildDrop(x), published: false, createdAt: Date.now() })}
@@ -1790,13 +2360,20 @@ function TacticsBoard() {
   const [showLegend, setShowLegend] = useState(true); const [cropMarks, setCropMarks] = useState(true); const [showEdition, setShowEdition] = useState(true)
   const [editionNo, setEditionNo] = useState(() => readEdition() + 1) // the number the next export will carry
   const [exportNote, setExportNote] = useState("") // a short word after Copy: "Copied" or why it didn't work
+  const [animSpeed, setAnimSpeed] = useState<BoardSettings["animSpeed"]>("normal")
+  const [endCard, setEndCard] = useState(true)
+  /* ── Steps: a move shown one moment at a time. The step on screen is the live board; the others wait in steps ── */
+  const [steps, setSteps] = useState<BoardStep[]>([]) // every step, once there are 2 or more (the one on screen may be out of date in here)
+  const [stepIdx, setStepIdx] = useState(0) // the step on screen
+  const [play, setPlay] = useState<null | { t: number }>(null) // the moment of the move on screen, while it plays or is being exported
+  const [making, setMaking] = useState<null | { fmt: "gif" | "mp4"; done: number }>(null) // a GIF or a video being made
   const [kitEditor, setKitEditor] = useState({ home: false, away: false })
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [sideTab, setSideTab] = useState<"selected" | "board">("board")
   const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
-  const [boardGroups, setBoardGroups] = useState({ frame: true, formation: true, teams: true, labels: false, zones: false, pitch: false, editorial: false, canvas: false })
+  const [boardGroups, setBoardGroups] = useState({ frame: true, formation: true, teams: true, labels: false, zones: false, pitch: false, editorial: false, animation: false, canvas: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [selectedFormation, setSelectedFormation] = useState("4-3-3")
   const [formShape, setFormShape] = useState<TeamShape>("base") // the shape the formation buttons use
@@ -2072,6 +2649,14 @@ function TacticsBoard() {
   useEffect(() => { pitchScaleRef.current = pitchScale }, [pitchScale])
   useEffect(() => { pitchOffXRef.current = pitchOffX }, [pitchOffX])
   useEffect(() => { pitchOffYRef.current = pitchOffY }, [pitchOffY])
+  /** Every step as it is now: the one on screen from the live board, and names and kits the same in all of them. Empty for a board without steps. */
+  const stepList = useMemo(() => {
+    if (steps.length < 2) return [] as BoardStep[]
+    const live = new Map(players.map(p => [p.id, p]))
+    return steps.map((f, i) => (i === stepIdx ? { players, arrows, texts, shapes, customZones, note: f.note } : syncIdentity(f, live)))
+  }, [steps, stepIdx, players, arrows, texts, shapes, customZones])
+  /** The move, timed: each step held, then played into the next, then the end card */
+  const timeline = useMemo(() => (stepList.length > 1 ? makeTimeline(stepList, animSpeed, endCard) : null), [stepList, animSpeed, endCard])
 
   /* ── Whole-board save and restore ── */
   /** Everything about the board right now, in the format it's saved in. */
@@ -2083,8 +2668,9 @@ function TacticsBoard() {
       view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible,
       homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
       vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
-      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition,
+      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard,
     }),
+    ...(stepList.length > 1 ? { steps: stepList, step: stepIdx } : {}),
   })
   /** Puts a saved board's elements, zones and settings back on screen. */
   const applyBoardData = (d: BoardData) => {
@@ -2106,6 +2692,8 @@ function TacticsBoard() {
     setPitchStyle(st.pitchStyle); setPsMark(st.psMark); setEditorial(st.editorial); setKicker(st.kicker)
     setHomeScore(st.homeScore); setAwayScore(st.awayScore); setScoreNote(st.scoreNote); setCaption(st.caption)
     setShowLegend(st.showLegend); setCropMarks(st.cropMarks); setShowEdition(st.showEdition)
+    setAnimSpeed(st.animSpeed); setEndCard(st.endCard)
+    setSteps(d.steps ?? []); setStepIdx(d.step ?? 0)
   }
   /** Opens a board exactly as it was saved. Older boards get today's defaults for anything they didn't store.
    *  boardId = null starts a new, unsaved board (used for templates). */
@@ -2179,7 +2767,7 @@ function TacticsBoard() {
       pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
       showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
       labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
-      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition,
+      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, steps, stepIdx,
       currentBoardId, authUser, saveTick])
 
   // Opening a fresh board: bring back the unsaved board from last time, if there is one
@@ -2386,6 +2974,7 @@ function TacticsBoard() {
     players: d.players.map(x => ({ ...x })), arrows: d.arrows.map(x => ({ ...x })), texts: d.texts.map(x => ({ ...x })),
     shapes: d.shapes.map(x => ({ ...x, pts: [...x.pts] })), images: d.images.map(x => ({ ...x })),
     customZones: d.customZones.map(x => ({ ...x })), settings: { ...d.settings },
+    ...(d.steps ? { steps: d.steps.map(f => ({ ...f, players: f.players.map(x => ({ ...x })), arrows: f.arrows.map(x => ({ ...x })), texts: f.texts.map(x => ({ ...x })), shapes: f.shapes.map(x => ({ ...x, pts: [...x.pts] })), customZones: f.customZones.map(x => ({ ...x })) })) } : {}),
   })
   /** Call just before changing the board, so undo can come back to this point.
    *  Changes with the same key less than a second apart (typing a name, dragging a slider) count as one step. */
@@ -2650,6 +3239,9 @@ function TacticsBoard() {
         if (e.key === "Escape") el.blur()
         return
       }
+      // While the move plays or is being made, keys don't change the board: a key stops the playing instead
+      const sk = stepKeysRef.current
+      if (sk.busy()) { e.preventDefault(); sk.stop(); return }
       if (e.key === "Delete" || e.key === "Backspace") del()
       if (e.key === "Escape") {
         setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null
@@ -2699,6 +3291,9 @@ function TacticsBoard() {
         if (e.key === "s" || e.key === "S") sw("shape")
         if (e.key === "z" || e.key === "Z") sw("zone")
         if (e.key === "i" || e.key === "I") fileInputRef.current?.click()
+        if (e.key === "p" || e.key === "P") sk.play()
+        if (e.key === "[") sk.go(-1)
+        if (e.key === "]") sk.go(1)
       }
     }
     window.addEventListener("keydown", handler)
@@ -2807,7 +3402,7 @@ function TacticsBoard() {
   const edBoard = title.trim() === "Untitled board" ? "" : title.trim() // an unnamed board has no headline
   const edStrip = editorial && (homeName.trim() !== "" || awayName.trim() !== "" || homeScore !== "" || awayScore !== "")
   const edLines = editorial ? wrapCaption(caption) : []
-  const frame = frameRect(geo, canvasMode === "blank" ? "board" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length } : null)
+  const frame = frameRect(geo, canvasMode === "blank" ? "board" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length, pitch: canvasMode !== "blank" } : null)
   const sealK = Math.min(1, Math.min(frame.w, frame.h) / CH) // the seal and the legend shrink with a small frame
   const dispW = Math.min(SVG_DISPLAY_W, (SVG_DISPLAY_W * CH / CW) * frame.w / frame.h)
   const dispRef = useRef({ w: dispW, h: dispW * frame.h / frame.w })
@@ -2822,17 +3417,19 @@ function TacticsBoard() {
     const to = pitchGeo(v, pitchScale, 0, 0)
     const T = (x: number, y: number) => { const p = toPitch(from, x, y); return toCanvas(to, p.x, p.y) }
     const k = to.sc / from.sc
-    setPlayers(l => l.map(p => ({ ...p, ...T(p.x, p.y) })))
-    setArrows(l => l.map(a => {
+    const turnP = (p: Player) => ({ ...p, ...T(p.x, p.y) })
+    const turnA = (a: Arrow) => {
       const a1 = T(a.x1, a.y1), a2 = T(a.x2, a.y2), c = T(a.cpx, a.cpy)
       return { ...a, x1: a1.x, y1: a1.y, x2: a2.x, y2: a2.y, cpx: c.x, cpy: c.y }
-    }))
-    setTexts(l => l.map(tb => { const h = textBoxH(tb), c = T(tb.x + tb.width / 2, tb.y + h / 2); return { ...tb, x: c.x - tb.width / 2, y: c.y - h / 2 } }))
-    setShapes(l => l.map(sh => {
+    }
+    const turnT = (tb: TextBox) => { const h = textBoxH(tb), c = T(tb.x + tb.width / 2, tb.y + h / 2); return { ...tb, x: c.x - tb.width / 2, y: c.y - h / 2 } }
+    const turnS = (sh: Shape): Shape => {
       if (sh.kind === "polygon") return { ...sh, pts: sh.pts.map(([x, y]) => { const q = T(x, y); return [q.x, q.y] as [number, number] }) }
       const c = T(sh.x + sh.w / 2, sh.y + sh.h / 2), w = sh.h * k, h = sh.w * k
       return { ...sh, x: c.x - w / 2, y: c.y - h / 2, w, h }
-    }))
+    }
+    setPlayers(l => l.map(turnP)); setArrows(l => l.map(turnA)); setTexts(l => l.map(turnT)); setShapes(l => l.map(turnS))
+    setSteps(l => l.map(f => ({ ...f, players: f.players.map(turnP), arrows: f.arrows.map(turnA), texts: f.texts.map(turnT), shapes: f.shapes.map(turnS) }))) // every step turns with it
     setImages(l => l.map(im => { if (im.layer === "background") return im; const c = T(im.x + im.width / 2, im.y + im.height / 2); return { ...im, x: c.x - im.width / 2, y: c.y - im.height / 2 } }))
     setPitchOffX(0); setPitchOffY(0)
     setVertical(v)
@@ -3395,11 +3992,169 @@ function TacticsBoard() {
     finally { setSelection(keepSelection) }
   }
   useEffect(() => { if (!exportNote) return; const t = setTimeout(() => setExportNote(""), 3200); return () => clearTimeout(t) }, [exportNote])
+
+  /* ── Steps ── */
+  const playRaf = useRef(0) // the animation frame while the move plays on the board
+  const cancelMakeRef = useRef(false)
+  /** Puts a step on the board */
+  const loadStep = (f: BoardStep) => { setPlayers(f.players); setArrows(f.arrows); setTexts(f.texts); setShapes(f.shapes); setCustomZones(f.customZones) }
+  const stopPlay = () => { cancelAnimationFrame(playRaf.current); playRaf.current = 0; setPlay(null) }
+  useEffect(() => () => cancelAnimationFrame(playRaf.current), [])
+  /** Shows another step (the one on screen is kept just as it is) */
+  const goStep = (i: number) => {
+    if (playRaf.current) stopPlay()
+    if (stepList.length < 2 || i === stepIdx || i < 0 || i >= stepList.length) return
+    setSteps(stepList); loadStep(stepList[i]); setStepIdx(i)
+    setSelection([]); setArrowDraft(null); setPolyDraft(null); editRef.current = null
+  }
+  /** Adds the next step after the one on screen: everyone makes the runs drawn for them and the ball follows its passes. One undo step. */
+  const addStep = () => {
+    const list = stepList.length > 1 ? stepList : [{ players, arrows, texts, shapes, customZones, note: "" }]
+    if (list.length >= MAX_STEPS) return
+    if (playRaf.current) stopPlay()
+    undoPoint()
+    const at = stepList.length > 1 ? stepIdx : 0, next = nextStep(list[at])
+    setSteps([...list.slice(0, at + 1), next, ...list.slice(at + 1)]); loadStep(next); setStepIdx(at + 1)
+    setSelection([]); setArrowDraft(null); setPolyDraft(null)
+  }
+  /** Deletes the step on screen; with one step left the board has no steps any more. One undo step. */
+  const deleteStep = () => {
+    if (stepList.length < 2) return
+    undoPoint()
+    const list = stepList.filter((_, i) => i !== stepIdx), i = Math.min(stepIdx, list.length - 1)
+    loadStep(list[i]); setSteps(list.length > 1 ? list : []); setStepIdx(list.length > 1 ? i : 0); setSelection([])
+  }
+  const setStepNote = (note: string) => { undoPoint("stepNote" + stepIdx); setSteps(l => l.map((f, i) => (i === stepIdx ? { ...f, note } : f))) }
+  /** Plays the move on the board, once */
+  const startPlay = () => {
+    if (!timeline || making) return
+    setSelection([]); setArrowDraft(null); setPolyDraft(null)
+    const t0 = performance.now(), total = timeline.total
+    const tick = () => {
+      const t = (performance.now() - t0) / 1000
+      if (t >= total) { playRaf.current = 0; setPlay(null); return }
+      setPlay({ t }); playRaf.current = requestAnimationFrame(tick)
+    }
+    playRaf.current = requestAnimationFrame(tick)
+  }
+  // The keyboard reads these when a key is pressed, so it always has the latest
+  const stepKeysRef = useRef<{ busy: () => boolean; stop: () => void; play: () => void; go: (d: number) => void }>({ busy: () => false, stop: () => {}, play: () => {}, go: () => {} })
+  stepKeysRef.current = {
+    busy: () => !!playRaf.current || !!making,
+    stop: () => { if (playRaf.current) stopPlay() },
+    play: () => (playRaf.current ? stopPlay() : startPlay()),
+    go: d => goStep(stepIdx + d),
+  }
+  /** Makes the move into a looping GIF or an MP4 video, frame by frame, exactly as the board shows it (the end card too) */
+  const exportMotion = async (fmt: "gif" | "mp4") => {
+    const tl = timeline, node = pitchRef.current
+    if (!tl || !node || making) return
+    if (fmt === "mp4" && typeof VideoEncoder === "undefined") { setExportNote("Video needs Chrome, Edge or Safari. GIF works everywhere."); return }
+    if (playRaf.current) stopPlay()
+    const keepSelection = selection
+    setSelection([]); setArrowDraft(null); setPolyDraft(null)
+    cancelMakeRef.current = false
+    setMaking({ fmt, done: 0 })
+    try {
+      if (!exportFontCSS) exportFontCSS = getFontEmbedCSS(document.body).catch(() => { exportFontCSS = null; return "" })
+      const fontEmbedCSS = await exportFontCSS
+      // The size: the export size, or the frame's own shape inside 1920 × 1080 (1080 × 1920 upright). A GIF is at most 1200 across.
+      const size = FRAME_SIZES[frameRatio]
+      const fit = frame.w >= frame.h ? Math.min(1920 / frame.w, 1080 / frame.h) : Math.min(1080 / frame.w, 1920 / frame.h)
+      let W = size ? size[0] : 2 * Math.round((frame.w * fit) / 2), H = size ? size[1] : 2 * Math.round((frame.h * fit) / 2)
+      if (fmt === "gif") { const g = Math.min(1, 1200 / Math.max(W, H)); W = Math.round(W * g); H = Math.round(H * g) }
+      const shot = async (t: number) => {
+        setPlay({ t })
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
+        return nodeToCanvas(node, {
+          fontEmbedCSS, canvasWidth: W, canvasHeight: H, pixelRatio: 1,
+          ...(view3d ? { backgroundColor: bgColor, style: { transform: `${UPRIGHT_3D} scale(0.86)`, transformOrigin: "center center" } } : {}),
+        })
+      }
+      const pixels = (c: HTMLCanvasElement) => c.getContext("2d")!.getImageData(0, 0, W, H).data
+      let blob: Blob
+      if (fmt === "gif") {
+        // When each frame shows: a step that stands still is one frame; movement and the end card are 20 frames a second
+        const times: { t: number; d: number }[] = []
+        for (const p of tl.parts) {
+          const moving = p.kind === "move" ? p.d : p.kind === "end" ? Math.min(p.d, END_CARD_ANIM) : 0, n = Math.round(moving * 20)
+          for (let j = 0; j < n; j++) times.push({ t: p.t + (j / n) * moving, d: moving / n })
+          if (p.d > moving) times.push({ t: p.t + moving + 0.001, d: p.d - moving })
+        }
+        // One palette for the whole GIF, from every step, the middle of every move and the end card
+        const samples: Uint8ClampedArray[] = []
+        for (const p of tl.parts) {
+          if (cancelMakeRef.current) throw new Error("cancelled")
+          samples.push(pixels(await shot(p.kind === "move" ? p.t + p.d / 2 : p.t + p.d - 0.001)))
+        }
+        const pal = gifPalette(samples), index = gifIndexer(pal), gif = gifWriter(W, H, pal)
+        let clock = 0
+        for (let j = 0; j < times.length; j++) {
+          if (cancelMakeRef.current) throw new Error("cancelled")
+          const idx = new Uint8Array(W * H)
+          index(pixels(await shot(times[j].t)), idx)
+          gif.add(idx, Math.round((clock + times[j].d) * 100) - Math.round(clock * 100)) // hundredths of a second, without rounding drift
+          clock += times[j].d
+          setMaking({ fmt, done: (j + 1) / times.length })
+        }
+        blob = new Blob([gif.finish()] as BlobPart[], { type: "image/gif" })
+      } else {
+        // H.264 where the browser has it (what X, Instagram and TikTok want), otherwise VP9
+        let config: VideoEncoderConfig | null = null
+        for (const codec of ["avc1.640028", "avc1.4d0028", "avc1.42e028", "avc1.420028", "vp09.00.40.08"]) {
+          const c: VideoEncoderConfig = { codec, width: W, height: H, bitrate: 8000000, framerate: 30, ...(codec.startsWith("avc1") ? { avc: { format: "avc" as const } } : {}) }
+          try { if ((await VideoEncoder.isConfigSupported(c)).supported) { config = c; break } } catch { /* try the next one */ }
+        }
+        if (!config) throw new Error("no video codec")
+        const frames: { data: Uint8Array; key: boolean }[] = []
+        let desc: Uint8Array | null = null, failed: unknown = null
+        const enc = new VideoEncoder({
+          output: (chunk, meta) => {
+            const d = meta?.decoderConfig?.description
+            if (d && !desc) desc = ArrayBuffer.isView(d) ? new Uint8Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength)) : new Uint8Array(d)
+            const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data); frames.push({ data, key: chunk.type === "key" })
+          },
+          error: e => { failed = e },
+        })
+        enc.configure(config)
+        const n = Math.ceil(tl.total * 30)
+        // A moment where nothing moves is drawn once and repeated
+        const still = (t: number) => { const p = tl.parts.find(x => t < x.t + x.d) ?? tl.parts[tl.parts.length - 1]; return p.kind === "hold" || (p.kind === "end" && t - p.t >= END_CARD_ANIM) ? p : null }
+        let canvas: HTMLCanvasElement | null = null, held: unknown = null
+        for (let j = 0; j < n; j++) {
+          if (cancelMakeRef.current || failed) break
+          const t = j / 30, st = still(t)
+          if (!canvas || !st || st !== held) canvas = await shot(t)
+          held = st
+          const vf = new VideoFrame(canvas, { timestamp: Math.round((j * 1000000) / 30), duration: Math.round(1000000 / 30) })
+          enc.encode(vf, { keyFrame: j % 60 === 0 }); vf.close()
+          while (enc.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 5))
+          setMaking({ fmt, done: (j + 1) / n })
+        }
+        if (!cancelMakeRef.current && !failed) await enc.flush()
+        enc.close()
+        if (cancelMakeRef.current) throw new Error("cancelled")
+        if (failed || frames.length === 0) throw failed ?? new Error("no frames")
+        blob = mp4File({ w: W, h: H, fps: 30, codec: config.codec, config: desc, frames })
+      }
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a"); a.href = url; a.download = `${safeFileName(title)}.${fmt}`; a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+      // The next export carries the next number
+      if (editorial && showEdition) { try { localStorage.setItem(EDITION_KEY, String(editionNo)) } catch { /* storage blocked */ } setEditionNo(editionNo + 1) }
+      ;(window as any).posthog?.capture("board_exported", { format: fmt, steps: tl.frames.length })
+    } catch (err) {
+      if (!cancelMakeRef.current) { console.error(err); setExportNote(fmt === "mp4" ? "Couldn't make the video in this browser. Try GIF." : "Couldn't make the GIF. Try again.") }
+    } finally {
+      setPlay(null); setMaking(null); setSelection(keepSelection)
+    }
+  }
   // The watermark's background fits its text (a handle can be any length)
   const wmTextRef = useRef<SVGTextElement>(null)
   const [wmWidth, setWmWidth] = useState(92)
   useLayoutEffect(() => {
-    const measure = () => { const w = wmTextRef.current?.getComputedTextLength(); if (w) setWmWidth(Math.ceil(w)) }
+    // The width the handle and PITCHSTUDIO really take, letter spacing included, so the PS disc never touches them
+    const measure = () => { const el = wmTextRef.current; let w = 0; try { w = el ? Math.max(el.getComputedTextLength(), el.getBBox().width) : 0 } catch { /* not drawn yet */ } if (w) setWmWidth(Math.ceil(w)) }
     measure()
     document.fonts?.ready.then(measure)
   }, [creatorHandle])
@@ -3408,6 +4163,7 @@ function TacticsBoard() {
   const getCanvasState = (): CanvasState => ({
     players, arrows, texts, shapes, images, title, bgColor, showPitch,
     customZones, settings: collectBoard().settings,
+    ...(stepList.length > 1 ? { steps: stepList, step: stepIdx } : {}),
   })
   const saveTemplate = (name: string) => {
     const t: Template = { id: uid(), name, data: getCanvasState(), published: false, createdAt: Date.now() }
@@ -3454,6 +4210,17 @@ function TacticsBoard() {
   const fgTexts = texts.filter(t => t.layer === "foreground")
   const bgImages = images.filter(i => i.layer === "background")
   const ovImages = images.filter(i => i.layer === "overlay")
+  /* ── What the board shows: the live board, or one moment of the move while it plays or is exported ── */
+  const view = play && timeline ? viewAt(timeline, play.t) : null
+  const shown = view ?? { players, arrows, texts, shapes, customZones, fade: new Map<string, number>() }
+  const legendArrows = stepList.length > 1 ? stepList.flatMap(f => f.arrows) : arrows // the legend covers every step, so it stays put while the move plays
+  const legendGhosts = (stepList.length > 1 ? stepList.flatMap(f => f.players) : players).some(p => p.ghost)
+  /** The part of the pitch in view: all of it, a half or a third */
+  const partRect = (() => {
+    const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
+    const [x1, x2] = focusEnd === "attack" ? [PW - part, PW] : [0, part]
+    return pitchRect(geo, x1, 0, x2, PH)
+  })()
 
   /* ─────────── RENDER ─────────── */
   return (
@@ -3621,13 +4388,17 @@ function TacticsBoard() {
             {headerMenu === "export" && (
               <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 flex flex-col"
                 style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-                {(["png", "jpeg", "pdf", "copy"] as const).map(f => (
-                  <button key={f} onClick={() => { setHeaderMenu(null); doExport(f) }}
-                    className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left uppercase font-semibold"
-                    style={{ letterSpacing: "0.06em", ...(f === "copy" ? { borderTop: `1px solid ${DS_BORDER}` } : {}) }}>
-                    {f === "copy" ? <Copy size={12} /> : <FileImage size={12} />} {f === "copy" ? "Copy image" : f}
-                  </button>
-                ))}
+                {(["png", "jpeg", "pdf", "gif", "mp4", "copy"] as const).map(f => {
+                  const off = (f === "gif" || f === "mp4") && stepList.length < 2 // a GIF or a video needs a move: 2 steps or more
+                  return (
+                    <button key={f} title={off ? "Add a step first, with + Step under the board" : undefined}
+                      onClick={() => { setHeaderMenu(null); if (off) setExportNote("Add a step first: + Step under the board."); else if (f === "gif" || f === "mp4") exportMotion(f); else doExport(f) }}
+                      className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left uppercase font-semibold"
+                      style={{ letterSpacing: "0.06em", opacity: off ? 0.45 : 1, ...(f === "gif" || f === "copy" ? { borderTop: `1px solid ${DS_BORDER}` } : {}) }}>
+                      {f === "copy" ? <Copy size={12} /> : f === "mp4" ? <Video size={12} /> : <FileImage size={12} />} {f === "copy" ? "Copy image" : f === "mp4" ? "Video (MP4)" : f}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -4594,6 +5365,25 @@ function TacticsBoard() {
               </div>
             )}
 
+            <button aria-expanded={boardGroups.animation}
+              onClick={() => setBoardGroups(g => ({ ...g, animation: !g.animation }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.animation ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Animation
+              {stepList.length > 1 && <span className="ml-auto px-1.5 py-0.5 rounded font-bold" style={{ background: PS_VOLT, color: "#0a0c0f", fontSize: 9, letterSpacing: "0.08em" }}>{stepList.length} STEPS</span>}
+            </button>
+            {boardGroups.animation && (
+              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                <Segmented label="Speed" value={animSpeed} onChange={v => { undoPoint(); setAnimSpeed(v) }}
+                  options={[["slow", "Slow"], ["normal", "Normal"], ["fast", "Fast"]]} />
+                <Segmented label="End card" value={endCard ? "on" : "off"} onChange={v => { undoPoint(); setEndCard(v === "on") }}
+                  options={[["on", "On"], ["off", "Off"]]} />
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Build a move with Steps under the board. + Step plays the runs and passes you've drawn, so the next step starts where they end. Numbered lines play in order. Play shows the move here; Export makes it a GIF or an MP4 video, with your seal and handle on the end card.</p>
+              </div>
+            )}
             <button aria-expanded={boardGroups.canvas}
               onClick={() => setBoardGroups(g => ({ ...g, canvas: !g.canvas }))}
               className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
@@ -4709,6 +5499,12 @@ function TacticsBoard() {
                   onPointerDownCapture={e => { if (tool === "marker" || tool === "ball") { mouseDownPosRef.current = { x: e.clientX, y: e.clientY }; hasDraggedRef.current = false } }}
                   onClickCapture={e => { if (tool === "marker" || tool === "ball") { e.stopPropagation(); onSVGClick(e as unknown as React.PointerEvent) } }}
                 >
+                  {(() => {
+                  // While the move plays, everything below draws that moment of it, with the same drawing code as the board
+                  const { players, arrows, shapes, customZones, fade: fadeOf } = shown
+                  const pieceMap = new Map(players.map(p => [p.id, p]))
+                  const bgTexts = shown.texts.filter(t => t.layer === "background"), fgTexts = shown.texts.filter(t => t.layer === "foreground")
+                  return (<>
                   {/* 1. Canvas background (it also fills a frame that reaches past the canvas) */}
                   <rect x={Math.min(0, frame.x)} y={Math.min(0, frame.y)}
                     width={Math.max(CW, frame.x + frame.w) - Math.min(0, frame.x)} height={Math.max(CH, frame.y + frame.h) - Math.min(0, frame.y)} fill={bgColor} />
@@ -4733,13 +5529,13 @@ function TacticsBoard() {
 
                   {/* 3. Background texts (behind pitch, in margins) */}
                   {bgTexts.map(t => (
-                    <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
+                    <g key={t.id} opacity={fadeOf.get(t.id)}><TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
                       startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
                       setSel={setSel} tool={tool} updT={updT} setTool={setTool}
                       isSel={isSel}
                       onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])}
-                      onMenu={e => openMenu(e, { kind: "text", id: t.id }, t.locked)} />
+                      onMenu={e => openMenu(e, { kind: "text", id: t.id }, t.locked)} /></g>
                   ))}
 
                   {/* 4. Pitch group (translated to canvas offset + user drag offset) */}
@@ -4756,7 +5552,7 @@ function TacticsBoard() {
                         {customZones.map(z => {
                           const isSelZ = isSel(z.id)
                           return (
-                            <g key={z.id}
+                            <g key={z.id} opacity={fadeOf.get(z.id)}
                               style={{ cursor: tool === "select" && !z.locked ? "move" : "default" }}
                               onClick={e => {
                                 if (tool !== "select" || z.locked) return // other tools draw on top of the zone
@@ -4854,7 +5650,7 @@ function TacticsBoard() {
 
                   {/* 5. Shapes */}
                   {shapes.map(s => (
-                    <g key={s.id}
+                    <g key={s.id} opacity={fadeOf.get(s.id)}
                       onPointerDown={e => { if (s.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } startDrag(e, "shape", s.id) }}
                       onClick={e => {
                         if (s.locked) return
@@ -4950,7 +5746,7 @@ function TacticsBoard() {
                     const d = arrowPath(e.x1, e.y1, e.x2, e.y2, a.cpx, a.cpy)
                     const mid = curveAt(e.x1, e.y1, a.cpx, a.cpy, e.x2, e.y2, 0.5)
                     return (
-                      <g key={a.id}
+                      <g key={a.id} opacity={fadeOf.get(a.id)}
                         onPointerDown={e => { if (a.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } startDrag(e, "arrow", a.id) }}
                         onClick={e => {
                           if (a.locked) return
@@ -5031,13 +5827,13 @@ function TacticsBoard() {
 
                   {/* 10. Foreground texts (on top of everything) */}
                   {fgTexts.map(t => (
-                    <TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
+                    <g key={t.id} opacity={fadeOf.get(t.id)}><TextSVG key={t.id} t={t} sel={sel} editingText={editingText}
                       setEditingText={setEditingText} startDrag={(e) => startDrag(e, "text", t.id, t.x, t.y)}
                       startResize={(e: React.PointerEvent) => { e.stopPropagation(); dragRef.current = { kind: "resizeText", id: t.id, ox: 0, oy: 0 } }}
                       setSel={setSel} tool={tool} updT={updT} setTool={setTool}
                       isSel={isSel}
                       onShiftClick={() => setSelection(prev => isSel(t.id) ? prev.filter(s => s.id !== t.id) : [...prev, { kind: "text", id: t.id }])}
-                      onMenu={e => openMenu(e, { kind: "text", id: t.id }, t.locked)} />
+                      onMenu={e => openMenu(e, { kind: "text", id: t.id }, t.locked)} /></g>
                   ))}
 
                   {/* 11. Players, ✕ markers and the ball */}
@@ -5051,7 +5847,7 @@ function TacticsBoard() {
                     const numFontSize = Math.max(10 * s, Math.min(18 * s * labelScale, r * (labelScale > 1 ? 0.9 : 0.8)) * Math.min(1, 3 / Math.max(3, numberText.length)))
                     const ringW = (tokenStyle === "minimal" ? 1.5 : 3) * s // minimal pieces are flat: a thin ring and no drop shadow
                     return (
-                      <g key={p.id} transform={`translate(${p.x},${p.y})`} opacity={p.ghost ? 0.45 : undefined}
+                      <g key={p.id} transform={`translate(${p.x},${p.y})`} opacity={p.ghost ? 0.45 * (fadeOf.get(p.id) ?? 1) : fadeOf.get(p.id)}
                         onPointerDown={e => {
                           if (p.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } // locked: the press goes through to the board
                           if (tool === "homePlayer" || tool === "awayPlayer") {
@@ -5173,6 +5969,12 @@ function TacticsBoard() {
                       fill="rgba(124,92,255,0.1)" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="5,3" style={{ pointerEvents: "none" }} />
                   )}
 
+                  {/* The step on screen, "2/3" with its note, in the top corner (the editorial frame puts it in its slate) */}
+                  {stepList.length > 1 && !editorial && (
+                    <StepTag x={frame.x + 12 * sealK} y={frame.y + 8 * sealK} k={sealK * 0.85}
+                      n={(view ? view.step : stepIdx) + 1} of={stepList.length} note={(view ? view.note : stepList[stepIdx]?.note ?? "").trim()} fade={view ? view.noteFade : 1} />
+                  )}
+
                   {/* Team legend: the kit and name of each named team, bottom left */}
                   {!editorial && (homeName.trim() !== "" || awayName.trim() !== "") && (
                     <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x},${frame.y + frame.h}) scale(${sealK})`}>
@@ -5197,22 +5999,24 @@ function TacticsBoard() {
                   {editorial && (() => {
                     const hk = kitOf("home"), ak = kitOf("away")
                     const kinds = new Map<string, LegendItem>()
-                    for (const a of arrows) {
+                    for (const a of legendArrows) {
                       const kd: LineKind = a.kind ?? (a.dash === "dashed" ? "run" : "pass")
                       if (!kinds.has(kd)) kinds.set(kd, { kind: kd, color: a.color, label: LINE_KINDS.find(([v]) => v === kd)?.[1] ?? kd })
                     }
                     const legend: LegendItem[] = [...kinds.values()]
-                    if (players.some(p => p.ghost)) legend.push({ kind: "ghost", color: "#9ca3af", label: "Was / will be" })
+                    if (legendGhosts) legend.push({ kind: "ghost", color: "#9ca3af", label: "Was / will be" })
                     return (
                       <EditorialFrame frame={frame} k={sealK} ink={inkOn(bgColor)} title={edBoard} kicker={kicker.trim()}
                         strip={edStrip ? { home: { name: homeName, score: homeScore, pat: hk.pat, c1: hk.c1, c2: hk.c2 }, away: { name: awayName, score: awayScore, pat: ak.pat, c1: ak.c1, c2: ak.c2 } } : null}
-                        note={scoreNote.trim()} caption={edLines} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? editionStamp(editionNo) : null} />
+                        note={scoreNote.trim()} caption={edLines} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? editionStamp(editionNo) : null}
+                        step={stepList.length > 1 ? { n: (view ? view.step : stepIdx) + 1, of: stepList.length, note: (view ? view.note : stepList[stepIdx]?.note ?? "").trim(), fade: view ? view.noteFade : 1 } : null}
+                        band={canvasMode !== "blank" && (focus === "half" || focus === "third") ? { color: bgColor, top: Math.min(frame.y + (edStrip && frame.w < 1100 ? 196 : 112) * sealK, partRect.y - 2), bottom: Math.max(frame.y + frame.h - (edLines.length ? 92 + (edLines.length - 1) * 22 : 60) * sealK, partRect.y + partRect.h + 2) } : null} />
                     )
                   })()}
 
                   {/* 13. Creator seal — always last, always visible: the PS seal, your handle (once you've chosen one) and PITCHSTUDIO */}
-                  <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x + frame.w},${frame.y + frame.h}) scale(${sealK})`}>
-                    <rect x={-14 - (wmWidth + 48)} y={-42} width={wmWidth + 48} height={28} rx={14} fill="rgba(0,0,0,0.62)" />
+                  <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x + frame.w - (editorial && cropMarks ? 10 * sealK : 0)},${frame.y + frame.h - (editorial && cropMarks ? 10 * sealK : 0)}) scale(${sealK})`}>
+                    <rect x={-14 - (wmWidth + 48)} y={-42} width={wmWidth + 48} height={28} rx={14} fill={inkOn(bgColor) === "#000000" ? "#1d1b16" : "rgba(0,0,0,0.62)"} />
                     <circle cx={-14 - (wmWidth + 48) + 17} cy={-28} r={11} fill={PS_VOLT} />
                     <text x={-14 - (wmWidth + 48) + 17} y={-27.5} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#0a0c0f"
                       style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.02em" }}>
@@ -5224,6 +6028,12 @@ function TacticsBoard() {
                       <tspan dx={creatorHandle ? 8 : 0} fill="rgba(255,255,255,0.95)" fontWeight="700" style={{ letterSpacing: "0.12em" }}>PITCHSTUDIO</tspan>
                     </text>
                   </g>
+                  {/* 14. The end card, at the end of a move */}
+                  {view && view.end !== null && (
+                    <EndCard frame={frame} k={sealK} t={view.end} handle={creatorHandle} bg={bgColor} ink={inkOn(bgColor)} edition={editorial && showEdition ? editionStamp(editionNo) : null} />
+                  )}
+                  </>)
+                  })()}
                 </svg>
               </div>
             </div>
@@ -5241,6 +6051,67 @@ function TacticsBoard() {
             <button onClick={fitToView} className="px-1.5 py-0.5 rounded text-xs hover:bg-white/10 transition-colors"
               style={{ color: TEXT_MUTED }}>Fit</button>
           </div>
+          {/* ── Steps: build a move one step at a time, and play it ── */}
+          {workspaceMode !== "brainstorm" && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-lg px-1.5 py-1 border"
+              style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", zIndex: 31 }} onPointerDown={e => e.stopPropagation()}>
+              {stepList.length > 1 && (
+                <>
+                  <button onClick={() => (play ? stopPlay() : startPlay())} disabled={!!making} title={play ? "Stop (P)" : "Play the move (P)"}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold transition-colors"
+                    style={{ background: play ? PS_VOLT : ACCENT_SOLID, color: play ? "#0a0c0f" : "#ffffff" }}>
+                    {play ? <Square size={10} fill="currentColor" /> : <Play size={11} fill="currentColor" />} {play ? "Stop" : "Play"}
+                  </button>
+                  <div className="w-px h-4 mx-1" style={{ background: "rgba(255,255,255,0.12)" }} />
+                </>
+              )}
+              <span className="text-[10px] font-semibold uppercase px-1" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Steps</span>
+              {(stepList.length > 1 ? stepList : [null]).map((_, i) => {
+                const on = (view ? view.step : stepIdx) === i
+                return (
+                  <button key={i} onClick={() => goStep(i)} aria-pressed={on} aria-label={`Step ${i + 1}`} title={`Step ${i + 1}`}
+                    className="w-6 h-6 rounded text-xs font-bold transition-colors"
+                    style={{ background: on ? ACCENT_SOLID : SURFACE_2, color: on ? "#ffffff" : TEXT_PRIMARY }}>
+                    {i + 1}
+                  </button>
+                )
+              })}
+              <button onClick={addStep} disabled={stepList.length >= MAX_STEPS || !!play}
+                title="Add the next step: everyone makes the runs you've drawn and the ball follows its passes"
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold transition-colors hover:brightness-110"
+                style={{ background: SURFACE_2, color: TEXT_PRIMARY, opacity: stepList.length >= MAX_STEPS || play ? 0.4 : 1 }}>
+                <Plus size={11} /> Step
+              </button>
+              {stepList.length > 1 && (
+                <>
+                  <input value={stepList[stepIdx]?.note ?? ""} maxLength={48} aria-label="Step note" placeholder={`Note for step ${stepIdx + 1}`}
+                    onChange={e => setStepNote(e.target.value)}
+                    className="w-40 rounded px-2 py-1 text-xs outline-none" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                  <button onClick={deleteStep} aria-label="Delete this step" title="Delete this step"
+                    className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: DS_ERROR }}>
+                    <Trash2 size={13} />
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {/* While the move plays, a click anywhere on the board stops it */}
+          {play && !making && <div className="absolute inset-0" style={{ zIndex: 30, cursor: "pointer" }} onPointerDown={e => { e.stopPropagation(); stopPlay() }} />}
+          {/* Making a GIF or a video: the board plays it frame by frame underneath */}
+          {making && (
+            <div className="fixed inset-0 flex items-center justify-center px-4" style={{ zIndex: 60, background: "rgba(0,0,0,0.5)" }}>
+              <div role="status" aria-live="polite" className="rounded-lg border shadow-xl w-72" style={{ background: SURFACE_1, borderColor: DS_BORDER, padding: "14px 16px" }}>
+                <p className="text-sm font-semibold" style={{ color: TEXT_PRIMARY, margin: 0 }}>Making your {making.fmt === "gif" ? "GIF" : "video"}…</p>
+                <div className="mt-3 rounded-full overflow-hidden" style={{ height: 6, background: SURFACE_2 }}>
+                  <div style={{ width: `${Math.round(making.done * 100)}%`, height: "100%", background: PS_VOLT, transition: "width 0.2s" }} />
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs" style={{ color: TEXT_MUTED }}>
+                  <span>{Math.round(making.done * 100)}%</span>
+                  <button onClick={() => { cancelMakeRef.current = true }} className="px-2 py-1 rounded hover:bg-white/10 transition-colors" style={{ color: TEXT_PRIMARY }}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Save problems, and the unsaved board that came back: shown over the canvas so they're visible on every screen size.
               The status region always stays in place, so screen readers announce whatever appears in it. */}
@@ -5413,6 +6284,7 @@ function TacticsBoard() {
               { header: "EDIT", rows: [["Undo","Ctrl+Z"],["Redo","Ctrl+Shift+Z"],["Duplicate","Ctrl+D"],["Copy","Ctrl+C"],["Paste","Ctrl+V"],["Delete","Del"]] },
               { header: "VIEW", rows: [["Zoom in","+"],["Zoom out","−"],["Fit to view","0"],["Deselect / cancel","Esc"]] },
               { header: "SELECTION", rows: [["Add to selection","Shift+click"],["Box-select","Drag on empty board"],["Select all","Ctrl+A"],["Nudge","Arrow keys"],["Nudge further","Shift+Arrow keys"],["More actions","Right-click"],["Pan canvas","Alt+drag"]] },
+              { header: "STEPS", rows: [["Play the move / stop","P"],["Previous step","["],["Next step","]"]] },
             ] as { header: string; rows: [string, string][] }[]).map(group => (
               <div key={group.header} style={{ marginBottom: 14 }}>
                 <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: TEXT_MUTED, textTransform: "uppercase", fontFamily: "'Inter', sans-serif" }}>{group.header}</p>
@@ -5444,6 +6316,7 @@ function TacticsBoard() {
             boardEpochRef.current += 1 // anything still saving belongs to the previous board
             setPlayers([]); setArrows([]); setTexts([])
             setShapes([]); setImages([]); setCustomZones([])
+            setSteps([]); setStepIdx(0)
             setNarrative("")
             setSel(null)
             bindBoard(null)
@@ -6640,6 +7513,10 @@ function LandingPage() {
         </button>
       </div>
 
+      {/* Small print */}
+      <p style={{ position: "absolute", bottom: 14, left: 0, right: 0, margin: 0, textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.35)", fontFamily: "'Inter', sans-serif", zIndex: 1, pointerEvents: "none" }}>
+        PitchStudio is not affiliated with any club, league or player.
+      </p>
       {showAuth && (
         <AuthModal
           onClose={() => setShowAuth(false)}
