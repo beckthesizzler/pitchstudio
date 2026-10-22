@@ -49,6 +49,7 @@ interface Player {
   kind?: "marker" | "ball" // a ✕ marker or the ball; no kind = a player (every board saved before this)
   locked?: boolean // locked pieces can't be clicked, moved or nudged until you right-click → Unlock (same on every element type)
   ghost?: boolean // a faded copy: where a player was, or where they'll be
+  team?: "home" | "away" // the team they play for (boards from before teams were kept go by the kit)
 }
 interface Arrow {
   id: string
@@ -135,6 +136,8 @@ interface BoardSettings {
   focus: "board" | "pitch" | "half" | "third" // the part of the board you see and export
   focusEnd: "attack" | "defend" // which end a half or a third shows
   frameRatio: "auto" | "16:9" | "4:5" | "1:1" | "9:16" // the shape of the export
+  homeFormation: string; homeShape: "base" | "in" | "out" // the formation the home team was last set to ("" = none), and its shape: lineup, in or out of possession
+  awayFormation: string; awayShape: "base" | "in" | "out"
 }
 /** What a saved board keeps in canvas_data (version 2). Version 1 boards only had the five element lists. */
 interface BoardData {
@@ -152,6 +155,7 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   awayPat: "solid", awayC2: "#1d4ed8", awayNum: "#ffffff", awayName: "",
   labelSize: "standard", nameStyle: "halo", tokenStyle: "classic",
   vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto",
+  homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
 }
 /** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
 function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
@@ -186,6 +190,10 @@ function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSet
     focus: oneOf(v.focus, ["board", "pitch", "half", "third"] as const, d.focus),
     focusEnd: oneOf(v.focusEnd, ["attack", "defend"] as const, d.focusEnd),
     frameRatio: oneOf(v.frameRatio, ["auto", "16:9", "4:5", "1:1", "9:16"] as const, d.frameRatio),
+    homeFormation: typeof v.homeFormation === "string" ? v.homeFormation.slice(0, 20) : d.homeFormation,
+    homeShape: oneOf(v.homeShape, ["base", "in", "out"] as const, d.homeShape),
+    awayFormation: typeof v.awayFormation === "string" ? v.awayFormation.slice(0, 20) : d.awayFormation,
+    awayShape: oneOf(v.awayShape, ["base", "in", "out"] as const, d.awayShape),
   }
 }
 /** Reads any saved board, old or new format, and fills in anything missing. */
@@ -731,6 +739,122 @@ const FORMATIONS: Formation[] = [
   },
 ]
 
+type TeamShape = BoardSettings["homeShape"]
+/** Every position code a formation uses: a player still named after one takes the new position's name */
+const POS_CODES = new Set(FORMATIONS.flatMap(f => f.positions.map(p => p.pos)))
+const IN_X: Record<string, number> = { GK: 140, CB: 330, LB: 560, RB: 560, LWB: 760, RWB: 760, DM: 470, CM: 640, LM: 720, RM: 720, LW: 830, RW: 830, AM: 740, SS: 800, ST: 900 }
+const OUT_X: Record<string, number> = { g: 95, d: 230, dm: 320, m: 390, a: 480, s: 560 }
+/** Where a formation's players stand: as written (lineup), in possession or out of possession. Home team, attacking to the right. */
+function shapePositions(f: Formation, shape: TeamShape): FormationPos[] {
+  if (shape === "base") return f.positions
+  const has = (...c: string[]) => f.positions.some(p => c.includes(p.pos))
+  const wide = has("LB", "RB", "LWB", "RWB"), dm = has("DM")
+  const top = (p: FormationPos) => p.y < 340
+  if (shape === "out") {
+    // A compact block: everyone drops into a line (wingers into midfield; a back three's wide mids into a back five), spread evenly across it
+    const line = (p: FormationPos) => p.pos === "GK" ? "g" : ["CB", "LB", "RB", "LWB", "RWB"].includes(p.pos) || (!wide && (p.pos === "LM" || p.pos === "RM")) ? "d"
+      : p.pos === "DM" ? "dm" : p.pos === "AM" || p.pos === "SS" ? "a" : p.pos === "ST" ? "s" : "m"
+    const out = f.positions.map(p => ({ ...p }))
+    for (const k of Object.keys(OUT_X)) {
+      const row = out.filter(p => line(p) === k).sort((a, b) => a.y - b.y), n = row.length
+      const flank = row.some(p => /^[LR]/.test(p.pos))
+      const span = n < 2 ? 0 : n === 2 ? (flank ? 400 : 180) : n === 3 ? (flank ? 420 : 260) : n === 4 ? 420 : 500
+      row.forEach((p, i) => { p.x = OUT_X[k]; p.y = n < 2 ? 340 : 340 - span / 2 + (i * span) / (n - 1) })
+    }
+    return out
+  }
+  // In possession: full-backs high and wide, wingers inside, centre-backs split, the team pushed up
+  const avg = (c: string) => { const xs = f.positions.filter(p => p.pos === c).map(p => p.x); return xs.reduce((a, b) => a + b, 0) / xs.length }
+  const cms = f.positions.filter(p => p.pos === "CM")
+  const six = !dm && cms.length === 3 ? cms.reduce((a, b) => (Math.abs(b.y - 340) < Math.abs(a.y - 340) ? b : a)) : null // three CMs and no DM: the middle one holds
+  return f.positions.map(p => {
+    if (p.pos === "GK") return { ...p, x: IN_X.GK, y: 340 }
+    let x = IN_X[p.pos] + (p.x - avg(p.pos)) * 0.5, y = p.y
+    if (p.pos === "CB") y = 340 + (y - 340) * 1.35
+    if (p.pos === "CM" && !dm) x = p === six ? 470 : cms.length === 3 ? 640 : 540
+    if (p.pos === "LB" || p.pos === "RB") y = top(p) ? 65 : 615
+    if (p.pos === "LWB" || p.pos === "RWB") y = top(p) ? 45 : 635
+    if (p.pos === "LM" || p.pos === "RM") y = wide ? (top(p) ? 200 : 480) : (top(p) ? 50 : 630)
+    if (p.pos === "LW" || p.pos === "RW") y = top(p) ? 195 : 485
+    return { ...p, x: Math.min(960, x), y: Math.max(40, Math.min(640, y)) }
+  })
+}
+/** Pairs each row with a different column at the lowest total cost (the Hungarian method). Needs rows ≤ columns. */
+function assign(cost: number[][]): number[] {
+  const n = cost.length, m = n ? cost[0].length : 0
+  const u = new Array(n + 1).fill(0), v = new Array(m + 1).fill(0), p = new Array(m + 1).fill(0), way = new Array(m + 1).fill(0)
+  for (let i = 1; i <= n; i++) {
+    p[0] = i
+    let j0 = 0
+    const minv = new Array(m + 1).fill(Infinity), used = new Array(m + 1).fill(false)
+    do {
+      used[j0] = true
+      const i0 = p[j0]
+      let delta = Infinity, j1 = 0
+      for (let j = 1; j <= m; j++) if (!used[j]) {
+        const cur = cost[i0 - 1][j - 1] - u[i0] - v[j]
+        if (cur < minv[j]) { minv[j] = cur; way[j] = j0 }
+        if (minv[j] < delta) { delta = minv[j]; j1 = j }
+      }
+      for (let j = 0; j <= m; j++) { if (used[j]) { u[p[j]] += delta; v[j] -= delta } else minv[j] -= delta }
+      j0 = j1
+    } while (p[j0] !== 0)
+    do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1 } while (j0)
+  }
+  const res = new Array(n).fill(-1)
+  for (let j = 1; j <= m; j++) if (p[j]) res[p[j] - 1] = j - 1
+  return res
+}
+/** For each point in a, the point in b it's paired with (closest overall, no two sharing), or -1 when b runs out */
+function matchPoints(a: { x: number; y: number }[], b: { x: number; y: number }[]): number[] {
+  if (!a.length || !b.length) return a.map(() => -1)
+  const d = (p: { x: number; y: number }, q: { x: number; y: number }) => (p.x - q.x) ** 2 + (p.y - q.y) ** 2
+  if (a.length <= b.length) return assign(a.map(p => b.map(q => d(p, q))))
+  const res = a.map(() => -1)
+  assign(b.map(q => a.map(p => d(p, q)))).forEach((i, j) => { res[i] = j })
+  return res
+}
+/** One formation's spots paired with another's: as close as possible, keeping defenders in defence and each side on its side (a left-back becomes a left wing-back) */
+function matchSlots(from: FormationPos[], to: FormationPos[]): number[] {
+  const role = (pos: string) => [pos === "GK" ? 0 : /B$/.test(pos) ? 1 : /^(DM|CM|LM|RM)$/.test(pos) ? 2 : 3, pos[0] === "L" ? 0 : pos[0] === "R" ? 2 : 1]
+  return assign(from.map(p => to.map(q => {
+    const [g1, s1] = role(p.pos), [g2, s2] = role(q.pos)
+    return (p.x - q.x) ** 2 + (p.y - q.y) ** 2 + 30000 * (Math.abs(g1 - g2) + Math.abs(s1 - s2))
+  })))
+}
+/** Team-sheet order: the goalkeeper, then each line from the back, right to left (home team, attacking to the right) */
+function sheetOrder(pts: { x: number; y: number }[]): number[] {
+  const lines: number[][] = []
+  for (const i of pts.map((_, i) => i).sort((i, j) => pts[i].x - pts[j].x)) {
+    const last = lines[lines.length - 1]
+    if (last && pts[i].x - pts[last[last.length - 1]].x < 80) last.push(i); else lines.push([i])
+  }
+  return lines.flatMap(l => l.sort((i, j) => pts[j].y - pts[i].y))
+}
+/** Reads a pasted lineup: one name per line, or separated by commas; a shirt number before or after a name is kept */
+function parseLineup(text: string): { name: string; num?: string }[] {
+  return text.split(/[\n,;]/).map(t => t.replace(/^\s*[-•*·]\s*/, "").trim()).filter(Boolean).map(t => {
+    const a = /^#?(\d{1,2})[.):\s-]+(.+)$/.exec(t)
+    if (a) return { name: a[2].trim(), num: a[1] }
+    const b = /^(.+?)[\s(#-]+(\d{1,2})\)?$/.exec(t)
+    if (b) return { name: b[1].trim(), num: b[2] }
+    return { name: t }
+  }).filter(e => e.name).map(e => ({ ...e, name: e.name.slice(0, 30) })).slice(0, 30)
+}
+/** A saved squad: a team's name, kit, and players' names and numbers in team-sheet order. Kept in this browser, for any board. */
+interface Squad { id: string; name: string; teamName: string; kit: { pat: KitPattern; c1: string; c2: string; num: string }; players: { name: string; num: string }[] }
+const SQUADS_KEY = "ps-squads"
+const readSquads = (): Squad[] => {
+  try {
+    const v = JSON.parse(localStorage.getItem(SQUADS_KEY) || "[]")
+    return Array.isArray(v) ? v.filter((q: Squad) => q && typeof q.id === "string" && typeof q.name === "string" && Array.isArray(q.players) && q.kit && KIT_PATTERNS.includes(q.kit.pat)) : []
+  } catch { return [] }
+}
+const writeSquads = (list: Squad[]) => {
+  try { localStorage.setItem(SQUADS_KEY, JSON.stringify(list)) }
+  catch { console.warn("Squads couldn't be kept on this device: browser storage is full") }
+}
+
 /* ─────────────────────────── Helpers ────────────────────────── */
 function arrowPath(x1: number, y1: number, x2: number, y2: number, cpx: number, cpy: number) {
   return `M ${x1} ${y1} Q ${cpx} ${cpy} ${x2} ${y2}`
@@ -1114,6 +1238,14 @@ function TacticsBoard() {
   const [boardGroups, setBoardGroups] = useState({ frame: true, formation: true, teams: true, labels: false, zones: false, pitch: false, canvas: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [selectedFormation, setSelectedFormation] = useState("4-3-3")
+  const [formShape, setFormShape] = useState<TeamShape>("base") // the shape the formation buttons use
+  const [homeFormation, setHomeFormation] = useState("")
+  const [homeShape, setHomeShape] = useState<TeamShape>("base")
+  const [awayFormation, setAwayFormation] = useState("")
+  const [awayShape, setAwayShape] = useState<TeamShape>("base")
+  const [lineupText, setLineupText] = useState("")
+  const [squads, setSquads] = useState<Squad[]>(readSquads)
+  const [squadId, setSquadId] = useState("")
 
   /* ── Auth ── */
   const [authUser, setAuthUser] = useState<import("@supabase/supabase-js").User | null>(null)
@@ -1389,7 +1521,7 @@ function TacticsBoard() {
       workspaceMode, canvasMode, showPitch, pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY,
       view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible,
       homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
-      vertical, focus, focusEnd, frameRatio,
+      vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
     }),
   })
   /** Puts a saved board's elements, zones and settings back on screen. */
@@ -1408,6 +1540,7 @@ function TacticsBoard() {
     setAwayPat(st.awayPat); setAwayC2(st.awayC2); setAwayNum(st.awayNum); setAwayName(st.awayName)
     setLabelSize(st.labelSize); setNameStyle(st.nameStyle); setTokenStyle(st.tokenStyle)
     setVertical(st.vertical); setFocus(st.focus); setFocusEnd(st.focusEnd); setFrameRatio(st.frameRatio)
+    setHomeFormation(st.homeFormation); setHomeShape(st.homeShape); setAwayFormation(st.awayFormation); setAwayShape(st.awayShape)
   }
   /** Opens a board exactly as it was saved. Older boards get today's defaults for anything they didn't store.
    *  boardId = null starts a new, unsaved board (used for templates). */
@@ -1480,7 +1613,8 @@ function TacticsBoard() {
   }, [title, narrative, players, arrows, texts, shapes, images, customZones, workspaceMode, canvasMode, showPitch,
       pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
       showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
-      labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, currentBoardId, authUser, saveTick])
+      labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
+      currentBoardId, authUser, saveTick])
 
   // Opening a fresh board: bring back the unsaved board from last time, if there is one
   const restoreCheckedRef = useRef(false)
@@ -2217,7 +2351,7 @@ function TacticsBoard() {
   }
   /** A faded copy of a player a few metres ahead (where they'll be) or behind (where they were), joined to them by a run. One undo step. */
   const addGhost = (p: Player, ahead: boolean) => {
-    const away = !wearsKit(p, kitOf("home"), HOME_COLORS.bg) && wearsKit(p, kitOf("away"), AWAY_COLORS.bg) // the away team attacks the other way
+    const away = teamOf(p) === "away" // the away team attacks the other way
     const g = geoRef.current, at = toPitch(g, p.x, p.y)
     const to = toCanvas(g, Math.max(0, Math.min(PW, at.x + (away ? -1 : 1) * (ahead ? 1 : -1) * 120)), at.y)
     const ghost: Player = { ...p, id: uid(), x: to.x, y: to.y, ghost: true, glow: false, locked: undefined }
@@ -2303,29 +2437,102 @@ function TacticsBoard() {
     )
   }
 
-  /* ── Add formation ── */
-  const addFormation = useCallback((formationName: string, team: "home" | "away") => {
-    const formation = FORMATIONS.find(f => f.name === formationName)
-    if (!formation) return
-    snapshot()
-    const newPlayers: Player[] = formation.positions.map(pos => {
-      // Pitch coordinates → board coordinates (the away team mirrors the home team), wherever the pitch is and whichever way it faces
-      const { x: cx, y: cy } = toCanvas(geoRef.current, team === "home" ? pos.x : PW - pos.x, pos.y)
-      const colors = team === "home"
-        ? { ...HOME_COLORS, ...teamKit("home") }
-        : { ...AWAY_COLORS, ...teamKit("away") }
-      return {
-        id: uid(),
-        x: cx,
-        y: cy,
-        name: pos.pos,
-        num: String(pos.num),
-        ...colors,
-        glow: false
-      }
+  /* ── Formations, lineups and squads ── */
+  /** Which team a piece plays for: its team, or on a board made before teams were kept, the kit it wears. Markers, the ball and ghosts play for no one. */
+  const teamOf = (p: Player): "home" | "away" | null =>
+    p.kind || p.ghost ? null : p.team ?? (wearsKit(p, kitOf("home"), HOME_COLORS.bg) ? "home" : wearsKit(p, kitOf("away"), AWAY_COLORS.bg) ? "away" : null)
+  /** A board point as the team sees the pitch (attacking to the right); the away team is turned round */
+  const teamPt = (team: "home" | "away", p: { x: number; y: number }) => {
+    const q = toPitch(geoRef.current, p.x, p.y)
+    return team === "away" ? { x: PW - q.x, y: PH - q.y } : q
+  }
+  const fromTeamPt = (team: "home" | "away", q: { x: number; y: number }) =>
+    toCanvas(geoRef.current, team === "away" ? PW - q.x : q.x, team === "away" ? PH - q.y : q.y)
+  const formationOf = (team: "home" | "away") =>
+    ({ f: FORMATIONS.find(x => x.name === (team === "home" ? homeFormation : awayFormation)), shape: team === "home" ? homeShape : awayShape })
+  const recordFormation = (team: "home" | "away", name: string, shape: TeamShape) => {
+    if (team === "home") { setHomeFormation(name); setHomeShape(shape) } else { setAwayFormation(name); setAwayShape(shape) }
+  }
+  /** Puts a team into a formation. The players already there move to the spot that suits them (the left-back stays the left-back),
+   *  keep their names and numbers, and anyone still named after a position takes the new one. Missing players are added. Gives the new piece list. */
+  const placeTeam = (list: Player[], f: Formation, team: "home" | "away", shape: TeamShape): Player[] => {
+    const target = shapePositions(f, shape)
+    const mine = list.filter(p => teamOf(p) === team && !p.locked)
+    const at = mine.map(p => teamPt(team, p))
+    const from = formationOf(team)
+    // Where each player stands now in the team's last formation, then that spot's place in the new one; without one, the nearest spot
+    const slotOf = from.f
+      ? (() => { const map = matchSlots(from.f.positions, f.positions); return matchPoints(at, shapePositions(from.f, from.shape)).map(i => (i < 0 ? -1 : map[i])) })()
+      : matchPoints(at, f.positions)
+    const slot = new Map(mine.map((p, i) => [p.id, slotOf[i]]))
+    const used = new Set(mine.map(p => p.num))
+    const freeNum = (n: number) => { let k = n; while (used.has(String(k))) k++; used.add(String(k)); return String(k) }
+    const added: Player[] = f.positions.flatMap((pos, j) => {
+      if (slotOf.includes(j)) return []
+      const t = fromTeamPt(team, target[j])
+      return [{ id: uid(), x: t.x, y: t.y, name: pos.pos, num: freeNum(pos.num), ...(team === "home" ? HOME_COLORS : AWAY_COLORS), ...teamKit(team), glow: false, team }]
     })
-    setPlayers(prev => [...prev, ...newPlayers])
-  }, [snapshot])
+    return [...list.map(p => {
+      const j = slot.get(p.id)
+      if (j === undefined || j < 0) return p
+      const t = fromTeamPt(team, target[j]), name = p.name.trim()
+      return { ...p, x: t.x, y: t.y, team, ...(name === "" || POS_CODES.has(name) ? { name: f.positions[j].pos } : {}) }
+    }), ...added]
+  }
+  /** The formation button: moves the team into the picked formation and shape, or adds it. One undo step. */
+  const setFormation = (formationName: string, team: "home" | "away") => {
+    const f = FORMATIONS.find(x => x.name === formationName)
+    if (!f) return
+    undoPoint()
+    setPlayers(placeTeam(players, f, team, formShape))
+    recordFormation(team, f.name, formShape)
+  }
+  /** A team in team-sheet order: goalkeeper, then each line from the back, right to left */
+  const lineupOf = (list: Player[], team: "home" | "away", f: Formation | undefined, shape: TeamShape): Player[] => {
+    const mine = list.filter(p => teamOf(p) === team)
+    const at = mine.map(p => teamPt(team, p))
+    if (!f) return sheetOrder(at).map(i => mine[i])
+    const spot = matchPoints(at, shapePositions(f, shape)), rank = new Map(sheetOrder(f.positions).map((j, k) => [j, k]))
+    return mine.map((p, i) => ({ p, k: spot[i] < 0 ? 100 + i : rank.get(spot[i])! })).sort((a, b) => a.k - b.k).map(e => e.p)
+  }
+  /** Names a team from a pasted list or a saved squad (a squad also brings its kit and team name). A team that isn't on the board yet is added first. One undo step. */
+  const applyLineup = (team: "home" | "away", entries: { name: string; num?: string }[], squad?: Squad) => {
+    if (!entries.length) return
+    undoPoint()
+    let list = players, { f, shape } = formationOf(team)
+    if (!list.some(p => teamOf(p) === team)) {
+      f = FORMATIONS.find(x => x.name === selectedFormation) ?? FORMATIONS[0]; shape = formShape
+      list = placeTeam(list, f, team, shape)
+      recordFormation(team, f.name, shape)
+    }
+    const order = lineupOf(list, team, f, shape)
+    const named = new Map(order.slice(0, entries.length).map((p, i) => [p.id, entries[i]]))
+    const cur = kitOf(team), base = team === "home" ? HOME_COLORS.bg : AWAY_COLORS.bg
+    setPlayers(list.map(p => {
+      const e = named.get(p.id)
+      const kitted = squad && teamOf(p) === team && wearsKit(p, cur, base) ? { ...p, ...kitProps(squad.kit) } : p // a goalkeeper's own kit stays
+      return e ? { ...kitted, name: e.name, ...(e.num ? { num: e.num } : {}) } : kitted
+    }))
+    if (squad) {
+      const k = squad.kit
+      if (team === "home") { setHomeColor(k.c1); setHomePat(k.pat); setHomeC2(k.c2); setHomeNum(k.num); setHomeName(squad.teamName) }
+      else { setAwayColor(k.c1); setAwayPat(k.pat); setAwayC2(k.c2); setAwayNum(k.num); setAwayName(squad.teamName) }
+    }
+  }
+  /** Keeps a team's names, numbers, kit and name as a squad in this browser, to use on any board. Saving under the same name replaces it. */
+  const saveSquad = (team: "home" | "away") => {
+    const { f, shape } = formationOf(team)
+    const order = lineupOf(players, team, f, shape)
+    if (!order.length) return
+    const teamName = (team === "home" ? homeName : awayName).trim()
+    const sq: Squad = { id: uid(), name: teamName || (team === "home" ? "Home squad" : "Away squad"), teamName, kit: kitOf(team), players: order.map(p => ({ name: p.name, num: p.num })) }
+    const next = [...squads.filter(x => x.name !== sq.name), sq]
+    setSquads(next); writeSquads(next); setSquadId(sq.id)
+  }
+  const deleteSquad = (id: string) => {
+    const next = squads.filter(x => x.id !== id)
+    setSquads(next); writeSquads(next); setSquadId("")
+  }
 
   /* ── SVG pointer events (unifies mouse, touch, and pen) ── */
   const onSVGMouseMove = useCallback((e: React.PointerEvent) => {
@@ -2445,11 +2652,11 @@ function TacticsBoard() {
     const nextNum = String(players.filter(q => !q.kind && !q.ghost).length + 1)
     if (tool === "homePlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...HOME_COLORS, ...teamKit("home"), glow: false, scale: 1 }
+      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...HOME_COLORS, ...teamKit("home"), glow: false, scale: 1, team: "home" }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "awayPlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...AWAY_COLORS, ...teamKit("away"), glow: false, scale: 1 }
+      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...AWAY_COLORS, ...teamKit("away"), glow: false, scale: 1, team: "away" }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "marker" || tool === "ball") {
       snapshot()
@@ -3506,19 +3713,80 @@ function TacticsBoard() {
             {boardGroups.formation && (
               <div className="p-3 flex flex-col gap-2" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                 <FormationPicker value={selectedFormation} onChange={setSelectedFormation} />
+                <Segmented label="Shape" value={formShape} onChange={setFormShape}
+                  options={[["base", "Lineup"], ["in", "In possession"], ["out", "Out of possession"]]} />
                 <div className="flex gap-1.5">
-                  <button onClick={() => { addFormation(selectedFormation, "home"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
-                    className="flex-1 py-1.5 rounded text-xs font-semibold"
-                    style={{ background: homeColor, color: inkOn(homeColor) }}>
-                    + Home
-                  </button>
-                  <button onClick={() => { addFormation(selectedFormation, "away"); (window as any).posthog?.capture("formation_used", { formation: selectedFormation }) }}
-                    className="flex-1 py-1.5 rounded text-xs font-semibold"
-                    style={{ background: awayColor, color: inkOn(awayColor) }}>
-                    + Away
-                  </button>
+                  {(["home", "away"] as const).map(team => {
+                    const there = players.some(p => teamOf(p) === team), c = team === "home" ? homeColor : awayColor, label = team === "home" ? "Home" : "Away"
+                    return (
+                      <button key={team} onClick={() => { setFormation(selectedFormation, team); (window as any).posthog?.capture("formation_used", { formation: selectedFormation, shape: formShape }) }}
+                        title={there ? `Move the ${label.toLowerCase()} team into ${selectedFormation}` : `Add the ${label.toLowerCase()} team in ${selectedFormation}`}
+                        className="flex-1 py-1.5 rounded text-xs font-semibold"
+                        style={{ background: c, color: inkOn(c) }}>
+                        {there ? `Set ${label}` : `+ ${label}`}
+                      </button>
+                    )
+                  })}
                 </div>
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>Elements can be placed anywhere, including canvas margins.</p>
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>A team already on the board moves into the new shape. Players keep their names and numbers, and lines and shapes on them follow.</p>
+                <div className="flex flex-col gap-2 pt-2 mt-1" style={{ borderTop: `1px solid ${DS_BORDER}` }}>
+                  <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Lineup</p>
+                  <textarea value={lineupText} onChange={e => setLineupText(e.target.value)} rows={4} aria-label="Lineup names"
+                    placeholder={"Paste up to 11 names, one per line or with commas. Goalkeeper first, then each line right to left. A shirt number next to a name is used too."}
+                    className="rounded px-2 py-1.5 text-xs outline-none resize-none"
+                    style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                  <div className="flex gap-1.5">
+                    {(["home", "away"] as const).map(team => (
+                      <button key={team} disabled={!lineupText.trim()} onClick={() => applyLineup(team, parseLineup(lineupText))}
+                        className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
+                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, opacity: lineupText.trim() ? 1 : 0.4 }}>
+                        Name {team === "home" ? "Home" : "Away"}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs font-semibold uppercase mt-1" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Squads</p>
+                  {squads.length > 0 ? (
+                    <>
+                      <div className="flex gap-1.5">
+                        <select value={squadId} onChange={e => setSquadId(e.target.value)} aria-label="Saved squad"
+                          className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none"
+                          style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
+                          <option value="">Pick a squad…</option>
+                          {squads.map(q => <option key={q.id} value={q.id}>{q.name} ({q.players.length})</option>)}
+                        </select>
+                        <button onClick={() => squadId && deleteSquad(squadId)} disabled={!squadId} aria-label="Delete squad" title="Delete squad"
+                          className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: DS_ERROR, opacity: squadId ? 1 : 0.4 }}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                      <div className="flex gap-1.5">
+                        {(["home", "away"] as const).map(team => (
+                          <button key={team} disabled={!squadId}
+                            onClick={() => { const q = squads.find(x => x.id === squadId); if (q) applyLineup(team, q.players, q) }}
+                            className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
+                            style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, opacity: squadId ? 1 : 0.4 }}>
+                            Use for {team === "home" ? "Home" : "Away"}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs" style={{ color: TEXT_MUTED }}>Save a team's names, numbers and kit to reuse them on any board.</p>
+                  )}
+                  <div className="flex gap-1.5">
+                    {(["home", "away"] as const).map(team => {
+                      const there = players.some(p => teamOf(p) === team)
+                      return (
+                        <button key={team} disabled={!there} onClick={() => saveSquad(team)}
+                          className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
+                          style={{ background: "transparent", color: TEXT_MUTED, border: `1px solid ${DS_BORDER}`, opacity: there ? 1 : 0.4 }}>
+                          Save {team === "home" ? "Home" : "Away"}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="text-xs" style={{ color: TEXT_MUTED }}>A squad is saved under its team name, in this browser.</p>
+                </div>
               </div>
             )}
 
@@ -3767,7 +4035,7 @@ function TacticsBoard() {
                 <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Add a full team, place players one at a time, or draw a zone.</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, padding: "0 12px", justifyContent: "center", pointerEvents: "auto" }}>
                   {([
-                    { label: "Add formation", action: () => addFormation(selectedFormation, "home") },
+                    { label: "Add formation", action: () => setFormation(selectedFormation, "home") },
                     { label: "Place a player", action: () => setTool("homePlayer") },
                     { label: "Draw a zone", action: () => setTool("zone") },
                   ] as { label: string; action: () => void }[]).map(({ label, action }) => (
