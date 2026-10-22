@@ -1175,6 +1175,367 @@ function renderShapePath(s: Shape, extra?: React.SVGProps<SVGElement>) {
 }
 
 /* ─────────────────────────── Template Modal ────────────────── */
+/* ─────────────────────────── The drop library ───────────────── */
+// Numbered, ready-made boards: a real situation, drawn once, to open and make your own. Each one opens in the editorial frame.
+type DropCat = "Build-up" | "Pressing" | "Defence" | "Attack" | "Transition" | "Set piece"
+const DROP_CATS: DropCat[] = ["Build-up", "Pressing", "Defence", "Attack", "Transition", "Set piece"]
+type Pt = [number, number] // a spot on the pitch: x along it (home attacks towards 1050), y across it (0 = home's left touchline), 10 units to the metre
+interface DropApi {
+  home: (f: string, dx?: number) => Record<number, Player>
+  away: (f: string, dx?: number) => Record<number, Player>
+  only: (ps: Record<number, Player>, nums: number[]) => void
+  mv: (p: Player, x: number, y: number) => void
+  ball: (x: number, y: number) => Player
+  pass: (a: Player, b: Player | Pt, o?: { bend?: number; step?: number }) => void
+  run: (a: Player, b: Player | Pt, o?: { bend?: number; step?: number }) => void
+  dribble: (a: Player, b: Player | Pt, o?: { bend?: number; step?: number }) => void
+  shot: (a: Player, b: Player | Pt, o?: { bend?: number; step?: number }) => void
+  ghost: (p: Player, x: number, y: number, ahead?: boolean) => Player
+  label: (x: number, y: number, text: string, w?: number) => void
+  zone: (x: number, y: number, w: number, h: number, label?: string) => void
+  link: (ps: Player[], closed?: boolean) => void
+  gap: (a: Player, b: Player) => void
+  small: (k: number) => void
+}
+interface Drop { no: number; name: string; cat: DropCat; blurb: string; style: "night" | "paper"; make: (d: DropApi) => void; view?: Partial<BoardSettings>; crop?: [number, number, number, number] } // view: the part of the pitch it opens on; crop: the part shown on its card (pitch coordinates)
+/** Draws a drop on a fresh board (new ids every time) */
+function buildDrop(drop: Drop): CanvasState {
+  const g = pitchGeo(drop.view?.vertical === true, 1, 0, 0)
+  const paper = drop.style === "paper"
+  const ink = paper ? "#1d1b16" : "#ffffff", hot = paper ? "#b45309" : PS_VOLT
+  const players: Player[] = [], arrows: Arrow[] = [], texts: TextBox[] = [], shapes: Shape[] = [], zones: CustomZone[] = []
+  const cv = (x: number, y: number) => toCanvas(g, x, y)
+  const squad = (side: "home" | "away", f: string, dx = 0) => {
+    const form = FORMATIONS.find(x => x.name === f)!
+    const out: Record<number, Player> = {}
+    for (const pos of form.positions) {
+      const c = cv((side === "home" ? pos.x : PW - pos.x) + dx, side === "home" ? pos.y : PH - pos.y)
+      const p: Player = { id: uid(), x: c.x, y: c.y, name: pos.pos, num: String(pos.num), ...(side === "home" ? HOME_COLORS : AWAY_COLORS), glow: false, team: side }
+      players.push(p); out[pos.num] = p
+    }
+    return out
+  }
+  const mv = (p: Player, x: number, y: number) => { const c = cv(x, y); p.x = c.x; p.y = c.y }
+  const joint = (a: Player, b: Player | Pt, kind: LineKind, o: { bend?: number; step?: number } = {}) => {
+    const B = Array.isArray(b) ? cv(b[0], b[1]) : { x: b.x, y: b.y }
+    const dx = B.x - a.x, dy = B.y - a.y, L = Math.hypot(dx, dy) || 1, bend = o.bend ?? 0
+    const run = kind === "run" || kind === "shot"
+    arrows.push({
+      id: uid(), x1: a.x, y1: a.y, x2: B.x, y2: B.y, cpx: (a.x + B.x) / 2 - (dy / L) * bend, cpy: (a.y + B.y) / 2 + (dx / L) * bend,
+      color: run ? hot : ink, strokeW: LINE_PRESET[kind].strokeW, dash: LINE_PRESET[kind].dash, label: "", twoWay: false, kind,
+      ...(o.step ? { step: o.step } : {}), fromId: a.id, ...(Array.isArray(b) ? {} : { toId: b.id }),
+    })
+  }
+  const api: DropApi = {
+    home: (f, dx = 0) => squad("home", f, dx),
+    away: (f, dx = 0) => squad("away", f, dx),
+    only: (ps, nums) => { for (const [n, p] of Object.entries(ps)) if (!nums.includes(+n)) { const i = players.indexOf(p); if (i >= 0) players.splice(i, 1) } },
+    mv,
+    ball: (x, y) => { const c = cv(x, y); const p: Player = { id: uid(), x: c.x, y: c.y, kind: "ball", name: "", num: "", bg: "#ffffff", fg: "#000000", ring: "#000000", glow: false, scale: 1 }; players.push(p); return p },
+    pass: (a, b, o) => joint(a, b, "pass", o), run: (a, b, o) => joint(a, b, "run", o),
+    dribble: (a, b, o) => joint(a, b, "dribble", o), shot: (a, b, o) => joint(a, b, "shot", o),
+    ghost: (p, x, y, ahead = false) => {
+      const c = cv(x, y), gh: Player = { ...p, id: uid(), x: c.x, y: c.y, ghost: true, glow: false }
+      players.splice(players.indexOf(p), 0, gh)
+      const [from, end] = ahead ? [p, gh] : [gh, p]
+      arrows.push({ id: uid(), x1: from.x, y1: from.y, x2: end.x, y2: end.y, cpx: (from.x + end.x) / 2, cpy: (from.y + end.y) / 2, color: ink, strokeW: 3, dash: "dashed", label: "", twoWay: false, kind: "run", fromId: from.id, toId: end.id })
+      return gh
+    },
+    label: (x, y, text, w = 260) => { const c = cv(x, y); texts.push({ id: uid(), x: c.x, y: c.y, text, fg: ink, bg: "transparent", border: "transparent", dash: false, size: 15, bold: true, width: w, layer: "foreground", noBox: true }) },
+    zone: (x, y, w, h, label = "") => { zones.push({ id: uid(), x, y, w, h, color: hot, opacity: 0.16, label }) },
+    link: (ps, closed = false) => {
+      shapes.push({ id: uid(), kind: "polygon", pts: ps.map(p => [p.x, p.y] as [number, number]), closed, ids: ps.map(p => p.id), x: 0, y: 0, w: 0, h: 0, fill: hot, fillOpacity: closed ? 0.16 : 0, stroke: hot, strokeW: closed ? 2 : 3, strokeDash: closed, label: "" })
+    },
+    small: k => { for (const p of players) if (!p.kind) p.scale = k },
+    gap: (a, b) => { arrows.push({ id: uid(), x1: a.x, y1: a.y, x2: b.x, y2: b.y, cpx: (a.x + b.x) / 2, cpy: (a.y + b.y) / 2, color: ink, strokeW: 2, dash: "dotted", label: "", twoWay: false, kind: "line", fromId: a.id, toId: b.id, dist: true }) },
+  }
+  drop.make(api)
+  const settings = settingsFrom({
+    pitchStyle: drop.style, bgColor: PITCH_LOOKS[drop.style].bg, editorial: true,
+    kicker: `Drop ${String(drop.no).padStart(2, "0")} · ${drop.cat}`, caption: drop.blurb, ...drop.view,
+  })
+  return { players, arrows, texts, shapes, images: [], title: drop.name, bgColor: settings.bgColor, showPitch: true, customZones: zones, settings }
+}
+const DROPS: Drop[] = [
+  {
+    no: 1, name: "Full-backs step inside", cat: "Build-up", style: "night",
+    blurb: "Both full-backs tuck into midfield, so three hold the middle and five attack the last line: a 2-3-5 on the ball.",
+    make: d => {
+      const h = d.home("4-3-3")
+      d.mv(h[5], 255, 255); d.mv(h[4], 255, 425); d.mv(h[3], 440, 225); d.mv(h[8], 440, 340); d.mv(h[2], 440, 455)
+      d.mv(h[11], 790, 95); d.mv(h[6], 700, 235); d.mv(h[9], 840, 340); d.mv(h[7], 700, 445); d.mv(h[10], 790, 585)
+      d.ghost(h[3], 270, 105); d.ghost(h[2], 270, 575)
+      d.pass(h[1], h[5], { step: 1 }); d.pass(h[5], h[3], { step: 2, bend: 24 }); d.pass(h[3], h[6], { step: 3 })
+      d.link([h[3], h[8], h[2]])
+      d.label(300, 20, "Full-backs step inside: three in midfield", 420)
+    },
+  },
+  {
+    no: 2, name: "The 3-2 box", cat: "Build-up", style: "night",
+    blurb: "Three at the back, two pivots and two tens: a box in midfield that always offers a pass between the lines.",
+    make: d => {
+      const h = d.home("3-2-4-1")
+      d.mv(h[5], 255, 150); d.mv(h[3], 255, 530); d.mv(h[6], 410, 270); d.mv(h[8], 410, 410)
+      d.pass(h[1], h[4], { step: 1 }); d.pass(h[4], h[6], { step: 2 }); d.pass(h[6], h[10], { step: 3, bend: -30 }); d.pass(h[10], h[9], { step: 4 })
+      d.link([h[5], h[4], h[3]]); d.link([h[6], h[8], h[7], h[10]], true)
+      d.label(200, 40, "Back three", 200); d.label(330, 610, "The box: two pivots, two tens", 360)
+    },
+  },
+  {
+    no: 3, name: "Goalkeeper as the extra man", cat: "Build-up", style: "paper",
+    blurb: "Against two strikers, the keeper and two centre-backs make it three against two. Play round the press.",
+    make: d => {
+      const h = d.home("4-3-3"); d.away("4-4-2", 60)
+      d.mv(h[5], 190, 175); d.mv(h[4], 190, 505); d.mv(h[3], 320, 62); d.mv(h[2], 320, 618); d.mv(h[8], 440, 340)
+      d.pass(h[1], h[5], { step: 1, bend: 18 }); d.pass(h[5], h[3], { step: 2, bend: 20 }); d.pass(h[3], h[6], { step: 3 })
+      d.link([h[1], h[5], h[4]], true)
+      d.label(30, 560, "Keeper + 2 centre-backs\\nv 2 strikers: 3 v 2", 240)
+    },
+  },
+  {
+    no: 4, name: "High press trap", cat: "Pressing", style: "night",
+    blurb: "Let them play to the full-back, then close the pass back and squeeze the touchline.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-2-3-1")
+      d.only(a, [1, 5, 4, 3, 2, 6, 8])
+      d.mv(h[1], 470, 340); d.mv(h[3], 560, 95); d.mv(h[5], 575, 245); d.mv(h[4], 575, 435); d.mv(h[2], 560, 585)
+      d.mv(h[6], 690, 230); d.mv(h[8], 690, 340); d.mv(h[7], 705, 450)
+      d.mv(h[11], 870, 160); d.mv(h[9], 890, 345); d.mv(h[10], 880, 520)
+      d.mv(a[1], 975, 340); d.mv(a[5], 860, 250); d.mv(a[4], 860, 430); d.mv(a[2], 840, 85); d.mv(a[3], 795, 590); d.mv(a[6], 745, 300); d.mv(a[8], 745, 405)
+      d.ball(768, 612)
+      d.pass(a[4], a[3], { bend: 40 })
+      d.run(h[10], [800, 600], { step: 1, bend: -10 }); d.run(h[9], [840, 415], { step: 2 }); d.run(h[7], [750, 500], { step: 3, bend: -20 })
+      d.zone(790, 490, 260, 190, "Trap")
+      d.label(450, 30, "Trigger: the pass to the full-back", 380)
+    },
+  },
+  {
+    no: 5, name: "Mid-block 4-4-2", cat: "Defence", style: "night",
+    blurb: "Two banks of four, close together, strikers set to send them wide. Nothing through the middle.",
+    make: d => {
+      const h = d.home("4-4-2"), a = d.away("4-3-3")
+      d.only(a, [2, 8, 6, 9, 5])
+      d.mv(h[3], 330, 150); d.mv(h[5], 330, 270); d.mv(h[4], 330, 410); d.mv(h[2], 330, 530)
+      d.mv(h[11], 475, 170); d.mv(h[8], 475, 285); d.mv(h[6], 475, 395); d.mv(h[7], 475, 510)
+      d.mv(h[9], 620, 270); d.mv(h[10], 620, 410)
+      d.mv(a[2], 720, 70); d.mv(a[8], 760, 250); d.mv(a[6], 760, 440); d.mv(a[9], 880, 340); d.mv(a[5], 860, 190)
+      d.ball(690, 70)
+      d.link([h[3], h[5], h[4], h[2]]); d.link([h[11], h[8], h[6], h[7]]); d.link([h[9], h[10]])
+      d.gap(h[5], h[8]); d.gap(h[8], h[9])
+      d.zone(540, 0, 220, 150, "Send them wide")
+      d.label(470, 610, "Two compact banks of four", 330)
+    },
+  },
+  {
+    no: 6, name: "Low block 5-4-1", cat: "Defence", style: "paper",
+    blurb: "Five across the box, four in front of them, one up top. Hold the line, and protect the edge of the area.",
+    make: d => {
+      const h = d.home("5-4-1")
+      d.mv(h[3], 235, 90); d.mv(h[5], 190, 215); d.mv(h[4], 180, 340); d.mv(h[6], 190, 465); d.mv(h[2], 235, 590)
+      d.mv(h[11], 360, 150); d.mv(h[8], 340, 275); d.mv(h[7], 340, 405); d.mv(h[10], 360, 530)
+      d.mv(h[9], 520, 340)
+      d.link([h[3], h[5], h[4], h[6], h[2]]); d.link([h[11], h[8], h[7], h[10]])
+      d.zone(165, 138, 125, 404)
+      d.label(30, 20, "5 + 4 + 1: the box stays closed", 330)
+    },
+  },
+  {
+    no: 7, name: "Overlap on the wing", cat: "Attack", style: "night",
+    blurb: "The winger cuts inside, the full-back runs past on the outside: two against one on the touchline.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-4-2")
+      d.only(a, [3, 5, 4, 8, 6, 11])
+      d.mv(h[10], 720, 505); d.mv(h[2], 600, 600); d.mv(h[7], 610, 410); d.mv(h[9], 850, 350)
+      d.mv(a[11], 700, 580); d.mv(a[3], 850, 545); d.mv(a[5], 920, 430); d.mv(a[4], 920, 260); d.mv(a[8], 780, 330); d.mv(a[6], 780, 430)
+      d.dribble(h[10], [790, 440], { step: 1 }); d.run(h[2], [920, 630], { step: 2, bend: -14 }); d.pass(h[10], [920, 630], { step: 3, bend: -30 })
+      d.ghost(h[2], 920, 630, true)
+      d.label(380, 20, "The winger drives in, the full-back goes round", 440)
+    },
+  },
+  {
+    no: 8, name: "Underlap into the half-space", cat: "Attack", style: "night",
+    blurb: "The full-back runs inside the winger, between centre-back and full-back. The half-space is where defences break.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-4-2")
+      d.only(a, [3, 2, 5, 4, 8, 6])
+      d.mv(h[11], 770, 60); d.mv(h[3], 640, 215); d.mv(h[6], 590, 340); d.mv(h[9], 870, 345)
+      d.mv(a[2], 850, 85); d.mv(a[5], 830, 275); d.mv(a[4], 830, 400); d.mv(a[3], 810, 540); d.mv(a[8], 720, 280); d.mv(a[6], 720, 410)
+      d.zone(740, 140, 310, 120, "Half-space")
+      d.run(h[3], [900, 200], { step: 1, bend: 12 }); d.pass(h[6], [900, 200], { step: 2, bend: 22 })
+      d.ghost(h[3], 900, 200, true)
+      d.label(380, 590, "Run between centre-back and full-back", 420)
+    },
+  },
+  {
+    no: 9, name: "Half-space overload", cat: "Attack", style: "paper",
+    blurb: "Three players in a triangle on one side. Keep the distances short and the passes quick.",
+    make: d => {
+      const h = d.home("4-3-3")
+      d.mv(h[11], 740, 80); d.mv(h[3], 600, 175); d.mv(h[6], 700, 230); d.mv(h[8], 640, 340); d.mv(h[9], 840, 300)
+      d.link([h[11], h[6], h[3]], true); d.gap(h[6], h[3])
+      d.pass(h[3], h[6], { step: 1 }); d.pass(h[6], h[11], { step: 2, bend: 14 }); d.pass(h[11], h[9], { step: 3, bend: 24 })
+      d.label(380, 590, "Triangle: short passes, short distances", 420)
+    },
+  },
+  {
+    no: 10, name: "Switch of play", cat: "Attack", style: "night",
+    blurb: "Draw them to one side, then change the point of attack. The far winger has the whole flank.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-4-2")
+      d.only(a, [3, 5, 4, 2, 8, 6])
+      d.mv(h[3], 560, 90); d.mv(h[11], 700, 85); d.mv(h[6], 640, 195); d.mv(h[8], 600, 330); d.mv(h[7], 560, 460); d.mv(h[5], 430, 250); d.mv(h[4], 430, 430); d.mv(h[2], 500, 590)
+      d.mv(h[10], 780, 610); d.mv(h[9], 840, 380)
+      d.mv(a[8], 740, 150); d.mv(a[6], 740, 260); d.mv(a[3], 880, 560); d.mv(a[5], 900, 190); d.mv(a[4], 900, 300); d.mv(a[2], 860, 90)
+      d.pass(h[11], h[6], { step: 1 }); d.pass(h[6], h[8], { step: 2 }); d.pass(h[8], h[10], { step: 3, bend: -40 }); d.dribble(h[10], [930, 600], { step: 4 })
+      d.label(360, 20, "Overload on the left, then switch right", 420)
+    },
+  },
+  {
+    no: 11, name: "False nine drop", cat: "Attack", style: "night",
+    blurb: "The striker drops deep. The centre-back must follow or leave a gap, and the wingers run in behind.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-4-2")
+      d.only(a, [5, 4, 3, 2, 8, 6])
+      d.mv(h[9], 700, 340); d.mv(h[11], 740, 95); d.mv(h[10], 740, 585); d.mv(h[6], 520, 230); d.mv(h[7], 520, 450); d.mv(h[8], 470, 340)
+      d.mv(a[5], 780, 285); d.mv(a[4], 780, 395); d.mv(a[3], 820, 180); d.mv(a[2], 820, 500); d.mv(a[8], 620, 285); d.mv(a[6], 620, 395)
+      d.ghost(h[9], 890, 340, false)
+      d.pass(h[8], h[9], { step: 1 }); d.run(h[11], [920, 230], { step: 2, bend: -14 }); d.run(h[10], [920, 450], { step: 2, bend: 14 }); d.pass(h[9], [920, 230], { step: 3, bend: 28 })
+      d.label(380, 590, "Striker drops: who follows?", 360)
+    },
+  },
+  {
+    no: 12, name: "Counter-attack 3 v 2", cat: "Transition", style: "night",
+    blurb: "Win it, go forward at once. Three runners against two defenders, and the middle man decides.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-4-2")
+      d.only(h, [8, 11, 9, 10, 5, 4]); d.only(a, [5, 4])
+      d.mv(h[8], 470, 340); d.mv(h[11], 640, 130); d.mv(h[9], 650, 340); d.mv(h[10], 640, 550); d.mv(h[5], 300, 250); d.mv(h[4], 300, 430)
+      d.mv(a[5], 860, 295); d.mv(a[4], 860, 385)
+      d.dribble(h[8], [600, 340], { step: 1 }); d.run(h[11], [900, 130], { step: 2 }); d.run(h[10], [900, 550], { step: 2 }); d.run(h[9], [800, 340], { step: 2 })
+      d.label(250, 20, "Win it, then run: three v two", 360)
+    },
+  },
+  {
+    no: 13, name: "Rest defence 3-2", cat: "Transition", style: "paper",
+    blurb: "While five attack, five stay back in a 3-2 shape, ready for the moment the ball is lost.",
+    make: d => {
+      const h = d.home("4-3-3")
+      d.mv(h[1], 100, 340); d.mv(h[5], 430, 190); d.mv(h[4], 430, 340); d.mv(h[2], 430, 490); d.mv(h[8], 540, 270); d.mv(h[3], 540, 410)
+      d.mv(h[6], 760, 150); d.mv(h[7], 780, 530); d.mv(h[11], 840, 90); d.mv(h[10], 840, 590); d.mv(h[9], 900, 340)
+      d.link([h[5], h[4], h[2]]); d.link([h[8], h[3]]); d.zone(380, 120, 220, 440, "Rest defence")
+      d.label(250, 20, "3 + 2 stay back; 5 attack", 340)
+    },
+  },
+  {
+    no: 14, name: "Gegenpress trigger", cat: "Pressing", style: "night",
+    blurb: "The ball is lost. Everyone near it closes at once, and the passes out are cut before they start.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-3-3")
+      d.only(h, [8, 6, 7, 9, 11, 10, 5, 4]); d.only(a, [8, 6, 7, 5, 4])
+      d.mv(h[8], 580, 340); d.mv(h[6], 600, 215); d.mv(h[7], 610, 465); d.mv(h[9], 810, 290); d.mv(h[11], 690, 90); d.mv(h[10], 690, 590)
+      d.mv(h[5], 440, 260); d.mv(h[4], 440, 420)
+      d.mv(a[8], 710, 340); d.mv(a[6], 790, 235); d.mv(a[7], 790, 445); d.mv(a[5], 880, 300); d.mv(a[4], 880, 380)
+      d.ball(690, 340)
+      d.run(h[8], [655, 340], { step: 1 }); d.run(h[6], [665, 285], { step: 1 }); d.run(h[7], [670, 395], { step: 1 }); d.run(h[9], [760, 305], { step: 2 })
+      d.zone(620, 230, 160, 220)
+      d.label(250, 590, "Everyone near the ball closes in five seconds", 420)
+    },
+  },
+  {
+    no: 15, name: "Zone 14", cat: "Attack", style: "night",
+    blurb: "The pocket in front of the box, between the lines. Find the player there and the defence has to choose.",
+    make: d => {
+      const h = d.home("4-2-3-1"), a = d.away("4-4-2")
+      d.only(a, [5, 4, 3, 2, 11, 8, 6, 7])
+      d.mv(h[10], 830, 340); d.mv(h[11], 760, 90); d.mv(h[7], 760, 590); d.mv(h[9], 940, 340); d.mv(h[6], 580, 270); d.mv(h[8], 580, 410)
+      d.mv(a[5], 920, 280); d.mv(a[4], 920, 400); d.mv(a[3], 900, 150); d.mv(a[2], 900, 530)
+      d.mv(a[8], 750, 205); d.mv(a[6], 750, 475); d.mv(a[11], 810, 160); d.mv(a[7], 810, 520)
+      d.zone(780, 250, 120, 180, "Zone 14")
+      d.pass(h[6], h[10], { step: 1, bend: 20 }); d.pass(h[10], h[9], { step: 2 }); d.run(h[11], [960, 210], { step: 2 })
+      d.label(400, 20, "Between the lines, in front of the box", 400)
+    },
+  },
+  {
+    no: 16, name: "Corner: near-post flick", cat: "Set piece", style: "paper",
+    blurb: "A fast ball to the near post, a flick on, and runners attacking the space at the back.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-4-2")
+      d.only(h, [3, 9, 5, 4, 6, 8]); d.only(a, [1, 3, 2, 5, 4, 8, 6])
+      d.mv(h[3], 1040, 12); d.mv(h[9], 985, 282); d.mv(h[5], 930, 340); d.mv(h[4], 900, 440); d.mv(h[6], 890, 190); d.mv(h[8], 860, 350)
+      d.mv(a[1], 1040, 340); d.mv(a[3], 1040, 255); d.mv(a[2], 1040, 425); d.mv(a[5], 990, 340); d.mv(a[4], 990, 400); d.mv(a[8], 950, 225); d.mv(a[6], 955, 470)
+      d.ball(1050, 0)
+      d.pass(h[3], h[9], { step: 1, bend: 20 }); d.pass(h[9], [965, 455], { step: 2, bend: -18 }); d.run(h[4], [985, 440], { step: 2, bend: 8 })
+      d.label(760, 40, "Near-post flick, then attack the back post", 320)
+      d.small(0.7)
+    },
+    view: { vertical: true, focus: "third", focusEnd: "attack" }, crop: [736, 0, 314, 480],
+  },
+  {
+    no: 17, name: "Free kick: wall and decoy", cat: "Set piece", style: "night",
+    blurb: "One runs over the ball, another runs past it. The wall has to decide, and the real shot goes the other way.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-4-2")
+      d.only(h, [10, 8, 7, 9, 6]); d.only(a, [1, 5, 4, 8, 6, 7])
+      d.mv(h[10], 805, 322); d.mv(h[8], 790, 400); d.mv(h[7], 800, 262); d.mv(h[9], 975, 245); d.mv(h[6], 960, 435)
+      d.mv(a[1], 1040, 340); d.mv(a[5], 995, 290); d.mv(a[4], 995, 395)
+      d.mv(a[8], 926, 282); d.mv(a[6], 926, 334); d.mv(a[7], 926, 386)
+      d.ball(840, 334)
+      d.run(h[8], [850, 355], { step: 1, bend: 10 }); d.shot(h[10], [1050, 405], { step: 2, bend: -70 })
+      d.link([a[8], a[6], a[7]])
+      d.label(740, 40, "A wall of three, nine metres back", 320)
+      d.small(0.7)
+    },
+    view: { vertical: true, focus: "third", focusEnd: "attack" }, crop: [736, 100, 314, 480],
+  },
+  {
+    no: 18, name: "Throw-in triangle", cat: "Set piece", style: "paper",
+    blurb: "Never throw it down the line. Make a triangle: one short, one in behind, and the thrower back in the game.",
+    make: d => {
+      const h = d.home("4-3-3"), a = d.away("4-4-2")
+      d.only(h, [3, 6, 11, 8, 5]); d.only(a, [2, 11, 8, 5])
+      d.mv(h[3], 600, 18); d.mv(h[6], 640, 125); d.mv(h[11], 770, 65); d.mv(h[8], 530, 190); d.mv(h[5], 470, 330)
+      d.mv(a[2], 705, 130); d.mv(a[11], 610, 225); d.mv(a[8], 700, 270); d.mv(a[5], 770, 350)
+      d.ball(600, 0)
+      d.pass(h[3], h[6], { step: 1, bend: -16 }); d.pass(h[6], h[11], { step: 2, bend: -10 }); d.run(h[3], [700, 45], { step: 3, bend: 14 })
+      d.link([h[3], h[6], h[11]], true)
+      d.label(830, 40, "Short, in behind, thrower supports", 320)
+      d.small(0.8)
+    },
+    view: { vertical: true, focus: "half", focusEnd: "attack" }, crop: [440, 0, 314, 480],
+  },
+]
+const dropCache = new Map<number, CanvasState>()
+/** A drop as it looks when nothing has been changed (for the picture on its card) */
+const dropPreview = (drop: Drop) => { let s = dropCache.get(drop.no); if (!s) { s = buildDrop(drop); dropCache.set(drop.no, s) } return s }
+/** The picture on a drop's card: the pitch, the zones, lines and pieces */
+function DropThumb({ data, crop }: { data: CanvasState; crop?: [number, number, number, number] }) {
+  const st = data.settings?.pitchStyle ?? "classic"
+  const geo = pitchGeo(data.settings?.vertical === true, 1, 0, 0)
+  const box = crop ? pitchRect(geo, crop[0], crop[1], crop[0] + crop[2], crop[1] + crop[3]) : null
+  const pieces = new Map(data.players.map(p => [p.id, p]))
+  return (
+    <svg viewBox={box ? `${box.x} ${box.y} ${box.w} ${box.h}` : "150 90 1100 720"} width="100%" style={{ display: "block", background: data.bgColor }} aria-hidden="true">
+      <g transform={pitchTransformAttr(geo)}>
+        <PitchSVG pitchColor="green" look={st} upright={geo.v} />
+        {(data.customZones ?? []).map(z => <rect key={z.id} x={z.x} y={z.y} width={z.w} height={z.h} rx={4} fill={z.color} fillOpacity={z.opacity * 1.6} />)}
+      </g>
+      {data.shapes.map(s => <g key={s.id}>{renderShapePath(s)}</g>)}
+      {data.arrows.map(a => {
+        const e = lineEnds(a, pieces)
+        return (
+          <g key={a.id}>
+            <path d={arrowPath(e.x1, e.y1, e.x2, e.y2, a.cpx, a.cpy)} fill="none" stroke={a.color} strokeWidth={a.strokeW * 1.7} strokeDasharray={dashArr(a.dash)} strokeLinecap="round" />
+            {a.kind !== "line" && <polygon points={arrowHead(e.x2, e.y2, a.cpx, a.cpy, 26)} fill={a.color} />}
+          </g>
+        )
+      })}
+      {data.players.map(p => p.kind === "ball"
+        ? <circle key={p.id} cx={p.x} cy={p.y} r={13} fill="#ffffff" stroke="#111" strokeWidth={3} />
+        : <circle key={p.id} cx={p.x} cy={p.y} r={26 * (p.scale || 1)} fill={p.bg} stroke={p.ring} strokeWidth={3} opacity={p.ghost ? 0.45 : 1} strokeDasharray={p.ghost ? "6,4" : undefined} />)}
+    </svg>
+  )
+}
+
 function TemplateModal({
   templates, onClose, onLoad, onSave, onDelete, onTogglePublish, isAdmin, onAdminToggle,
 }: {
@@ -1187,7 +1548,8 @@ function TemplateModal({
   isAdmin: boolean
   onAdminToggle: () => void
 }) {
-  const [tab, setTab] = useState<"my" | "library">("library")
+  const [tab, setTab] = useState<"drops" | "my" | "library">("drops")
+  const [cat, setCat] = useState<DropCat | "All">("All")
   const [newName, setNewName] = useState("")
   const published = templates.filter(t => t.published)
   const mine = templates.filter(t => !t.published)
@@ -1196,7 +1558,7 @@ function TemplateModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.7)" }}
       onClick={onClose}>
       <div className="relative w-full max-h-[80vh] flex flex-col rounded-lg border overflow-hidden"
-        style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", maxWidth: 640 }}
+        style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", maxWidth: 760 }}
         onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
@@ -1219,7 +1581,7 @@ function TemplateModal({
 
         {/* Tabs */}
         <div className="flex border-b" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
-          {(["library", "my"] as const).map(t => (
+          {(["drops", "library", "my"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className="px-5 py-2.5 text-xs font-semibold uppercase transition-colors"
               style={{
@@ -1227,13 +1589,45 @@ function TemplateModal({
                 borderBottom: tab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent",
                 color: tab === t ? ACCENT_SOLID : TEXT_MUTED,
               }}>
-              {t === "library" ? `Published Library (${published.length})` : `My Templates (${mine.length})`}
+              {t === "drops" ? `Drops (${DROPS.length})` : t === "library" ? `Published Library (${published.length})` : `My Templates (${mine.length})`}
             </button>
           ))}
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
+          {tab === "drops" && (
+            <>
+              <p className="text-xs mb-3" style={{ color: TEXT_MUTED }}>Numbered boards, each a real situation in the editorial frame. Open one and make it your own: it starts a new board, so nothing you've saved changes.</p>
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {(["All", ...DROP_CATS] as const).map(c => (
+                  <button key={c} onClick={() => setCat(c)} aria-pressed={cat === c}
+                    className="px-2.5 py-1 rounded-full text-xs font-semibold transition-colors"
+                    style={{ background: cat === c ? PS_VOLT : SURFACE_2, color: cat === c ? "#0a0c0f" : TEXT_MUTED }}>
+                    {c}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {DROPS.filter(x => cat === "All" || x.cat === cat).map(x => (
+                  <div key={x.no} className="rounded-lg border overflow-hidden flex flex-col" style={{ borderColor: "rgba(255,255,255,0.1)", background: SURFACE_2 }}>
+                    <DropThumb data={dropPreview(x)} crop={x.crop} />
+                    <div className="p-2.5 flex flex-col gap-1.5 flex-1">
+                      <span className="text-xs font-semibold" style={{ color: PS_VOLT, letterSpacing: "0.12em", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                        DROP {String(x.no).padStart(2, "0")} · {x.cat.toUpperCase()}
+                      </span>
+                      <span className="font-semibold leading-tight" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.03em", fontSize: 16 }}>{x.name}</span>
+                      <p className="text-xs flex-1" style={{ color: TEXT_MUTED }}>{x.blurb}</p>
+                      <button onClick={() => onLoad({ id: `drop-${x.no}`, name: x.name, data: buildDrop(x), published: false, createdAt: Date.now() })}
+                        className="py-1 rounded text-xs font-medium transition-colors" style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
+                        Use drop
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
           {tab === "library" && (
             <>
               {published.length === 0 && (
@@ -4273,6 +4667,7 @@ function TacticsBoard() {
                 <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Add a full team, place players one at a time, or draw a zone.</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, padding: "0 12px", justifyContent: "center", pointerEvents: "auto" }}>
                   {([
+                    { label: "Start from a drop", action: () => setShowTemplates(true) },
                     { label: "Add formation", action: () => setFormation(selectedFormation, "home") },
                     { label: "Place a player", action: () => setTool("homePlayer") },
                     { label: "Draw a zone", action: () => setTool("zone") },
