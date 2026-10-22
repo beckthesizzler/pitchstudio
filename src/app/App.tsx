@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, Component } from "react"
 import type { ReactNode } from "react"
 import React from "react"
-import { toPng, toJpeg, getFontEmbedCSS } from "html-to-image"
+import { toPng, toJpeg, toBlob, getFontEmbedCSS } from "html-to-image"
 import jsPDF from "jspdf"
 import {
   MousePointer2, UserPlus, ArrowUpRight, Type, Pentagon,
@@ -138,6 +138,13 @@ interface BoardSettings {
   frameRatio: "auto" | "16:9" | "4:5" | "1:1" | "9:16" // the shape of the export
   homeFormation: string; homeShape: "base" | "in" | "out" // the formation the home team was last set to ("" = none), and its shape: lineup, in or out of possession
   awayFormation: string; awayShape: "base" | "in" | "out"
+  pitchStyle: "classic" | "night" | "paper" // classic = green or white lines; night and paper are the editorial looks
+  psMark: boolean // the PS mark mowed into the middle of the pitch
+  editorial: boolean // the editorial frame: slate, score strip, caption, legend, crop marks and edition number
+  kicker: string // the small line above the title
+  homeScore: string; awayScore: string; scoreNote: string // the score strip: the goals each side scored, and a note such as FT
+  caption: string // the line (or two) under the board
+  showLegend: boolean; cropMarks: boolean; showEdition: boolean
 }
 /** What a saved board keeps in canvas_data (version 2). Version 1 boards only had the five element lists. */
 interface BoardData {
@@ -156,6 +163,8 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   labelSize: "standard", nameStyle: "halo", tokenStyle: "classic",
   vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto",
   homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
+  pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "",
+  showLegend: true, cropMarks: true, showEdition: true,
 }
 /** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
 function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
@@ -194,6 +203,14 @@ function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSet
     homeShape: oneOf(v.homeShape, ["base", "in", "out"] as const, d.homeShape),
     awayFormation: typeof v.awayFormation === "string" ? v.awayFormation.slice(0, 20) : d.awayFormation,
     awayShape: oneOf(v.awayShape, ["base", "in", "out"] as const, d.awayShape),
+    pitchStyle: oneOf(v.pitchStyle, ["classic", "night", "paper"] as const, d.pitchStyle),
+    psMark: bool(v.psMark, d.psMark), editorial: bool(v.editorial, d.editorial),
+    kicker: typeof v.kicker === "string" ? v.kicker.slice(0, 40) : d.kicker,
+    homeScore: typeof v.homeScore === "string" ? v.homeScore.slice(0, 3) : d.homeScore,
+    awayScore: typeof v.awayScore === "string" ? v.awayScore.slice(0, 3) : d.awayScore,
+    scoreNote: typeof v.scoreNote === "string" ? v.scoreNote.slice(0, 12) : d.scoreNote,
+    caption: typeof v.caption === "string" ? v.caption.slice(0, 160) : d.caption,
+    showLegend: bool(v.showLegend, d.showLegend), cropMarks: bool(v.cropMarks, d.cropMarks), showEdition: bool(v.showEdition, d.showEdition),
   }
 }
 /** Reads any saved board, old or new format, and fills in anything missing. */
@@ -297,13 +314,19 @@ const FRAME_SIZES: Record<BoardSettings["frameRatio"], [number, number] | null> 
   auto: null, "16:9": [1920, 1080], "4:5": [1080, 1350], "1:1": [1080, 1080], "9:16": [1080, 1920],
 }
 /** The part of the board you see and export: the whole board, or the pitch, a half or a third with room for names and the seal, widened to the export shape */
-const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"]) => {
+const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"], ed?: { strip: boolean; lines: number } | null) => {
   let r = { x: 0, y: 0, w: CW, h: CH }
   if (focus !== "board") {
     const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
     const [x1, x2] = end === "attack" ? [PW - part, PW] : [0, part]
     const p = pitchRect(g, x1, 0, x2, PH)
     r = { x: p.x - 36, y: p.y - 36, w: p.w + 72, h: p.h + 100 }
+  }
+  // The editorial frame: room above for the slate (and under it for the score strip on a narrow frame) and below for the caption and the legend.
+  // The whole board already has that room in its margins.
+  if (ed && focus !== "board") {
+    const top = 104 + (ed.strip && r.w < 1100 ? 58 : 0), bottom = 40 + (ed.lines ? ed.lines * 22 + 14 : 0)
+    r = { ...r, y: r.y - top, h: r.h + top + bottom }
   }
   const size = FRAME_SIZES[ratio]
   if (size) {
@@ -959,32 +982,167 @@ function snapAngle(deg: number, snap: boolean): number {
 
 /* ─────────────────────────── Pitch SVG ─────────────────────── */
 // Renders in pitch-local coords (0..PW, 0..PH)
-function PitchSVG({ pitchColor }: { pitchColor: "green" | "white" }) {
-  const L = pitchColor === "white" ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.85)", W = 2.5
+/** The two editorial pitch looks: Night (a dark pitch, thin pale lines, a volt centre spot) and Paper (warm paper, ink lines). bg is the canvas colour that goes with each. */
+const PITCH_LOOKS = {
+  night: { a: "#10171f", b: "#0b1118", line: "rgba(255,255,255,0.4)", w: 2, box: "rgba(255,255,255,0.07)", spot: PS_VOLT, bg: "#06080b", mark: "#ffffff" },
+  paper: { a: "#f3eee1", b: "#ece6d5", line: "rgba(34,30,22,0.62)", w: 2.2, box: "rgba(34,30,22,0.08)", spot: "#1d1b16", bg: "#ddd6c3", mark: "#1d1b16" },
+} as const
+function PitchSVG({ pitchColor, look = "classic", mark = false, upright = false }: { pitchColor: "green" | "white"; look?: BoardSettings["pitchStyle"]; mark?: boolean; upright?: boolean }) {
+  const lk = look === "classic" ? null : PITCH_LOOKS[look]
+  const L = lk ? lk.line : pitchColor === "white" ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.85)", W = lk ? lk.w : 2.5
+  const BOX = lk ? lk.box : pitchColor === "white" ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.12)", SPOT = lk ? lk.spot : L
   return (
     <g>
       {Array.from({ length: 13 }, (_, i) => (
         <rect key={i} x={i * (PW / 13)} y={0} width={PW / 13 + 1} height={PH}
-          fill={pitchColor === "white" ? "#ffffff" : i % 2 === 0 ? "#1e6634" : "#1a5a2d"} />
+          fill={lk ? (i % 2 === 0 ? lk.a : lk.b) : pitchColor === "white" ? "#ffffff" : i % 2 === 0 ? "#1e6634" : "#1a5a2d"} />
       ))}
+      {/* The PS mark, mowed into the grass across the stripes */}
+      {mark && (
+        <g style={{ pointerEvents: "none" }} transform={upright ? `rotate(90 ${PCX} ${PCY})` : undefined}>
+          <clipPath id="ps-mark-clip">
+            <text x={PCX} y={PCY + 118} textAnchor="middle" fontSize={340} fontWeight={800} style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "-0.01em" }}>PS</text>
+          </clipPath>
+          <g clipPath="url(#ps-mark-clip)">
+            {Array.from({ length: 18 }, (_, i) => (
+              <rect key={i} x={PCX - 240} y={PCY - 150 + i * 17} width={480} height={17}
+                fill={lk ? lk.mark : "#ffffff"} fillOpacity={i % 2 === 0 ? (lk && look === "paper" ? 0.24 : 0.2) : 0.07} />
+            ))}
+          </g>
+        </g>
+      )}
       <rect x={3} y={3} width={PW - 6} height={PH - 6} fill="none" stroke={L} strokeWidth={W} />
       <line x1={PCX} y1={3} x2={PCX} y2={PH - 3} stroke={L} strokeWidth={W} />
       <circle cx={PCX} cy={PCY} r={91.5} fill="none" stroke={L} strokeWidth={W} />
-      <circle cx={PCX} cy={PCY} r={4.5} fill={L} />
+      <circle cx={PCX} cy={PCY} r={4.5} fill={SPOT} />
       <rect x={3} y={PCY - 201.5} width={162} height={403} fill="none" stroke={L} strokeWidth={W} />
       <rect x={3} y={PCY - 91.5} width={53} height={183} fill="none" stroke={L} strokeWidth={W} />
-      <rect x={-14} y={PCY - 37} width={14} height={74} fill={pitchColor === "white" ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.12)"} stroke={L} strokeWidth={1.5} />
-      <circle cx={110} cy={PCY} r={4} fill={L} />
+      <rect x={-14} y={PCY - 37} width={14} height={74} fill={BOX} stroke={L} strokeWidth={1.5} />
+      <circle cx={110} cy={PCY} r={4} fill={SPOT} />
       <path d={`M 165 ${PCY - 73.1} A 91.5 91.5 0 0 1 165 ${PCY + 73.1}`} fill="none" stroke={L} strokeWidth={W} />
       <rect x={PW - 165} y={PCY - 201.5} width={162} height={403} fill="none" stroke={L} strokeWidth={W} />
       <rect x={PW - 56} y={PCY - 91.5} width={53} height={183} fill="none" stroke={L} strokeWidth={W} />
-      <rect x={PW} y={PCY - 37} width={14} height={74} fill={pitchColor === "white" ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.12)"} stroke={L} strokeWidth={1.5} />
-      <circle cx={PW - 110} cy={PCY} r={4} fill={L} />
+      <rect x={PW} y={PCY - 37} width={14} height={74} fill={BOX} stroke={L} strokeWidth={1.5} />
+      <circle cx={PW - 110} cy={PCY} r={4} fill={SPOT} />
       <path d={`M ${PW - 165} ${PCY - 73.1} A 91.5 91.5 0 0 0 ${PW - 165} ${PCY + 73.1}`} fill="none" stroke={L} strokeWidth={W} />
       <path d={`M 13 3 A 10 10 0 0 1 3 13`} fill="none" stroke={L} strokeWidth={W} />
       <path d={`M ${PW - 13} 3 A 10 10 0 0 0 ${PW - 3} 13`} fill="none" stroke={L} strokeWidth={W} />
       <path d={`M 3 ${PH - 13} A 10 10 0 0 1 13 ${PH - 3}`} fill="none" stroke={L} strokeWidth={W} />
       <path d={`M ${PW - 3} ${PH - 13} A 10 10 0 0 0 ${PW - 13} ${PH - 3}`} fill="none" stroke={L} strokeWidth={W} />
+    </g>
+  )
+}
+
+/* ─────────────────────────── Editorial frame ───────────────── */
+/** The caption broken into lines (at most 4), so the frame knows how much room it needs */
+function wrapCaption(text: string, max = 48): string[] {
+  const out: string[] = []
+  let line = ""
+  for (const w of text.trim().split(/\s+/).filter(Boolean)) {
+    if (line && (line + " " + w).length > max) { out.push(line); line = w } else line = line ? line + " " + w : w
+  }
+  if (line) out.push(line)
+  return out.slice(0, 4)
+}
+/** "PS/0142 · 12.10.26": the number of this export, and today's date */
+const editionStamp = (n: number) => {
+  const d = new Date(), two = (x: number) => String(x).padStart(2, "0")
+  return `PS/${String(n).padStart(4, "0")} · ${two(d.getDate())}.${two(d.getMonth() + 1)}.${two(d.getFullYear() % 100)}`
+}
+const EDITION_KEY = "ps-edition"
+const readEdition = () => { try { const n = parseInt(localStorage.getItem(EDITION_KEY) || "0", 10); return Number.isFinite(n) && n > 0 ? n : 0 } catch { return 0 } }
+type EdTeam = { name: string; score: string; pat: KitPattern; c1: string; c2: string }
+type LegendItem = { kind: LineKind | "ghost"; color: string; label: string }
+/** The slate across the top (kicker, title, score strip), the caption and the legend underneath, crop marks at the corners and the edition number. It sits on the board, so every export carries it. */
+function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, legend, crop, edition }: {
+  frame: { x: number; y: number; w: number; h: number }; k: number; ink: string
+  title: string; kicker: string; strip: { home: EdTeam; away: EdTeam } | null; note: string
+  caption: string[]; legend: LegendItem[]; crop: boolean; edition: string | null
+}) {
+  const x0 = frame.x, y0 = frame.y, x1 = frame.x + frame.w, y1 = frame.y + frame.h, m = 36 * k
+  const narrow = frame.w < 1100
+  const cut = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + "…" : t)
+  const font = { fontFamily: "'Barlow Condensed',sans-serif" }
+  const titleY = y0 + (kicker ? 88 : 70) * k
+  const stripY = narrow ? y0 + (kicker ? 146 : 128) * k : y0 + 62 * k
+  const cx = narrow ? (x0 + x1) / 2 : x1 - m - 310 * k
+  const ks = narrow ? k * 0.85 : k // a narrow frame gets a slightly smaller strip
+  const side = (t: EdTeam, dir: 1 | -1, id: string) => {
+    const sw = 22 * ks * Math.max(t.score.length, 1)
+    const disc = dir * (14 * ks + sw + 24 * ks)
+    return (
+      <g>
+        <text x={dir * 14 * ks} y={stripY + 14 * ks} textAnchor={dir === 1 ? "start" : "end"} fill={ink} fontSize={44 * ks} fontWeight={800} style={font}>{t.score}</text>
+        <g transform={`translate(${disc},${stripY + 1 * ks})`}>
+          <KitFill cid={`ed-${id}`} r={11 * ks} pat={t.pat} c1={t.c1} c2={t.c2} />
+          <circle r={11 * ks} fill="none" stroke={ink} strokeOpacity={0.5} strokeWidth={1.4} />
+        </g>
+        <text x={disc + dir * 22 * ks} y={stripY + 8 * ks} textAnchor={dir === 1 ? "start" : "end"} fill={ink} fontSize={25 * ks} fontWeight={700}
+          style={{ ...font, letterSpacing: "0.05em", textTransform: "uppercase" }}>{cut(t.name.trim(), narrow ? 11 : 16)}</text>
+      </g>
+    )
+  }
+  let lx = x0 + m
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      {/* Slate */}
+      {kicker && (
+        <g>
+          <rect x={x0 + m} y={y0 + 24 * k} width={10 * k} height={10 * k} fill={PS_VOLT} stroke={ink === "#000000" ? ink : "none"} strokeWidth={1.2} />
+          <text x={x0 + m + 20 * k} y={y0 + 34 * k} fill={ink} fillOpacity={0.78} fontSize={15 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.22em", textTransform: "uppercase" }}>{kicker}</text>
+        </g>
+      )}
+      {title && (
+        <text x={x0 + m} y={titleY} fill={ink} fontSize={46 * k} fontWeight={800} style={{ ...font, letterSpacing: "0.01em", textTransform: "uppercase" }}>
+          {cut(title, narrow ? 26 : 40)}
+        </text>
+      )}
+      {strip && (
+        <g transform={`translate(${cx},0)`}>
+          <g transform="translate(0,0)">{side(strip.home, -1, "h")}</g>
+          <text x={0} y={stripY + 10 * k} textAnchor="middle" fill={ink} fillOpacity={0.55} fontSize={34 * ks} fontWeight={600} style={font}>{strip.home.score || strip.away.score ? "–" : "v"}</text>
+          <g>{side(strip.away, 1, "a")}</g>
+          {note && <text x={0} y={stripY + 40 * k} textAnchor="middle" fill={ink} fillOpacity={0.7} fontSize={14 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.24em", textTransform: "uppercase" }}>{note}</text>}
+        </g>
+      )}
+      {/* Caption, then the legend */}
+      {caption.map((line, i) => (
+        <text key={i} x={x0 + m} y={y1 - 62 * k - (caption.length - 1 - i) * 22 * k} fill={ink} fillOpacity={0.88} fontSize={15 * k} style={{ fontFamily: "'Inter',sans-serif" }}>{line}</text>
+      ))}
+      <g transform={`translate(0,${y1 - 28 * k})`}>
+        {legend.map(it => {
+          const x = lx
+          lx += (it.label.length * 8.2 + 62) * k
+          const w = (it.kind === "shot" ? 4 : 2.6) * k
+          return (
+            <g key={it.kind}>
+              {it.kind === "ghost" ? (
+                <g transform={`translate(${x + 8 * k},0)`}><circle r={7 * k} fill={it.color} fillOpacity={0.45} stroke={ink} strokeOpacity={0.6} strokeWidth={1.2} strokeDasharray="3,2" /></g>
+              ) : (
+                <g>
+                  {it.kind === "shot" && <line x1={x} x2={x + 26 * k} y1={0} y2={0} stroke="rgba(0,0,0,0.45)" strokeWidth={w + 2} strokeLinecap="round" />}
+                  {it.kind === "dribble"
+                    ? <path d={wavyPath(x, 0, x + 26 * k, 0, x + 13 * k, 0, 3.5 * k, 9 * k)} fill="none" stroke={it.color} strokeWidth={w} strokeLinecap="round" />
+                    : <line x1={x} x2={x + 26 * k} y1={0} y2={0} stroke={it.color} strokeWidth={w} strokeLinecap="round" strokeDasharray={it.kind === "run" ? `${6 * k},${4 * k}` : undefined} />}
+                  {it.kind !== "line" && <polygon points={`${x + 31 * k},0 ${x + 23 * k},${-4.6 * k} ${x + 23 * k},${4.6 * k}`} fill={it.color} />}
+                </g>
+              )}
+              <text x={x + 40 * k} y={5 * k} fill={ink} fillOpacity={0.82} fontSize={15 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.12em", textTransform: "uppercase" }}>{it.label}</text>
+            </g>
+          )
+        })}
+      </g>
+      {/* Edition number */}
+      {edition && <text x={x1 - 14 * k} y={y1 - 52 * k} textAnchor="end" fill={ink} fillOpacity={0.62} fontSize={14 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.16em" }}>{edition}</text>}
+      {/* Crop marks */}
+      {crop && (
+        <g stroke={ink} strokeOpacity={0.6} strokeWidth={1.4} fill="none" strokeLinecap="square">
+          {([[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]] as const).map(([px, py, sx, sy], i) => (
+            <path key={i} d={`M ${px + sx * 8 * k} ${py + sy * 30 * k} V ${py + sy * 8 * k} H ${px + sx * 30 * k}`} />
+          ))}
+          <path d={`M ${(x0 + x1) / 2 - 8 * k} ${y0 + 8 * k} h ${16 * k} M ${(x0 + x1) / 2 - 8 * k} ${y1 - 8 * k} h ${16 * k} M ${x0 + 8 * k} ${(y0 + y1) / 2 - 8 * k} v ${16 * k} M ${x1 - 8 * k} ${(y0 + y1) / 2 - 8 * k} v ${16 * k}`} />
+        </g>
+      )}
     </g>
   )
 }
@@ -1229,13 +1387,22 @@ function TacticsBoard() {
   const [focus, setFocus] = useState<BoardSettings["focus"]>("board")
   const [focusEnd, setFocusEnd] = useState<BoardSettings["focusEnd"]>("attack")
   const [frameRatio, setFrameRatio] = useState<BoardSettings["frameRatio"]>("auto")
+  const [pitchStyle, setPitchStyle] = useState<BoardSettings["pitchStyle"]>("classic")
+  const [psMark, setPsMark] = useState(false)
+  const [editorial, setEditorial] = useState(false)
+  const [kicker, setKicker] = useState("")
+  const [homeScore, setHomeScore] = useState(""); const [awayScore, setAwayScore] = useState(""); const [scoreNote, setScoreNote] = useState("")
+  const [caption, setCaption] = useState("")
+  const [showLegend, setShowLegend] = useState(true); const [cropMarks, setCropMarks] = useState(true); const [showEdition, setShowEdition] = useState(true)
+  const [editionNo, setEditionNo] = useState(() => readEdition() + 1) // the number the next export will carry
+  const [exportNote, setExportNote] = useState("") // a short word after Copy: "Copied" or why it didn't work
   const [kitEditor, setKitEditor] = useState({ home: false, away: false })
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [sideTab, setSideTab] = useState<"selected" | "board">("board")
   const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
-  const [boardGroups, setBoardGroups] = useState({ frame: true, formation: true, teams: true, labels: false, zones: false, pitch: false, canvas: false })
+  const [boardGroups, setBoardGroups] = useState({ frame: true, formation: true, teams: true, labels: false, zones: false, pitch: false, editorial: false, canvas: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [selectedFormation, setSelectedFormation] = useState("4-3-3")
   const [formShape, setFormShape] = useState<TeamShape>("base") // the shape the formation buttons use
@@ -1522,6 +1689,7 @@ function TacticsBoard() {
       view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible,
       homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
       vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
+      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition,
     }),
   })
   /** Puts a saved board's elements, zones and settings back on screen. */
@@ -1541,6 +1709,9 @@ function TacticsBoard() {
     setLabelSize(st.labelSize); setNameStyle(st.nameStyle); setTokenStyle(st.tokenStyle)
     setVertical(st.vertical); setFocus(st.focus); setFocusEnd(st.focusEnd); setFrameRatio(st.frameRatio)
     setHomeFormation(st.homeFormation); setHomeShape(st.homeShape); setAwayFormation(st.awayFormation); setAwayShape(st.awayShape)
+    setPitchStyle(st.pitchStyle); setPsMark(st.psMark); setEditorial(st.editorial); setKicker(st.kicker)
+    setHomeScore(st.homeScore); setAwayScore(st.awayScore); setScoreNote(st.scoreNote); setCaption(st.caption)
+    setShowLegend(st.showLegend); setCropMarks(st.cropMarks); setShowEdition(st.showEdition)
   }
   /** Opens a board exactly as it was saved. Older boards get today's defaults for anything they didn't store.
    *  boardId = null starts a new, unsaved board (used for templates). */
@@ -1614,6 +1785,7 @@ function TacticsBoard() {
       pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
       showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
       labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
+      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition,
       currentBoardId, authUser, saveTick])
 
   // Opening a fresh board: bring back the unsaved board from last time, if there is one
@@ -2238,13 +2410,16 @@ function TacticsBoard() {
   const geo = pitchGeo(vertical, pitchScale, pitchOffX, pitchOffY)
   const geoRef = useRef(geo)
   geoRef.current = geo
-  const frame = frameRect(geo, canvasMode === "blank" ? "board" : focus, focusEnd, frameRatio)
+  const edBoard = title.trim() === "Untitled board" ? "" : title.trim() // an unnamed board has no headline
+  const edStrip = editorial && (homeName.trim() !== "" || awayName.trim() !== "" || homeScore !== "" || awayScore !== "")
+  const edLines = editorial ? wrapCaption(caption) : []
+  const frame = frameRect(geo, canvasMode === "blank" ? "board" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length } : null)
   const sealK = Math.min(1, Math.min(frame.w, frame.h) / CH) // the seal and the legend shrink with a small frame
   const dispW = Math.min(SVG_DISPLAY_W, (SVG_DISPLAY_W * CH / CW) * frame.w / frame.h)
   const dispRef = useRef({ w: dispW, h: dispW * frame.h / frame.w })
   dispRef.current = { w: dispW, h: dispW * frame.h / frame.w }
   // A new frame fits the screen again
-  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode, editorial, edStrip, edLines.length]) // eslint-disable-line react-hooks/exhaustive-deps
   /** Turns the pitch upright (or back). Everything on it moves with it, so every piece keeps its place on the pitch. One undo step. */
   const setOrientation = (v: boolean) => {
     if (v === vertical) return
@@ -2777,7 +2952,7 @@ function TacticsBoard() {
   }
 
   /* ── Export ── */
-  const doExport = async (fmt: "png" | "jpeg" | "pdf") => {
+  const doExport = async (fmt: "png" | "jpeg" | "pdf" | "copy") => {
     if (!pitchRef.current) return
     const node = pitchRef.current
     const keepSelection = selection
@@ -2797,7 +2972,12 @@ function TacticsBoard() {
         // 3D: the tilt as on screen, a little smaller so the near edge stays in the picture, with the corners in the canvas colour
         ...(view3d ? { backgroundColor: bgColor, style: { transform: `${UPRIGHT_3D} scale(0.86)`, transformOrigin: "center center" } } : {}),
       }
-      if (fmt === "png") {
+      if (fmt === "copy") {
+        const blob = await toBlob(node, opts)
+        if (!blob) throw new Error("no image")
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+        setExportNote("Copied to the clipboard")
+      } else if (fmt === "png") {
         const url = await toPng(node, opts)
         const a = document.createElement("a"); a.href = url; a.download = `${name}.png`; a.click()
       } else if (fmt === "jpeg") {
@@ -2811,10 +2991,16 @@ function TacticsBoard() {
         pdf.addImage(url, "PNG", 0, 0, img.width, img.height)
         pdf.save(`${name}.pdf`)
       }
+      // The next export carries the next number
+      if (editorial && showEdition) { try { localStorage.setItem(EDITION_KEY, String(editionNo)) } catch { /* storage blocked */ } setEditionNo(editionNo + 1) }
       ;(window as any).posthog?.capture("board_exported", { format: fmt })
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      if (fmt === "copy") setExportNote("Couldn't copy: your browser didn't allow it. Use PNG instead.")
+    }
     finally { setSelection(keepSelection) }
   }
+  useEffect(() => { if (!exportNote) return; const t = setTimeout(() => setExportNote(""), 3200); return () => clearTimeout(t) }, [exportNote])
   // The watermark's background fits its text (a handle can be any length)
   const wmTextRef = useRef<SVGTextElement>(null)
   const [wmWidth, setWmWidth] = useState(92)
@@ -3039,13 +3225,13 @@ function TacticsBoard() {
               <Download size={13} /> <span className="hidden sm:inline">Export</span> <ChevronDown size={11} />
             </button>
             {headerMenu === "export" && (
-              <div className="absolute right-0 top-full mt-1 w-28 rounded shadow-xl border z-50 flex flex-col"
+              <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 flex flex-col"
                 style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-                {(["png", "jpeg", "pdf"] as const).map(f => (
+                {(["png", "jpeg", "pdf", "copy"] as const).map(f => (
                   <button key={f} onClick={() => { setHeaderMenu(null); doExport(f) }}
                     className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left uppercase font-semibold"
-                    style={{ letterSpacing: "0.06em" }}>
-                    <FileImage size={12} /> {f}
+                    style={{ letterSpacing: "0.06em", ...(f === "copy" ? { borderTop: `1px solid ${DS_BORDER}` } : {}) }}>
+                    {f === "copy" ? <Copy size={12} /> : <FileImage size={12} />} {f === "copy" ? "Copy image" : f}
                   </button>
                 ))}
               </div>
@@ -3909,6 +4095,11 @@ function TacticsBoard() {
                   </div>
                 </div>
                 {canvasMode !== "blank" && (
+                  <Segmented label="Pitch style" value={pitchStyle}
+                    onChange={v => { undoPoint(); setPitchStyle(v); setBgColor(v === "classic" ? DEFAULT_BOARD_SETTINGS.bgColor : PITCH_LOOKS[v].bg) }}
+                    options={[["classic", "Classic"], ["night", "Night"], ["paper", "Paper"]]} />
+                )}
+                {canvasMode !== "blank" && pitchStyle === "classic" && (
                   <div>
                     <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch colour</p>
                     <div className="flex gap-1.5">
@@ -3955,9 +4146,56 @@ function TacticsBoard() {
                       </span>
                     </button>
                     <p className="text-xs" style={{ color: TEXT_MUTED }}>Turn it off to see a photo behind the board. Zones and lanes stay.</p>
+                    <Segmented label="PS mark in the grass" value={psMark ? "on" : "off"} onChange={v => { undoPoint(); setPsMark(v === "on") }}
+                      options={[["off", "Off"], ["on", "On"]]} />
                   </div>
                 ) : (
                   <p className="text-xs" style={{ color: TEXT_MUTED }}>A blank canvas has no pitch. Pick Full or Half pitch to draw one.</p>
+                )}
+              </div>
+            )}
+
+            <button aria-expanded={boardGroups.editorial}
+              onClick={() => setBoardGroups(g => ({ ...g, editorial: !g.editorial }))}
+              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
+              {boardGroups.editorial ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Editorial
+              {editorial && <span className="ml-auto px-1.5 py-0.5 rounded font-bold" style={{ background: PS_VOLT, color: "#0a0c0f", fontSize: 9, letterSpacing: "0.08em" }}>ON</span>}
+            </button>
+            {boardGroups.editorial && (
+              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                <Segmented label="Editorial frame" value={editorial ? "on" : "off"} onChange={v => { undoPoint(); setEditorial(v === "on") }}
+                  options={[["off", "Off"], ["on", "On"]]} />
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>A headline, score strip, caption, legend, crop marks and an edition number around the board. It's in every export. The headline is the board's title.</p>
+                {editorial && (
+                  <>
+                    <label className="flex flex-col gap-1 text-xs" style={{ color: TEXT_MUTED }}>Kicker
+                      <input value={kicker} maxLength={40} placeholder="TACTICAL BREAKDOWN" onChange={e => { undoPoint("kicker"); setKicker(e.target.value) }}
+                        className="rounded px-2 py-1 text-xs outline-none" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    <div>
+                      <p className="text-xs mb-1" style={{ color: TEXT_MUTED }}>Score · {homeName.trim() || "Home"} v {awayName.trim() || "Away"}</p>
+                      <div className="flex gap-1.5">
+                        <input value={homeScore} maxLength={3} aria-label="Home score" placeholder="0" onChange={e => { undoPoint("homeScore"); setHomeScore(e.target.value.replace(/[^0-9]/g, "")) }}
+                          className="w-12 rounded px-2 py-1 text-xs outline-none text-center" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                        <input value={awayScore} maxLength={3} aria-label="Away score" placeholder="0" onChange={e => { undoPoint("awayScore"); setAwayScore(e.target.value.replace(/[^0-9]/g, "")) }}
+                          className="w-12 rounded px-2 py-1 text-xs outline-none text-center" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                        <input value={scoreNote} maxLength={12} aria-label="Score note" placeholder="FT" onChange={e => { undoPoint("scoreNote"); setScoreNote(e.target.value) }}
+                          className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                      </div>
+                      <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>Name the teams under Teams to show them in the strip.</p>
+                    </div>
+                    <label className="flex flex-col gap-1 text-xs" style={{ color: TEXT_MUTED }}>Caption · {caption.length}/160
+                      <textarea value={caption} maxLength={160} rows={3} placeholder="One or two lines that say what to look at." onChange={e => { undoPoint("caption"); setCaption(e.target.value) }}
+                        className="rounded px-2 py-1 text-xs outline-none resize-none" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+                    </label>
+                    <Segmented label="Legend" value={showLegend ? "on" : "off"} onChange={v => { undoPoint(); setShowLegend(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
+                    <Segmented label="Crop marks" value={cropMarks ? "on" : "off"} onChange={v => { undoPoint(); setCropMarks(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
+                    <Segmented label={`Edition number · next is ${editionStamp(editionNo)}`} value={showEdition ? "on" : "off"} onChange={v => { undoPoint(); setShowEdition(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
+                  </>
                 )}
               </div>
             )}
@@ -4115,7 +4353,7 @@ function TacticsBoard() {
                       onMouseEnter={() => setHoveredPitch(true)}
                       onMouseLeave={() => setHoveredPitch(false)}>
                       <g style={{ clipPath: canvasMode === "half" ? `url(#half-pitch-clip)` : undefined }}>
-                        {pitchVisible && <PitchSVG pitchColor={pitchColor} />}
+                        {pitchVisible && <PitchSVG pitchColor={pitchColor} look={pitchStyle} mark={psMark} upright={vertical} />}
                         {/* ── Zone overlays (pitch-local coords) ── */}
                         {show18Zones && <EighteenZonesOverlay upright={vertical} />}
                         {showLanes && <LanesOverlay upright={vertical} />}
@@ -4541,7 +4779,7 @@ function TacticsBoard() {
                   )}
 
                   {/* Team legend: the kit and name of each named team, bottom left */}
-                  {(homeName.trim() !== "" || awayName.trim() !== "") && (
+                  {!editorial && (homeName.trim() !== "" || awayName.trim() !== "") && (
                     <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x},${frame.y + frame.h}) scale(${sealK})`}>
                       {(["home", "away"] as const).filter(team => (team === "home" ? homeName : awayName).trim() !== "").map((team, i, arr) => {
                         const k = kitOf(team)
@@ -4559,6 +4797,23 @@ function TacticsBoard() {
                       })}
                     </g>
                   )}
+
+                  {/* 12. Editorial frame */}
+                  {editorial && (() => {
+                    const hk = kitOf("home"), ak = kitOf("away")
+                    const kinds = new Map<string, LegendItem>()
+                    for (const a of arrows) {
+                      const kd: LineKind = a.kind ?? (a.dash === "dashed" ? "run" : "pass")
+                      if (!kinds.has(kd)) kinds.set(kd, { kind: kd, color: a.color, label: LINE_KINDS.find(([v]) => v === kd)?.[1] ?? kd })
+                    }
+                    const legend: LegendItem[] = [...kinds.values()]
+                    if (players.some(p => p.ghost)) legend.push({ kind: "ghost", color: "#9ca3af", label: "Was / will be" })
+                    return (
+                      <EditorialFrame frame={frame} k={sealK} ink={inkOn(bgColor)} title={edBoard} kicker={kicker.trim()}
+                        strip={edStrip ? { home: { name: homeName, score: homeScore, pat: hk.pat, c1: hk.c1, c2: hk.c2 }, away: { name: awayName, score: awayScore, pat: ak.pat, c1: ak.c1, c2: ak.c2 } } : null}
+                        note={scoreNote.trim()} caption={edLines} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? editionStamp(editionNo) : null} />
+                    )
+                  })()}
 
                   {/* 13. Creator seal — always last, always visible: the PS seal, your handle (once you've chosen one) and PITCHSTUDIO */}
                   <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x + frame.w},${frame.y + frame.h}) scale(${sealK})`}>
@@ -4597,6 +4852,11 @@ function TacticsBoard() {
           <div role="status" aria-live="polite" className="absolute top-3 left-1/2 -translate-x-1/2"
             style={{ zIndex: 20, width: "max-content", maxWidth: "calc(100% - 24px)" }}
             onPointerDown={e => e.stopPropagation()}>
+            {exportNote && (
+              <div className="flex items-center gap-2 rounded-lg border shadow-xl text-xs mb-2" style={{ background: SURFACE_1, borderColor: DS_BORDER, padding: "6px 12px", color: TEXT_PRIMARY }}>
+                <Copy size={13} style={{ color: ACCENT_SOLID }} />{exportNote}
+              </div>
+            )}
             {((saveStatus === "error" && saveError && !noticeHidden) || draftNotice) && (() => {
               const problem = saveStatus === "error" && !!saveError && !noticeHidden
               const conflict = problem && conflictRef.current
