@@ -48,6 +48,7 @@ interface Player {
   outline?: boolean // an outline around the shirt number, so it reads on stripes
   kind?: "marker" | "ball" // a ✕ marker or the ball; no kind = a player (every board saved before this)
   locked?: boolean // locked pieces can't be clicked, moved or nudged until you right-click → Unlock (same on every element type)
+  ghost?: boolean // a faded copy: where a player was, or where they'll be
 }
 interface Arrow {
   id: string
@@ -60,6 +61,7 @@ interface Arrow {
   kind?: "pass" | "run" | "dribble" | "shot" | "line" // what the line shows; no kind = an arrow drawn before line types
   step?: number // the step number shown on the line, to give the order of play
   fromId?: string; toId?: string // the pieces the line starts and ends on; it follows them when they move
+  dist?: boolean // shows the line's length in metres
 }
 interface TextBox {
   id: string; x: number; y: number
@@ -80,6 +82,8 @@ interface Shape {
   stroke: string; strokeW: number; strokeDash: boolean
   label: string
   locked?: boolean
+  ids?: string[] // a team shape: the piece each point is attached to ("" = a free point); the points follow the pieces
+  dist?: boolean // shows each side's length in metres
 }
 interface CustomZone {
   id: string
@@ -789,6 +793,41 @@ const lineEnds = (a: Arrow, pieces: Map<string, Player>) => {
   if (Q) { const r = pieceBase(Q) * (Q.scale || 1) + 4, d = Math.hypot(a.cpx - x2, a.cpy - y2) || 1; x2 += ((a.cpx - x2) / d) * r; y2 += ((a.cpy - y2) / d) * r }
   return { x1, y1, x2, y2 }
 }
+/** Metres on the pitch: it's drawn 10 units to the metre (105 m × 68 m), at whatever size it's shown */
+const metres = (g: PitchGeo, d: number) => Math.round(d / (g.sc * 10))
+/** The length of a line along its curve, centre to centre */
+const curveLen = (a: Arrow) => {
+  let l = 0, p = { x: a.x1, y: a.y1 }
+  for (let i = 1; i <= 24; i++) { const q = curveAt(a.x1, a.y1, a.cpx, a.cpy, a.x2, a.y2, i / 24); l += Math.hypot(q.x - p.x, q.y - p.y); p = q }
+  return l
+}
+/** The order pieces are joined in: a line runs the way they're spread out (a back four side to side, a spine end to end); a shape goes round its middle */
+function shapeOrder(pts: { x: number; y: number }[], closed: boolean): number[] {
+  const n = pts.length, cx = pts.reduce((a, p) => a + p.x, 0) / n, cy = pts.reduce((a, p) => a + p.y, 0) / n
+  const idx = pts.map((_, i) => i)
+  if (closed) return idx.sort((i, j) => Math.atan2(pts[i].y - cy, pts[i].x - cx) - Math.atan2(pts[j].y - cy, pts[j].x - cx))
+  let sxx = 0, syy = 0, sxy = 0
+  for (const p of pts) { sxx += (p.x - cx) ** 2; syy += (p.y - cy) ** 2; sxy += (p.x - cx) * (p.y - cy) }
+  const th = Math.atan2(2 * sxy, sxx - syy) / 2, ux = Math.cos(th), uy = Math.sin(th) // the direction they're most spread along
+  const along = (i: number) => (pts[i].x - cx) * ux + (pts[i].y - cy) * uy
+  return idx.sort((i, j) => along(i) - along(j))
+}
+/** A copied team shape stays attached to the copied pieces, never to the originals (none copied: it's a free shape) */
+const remapIds = (ids: string[] | undefined, idMap: Map<string, string>) => {
+  const out = ids?.map(i => idMap.get(i) ?? "")
+  return out?.some(Boolean) ? out : undefined
+}
+/** A small "12 m" tag on a line */
+function DistTag({ x, y, m }: { x: number; y: number; m: number }) {
+  const t = `${m} m`, w = t.length * 7 + 12
+  return (
+    <g transform={`translate(${x},${y})`} style={{ pointerEvents: "none" }}>
+      <rect x={-w / 2} y={-10} width={w} height={20} rx={10} fill="rgba(10,12,15,0.86)" stroke="rgba(255,255,255,0.25)" strokeWidth={1} />
+      <text textAnchor="middle" dominantBaseline="central" y={0.5} fill="#ffffff" fontSize={13} fontWeight={700}
+        style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.04em" }}>{t}</text>
+    </g>
+  )
+}
 function snapAngle(deg: number, snap: boolean): number {
   if (!snap) return deg
   return SNAP_ANGLES.reduce((a, b) => Math.abs(b - deg) < Math.abs(a - deg) ? b : a)
@@ -836,7 +875,9 @@ function renderShapePath(s: Shape, extra?: React.SVGProps<SVGElement>) {
   }
   if (s.kind === "polygon") {
     if (!s.pts || s.pts.length === 0) return null
-    return <polygon points={s.pts.map(([x, y]) => `${x},${y}`).join(" ")} {...shared as React.SVGProps<SVGPolygonElement>} />
+    const points = s.pts.map(([x, y]) => `${x},${y}`).join(" ")
+    if (s.closed === false) return <polyline points={points} {...shared as React.SVGProps<SVGPolylineElement>} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    return <polygon points={points} {...shared as React.SVGProps<SVGPolygonElement>} />
   }
   if (s.kind === "rect") {
     return <rect x={s.x} y={s.y} width={s.w} height={s.h} rx={2} {...shared as React.SVGProps<SVGRectElement>} />
@@ -1837,7 +1878,7 @@ function TacticsBoard() {
       const newPlayers = players.filter(p => pIds.has(p.id)).map(p => { const id = uid(); idMap.set(p.id, id); return { ...p, id, x: p.x + dx, y: p.y + dy } })
       const newArrows = arrows.filter(a => aIds.has(a.id)).map(a => ({ ...a, id: uid(), x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cpx: a.cpx + dx, cpy: a.cpy + dy, fromId: a.fromId ? idMap.get(a.fromId) : undefined, toId: a.toId ? idMap.get(a.toId) : undefined }))
       const newTexts = texts.filter(t => tIds.has(t.id)).map(t => ({ ...t, id: uid(), x: t.x + dx, y: t.y + dy }))
-      const newShapes = shapes.filter(s => sIds.has(s.id)).map(s => ({ ...s, id: uid(), x: s.x + dx, y: s.y + dy, pts: s.pts.map(([px, py]: [number, number]) => [px + dx, py + dy] as [number, number]) }))
+      const newShapes = shapes.filter(s => sIds.has(s.id)).map(s => ({ ...s, id: uid(), x: s.x + dx, y: s.y + dy, pts: s.pts.map(([px, py]: [number, number]) => [px + dx, py + dy] as [number, number]), ids: remapIds(s.ids, idMap) }))
       const newImages = images.filter(i => iIds.has(i.id)).map(i => ({ ...i, id: uid(), x: i.x + dx, y: i.y + dy }))
       const newZones = customZones.filter(z => zIds.has(z.id)).map(z => ({ ...z, id: uid(), x: z.x + dx, y: z.y + dy }))
       return { newPlayers, newArrows, newTexts, newShapes, newImages, newZones }
@@ -1894,7 +1935,7 @@ function TacticsBoard() {
       const newPlayers = cb.players.map(p => { const id = uid(); idMap.set(p.id, id); return { ...p, id, x: p.x + 24, y: p.y + 24 } })
       const newArrows = cb.arrows.map(a => ({ ...a, id: uid(), x1: a.x1 + 24, y1: a.y1 + 24, x2: a.x2 + 24, y2: a.y2 + 24, cpx: a.cpx + 24, cpy: a.cpy + 24, fromId: a.fromId ? idMap.get(a.fromId) : undefined, toId: a.toId ? idMap.get(a.toId) : undefined }))
       const newTexts = cb.texts.map(t => ({ ...t, id: uid(), x: t.x + 24, y: t.y + 24 }))
-      const newShapes = cb.shapes.map(s => ({ ...s, id: uid(), x: s.x + 24, y: s.y + 24, pts: s.pts.map(([px, py]: [number, number]) => [px + 24, py + 24] as [number, number]) }))
+      const newShapes = cb.shapes.map(s => ({ ...s, id: uid(), x: s.x + 24, y: s.y + 24, pts: s.pts.map(([px, py]: [number, number]) => [px + 24, py + 24] as [number, number]), ids: remapIds(s.ids, idMap) }))
       const newImages = cb.images.map(i => ({ ...i, id: uid(), x: i.x + 24, y: i.y + 24 }))
       const newZones = cb.zones.map(z => ({ ...z, id: uid(), x: z.x + 24, y: z.y + 24 }))
       applyDuplicates({ newPlayers, newArrows, newTexts, newShapes, newImages, newZones })
@@ -1941,7 +1982,7 @@ function TacticsBoard() {
         const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0
         const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0
         undoPoint("nudge:" + selection.map(s => s.id).join())
-        nudge(selection, dx, dy)
+        nudge(withLinked(selection), dx, dy)
       }
       if (e.key === "+" || e.key === "=") applyZoom(1.15)
       if (e.key === "-") applyZoom(0.87)
@@ -2113,7 +2154,83 @@ function TacticsBoard() {
       })
       return changed ? next : prev
     })
+    // A team shape's points follow the pieces they're attached to, so it stretches as they move
+    setShapes(prev => {
+      let changed = false
+      const next = prev.map(sh => {
+        if (!sh.ids) return sh
+        let moved = false
+        const pts = sh.pts.map((pt, i) => {
+          const P = sh.ids![i] ? pieceMap.get(sh.ids![i]) : undefined
+          if (!P || (P.x === pt[0] && P.y === pt[1])) return pt
+          moved = true
+          return [P.x, P.y] as [number, number]
+        })
+        if (!moved) return sh
+        changed = true
+        return { ...sh, pts }
+      })
+      return changed ? next : prev
+    })
   }, [players]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** Dragging or nudging a team shape takes the pieces it's attached to along with it (reads the latest board, so the arrow keys never use an old one) */
+  const shapesRef = useRef(shapes)
+  shapesRef.current = shapes
+  const withLinked = (items: SelItem[]): SelItem[] => {
+    const have = new Set(items.map(s => s.id)), add: SelItem[] = []
+    for (const it of items) {
+      if (it.kind !== "shape") continue
+      for (const id of shapesRef.current.find(s => s.id === it.id)?.ids ?? []) {
+        if (id && !have.has(id) && piecesRef.current.some(p => p.id === id)) { have.add(id); add.push({ kind: "player", id }) }
+      }
+    }
+    return add.length ? [...items, ...add] : items
+  }
+
+  /* ── Team shapes, distances and ghosts ── */
+  /** Joins the selected pieces with a line (or, from 3 pieces, a closed shape) attached to them, so it stretches as they move. One undo step. */
+  const connectPieces = (closed: boolean) => {
+    const ids = new Set(selection.map(s => s.id))
+    const pcs = players.filter(p => ids.has(p.id) && !p.locked)
+    if (pcs.length < (closed ? 3 : 2)) return
+    const order = shapeOrder(pcs, closed).map(i => pcs[i])
+    undoPoint()
+    const sh: Shape = {
+      id: uid(), kind: "polygon", pts: order.map(p => [p.x, p.y] as [number, number]), closed, ids: order.map(p => p.id),
+      x: 0, y: 0, w: 0, h: 0, fill: PS_VOLT, fillOpacity: closed ? 0.18 : 0, stroke: PS_VOLT, strokeW: closed ? 2 : 3, strokeDash: closed, label: "",
+    }
+    setShapes(prev => [...prev, sh])
+    setSelection([{ kind: "shape", id: sh.id }])
+  }
+  /** A dotted line between two pieces showing how far apart they are in metres. It follows them. One undo step. */
+  const measurePieces = () => {
+    const ids = new Set(selection.map(s => s.id))
+    const [P, Q] = players.filter(p => ids.has(p.id) && !p.locked)
+    if (!P || !Q) return
+    undoPoint()
+    const a: Arrow = {
+      id: uid(), x1: P.x, y1: P.y, x2: Q.x, y2: Q.y, cpx: (P.x + Q.x) / 2, cpy: (P.y + Q.y) / 2,
+      color: "#ffffff", strokeW: 2, dash: "dotted", label: "", twoWay: false, kind: "line", fromId: P.id, toId: Q.id, dist: true,
+    }
+    setArrows(prev => [...prev, a])
+    setSelection([{ kind: "arrow", id: a.id }])
+  }
+  /** A faded copy of a player a few metres ahead (where they'll be) or behind (where they were), joined to them by a run. One undo step. */
+  const addGhost = (p: Player, ahead: boolean) => {
+    const away = !wearsKit(p, kitOf("home"), HOME_COLORS.bg) && wearsKit(p, kitOf("away"), AWAY_COLORS.bg) // the away team attacks the other way
+    const g = geoRef.current, at = toPitch(g, p.x, p.y)
+    const to = toCanvas(g, Math.max(0, Math.min(PW, at.x + (away ? -1 : 1) * (ahead ? 1 : -1) * 120)), at.y)
+    const ghost: Player = { ...p, id: uid(), x: to.x, y: to.y, ghost: true, glow: false, locked: undefined }
+    const [from, end] = ahead ? [p, ghost] : [ghost, p]
+    const run: Arrow = {
+      id: uid(), x1: from.x, y1: from.y, x2: end.x, y2: end.y, cpx: (from.x + end.x) / 2, cpy: (from.y + end.y) / 2,
+      color: "#ffffff", strokeW: 3, dash: "dashed", label: "", twoWay: false, kind: "run", fromId: from.id, toId: end.id,
+    }
+    undoPoint()
+    setPlayers(prev => { const i = prev.findIndex(x => x.id === p.id); return [...prev.slice(0, i), ghost, ...prev.slice(i)] }) // drawn under the player
+    setArrows(prev => [...prev, run])
+    setSelection([{ kind: "player", id: ghost.id }])
+  }
 
   /** How much bigger the names and numbers on the pieces are drawn */
   const labelScale = labelSize === "xl" ? 1.7 : labelSize === "large" ? 1.35 : 1
@@ -2324,8 +2441,8 @@ function TacticsBoard() {
     if (hasDraggedRef.current) return
     const { x, y } = svgXY(e)
 
-    // A new player's number counts players only, not ✕ markers or the ball
-    const nextNum = String(players.filter(q => !q.kind).length + 1)
+    // A new player's number counts players only, not ✕ markers, the ball or ghosts
+    const nextNum = String(players.filter(q => !q.kind && !q.ghost).length + 1)
     if (tool === "homePlayer") {
       snapshot()
       const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...HOME_COLORS, ...teamKit("home"), glow: false, scale: 1 }
@@ -2419,7 +2536,7 @@ function TacticsBoard() {
     const items: SelItem[] = keep ? selection : [{ kind, id }]
     if (!keep) setSelection(items)
     const { x, y } = svgXY(e)
-    moveRef.current = { x, y, sx: e.clientX, sy: e.clientY, live: false, item: { kind, id }, keep: keep && selection.length > 1, base: selectedBase(items) }
+    moveRef.current = { x, y, sx: e.clientX, sy: e.clientY, live: false, item: { kind, id }, keep: keep && selection.length > 1, base: selectedBase(withLinked(items)) }
     dragRef.current = { kind: "move", id, ox: 0, oy: 0 }
   }
 
@@ -2920,6 +3037,35 @@ function TacticsBoard() {
                         <p className="text-xs" style={{ color: TEXT_MUTED }}>Select 2 or more players to align them.</p>
                       )}
                     </div>
+                    {(() => {
+                      const ids = new Set(selPlayerIds)
+                      const pcs = players.filter(p => ids.has(p.id) && !p.locked)
+                      if (pcs.length < 2) return null
+                      return (
+                        <div className="flex flex-col gap-2">
+                          <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Team shape</p>
+                          <div className="flex gap-1.5">
+                            <button onClick={() => connectPieces(false)} title="Join them with a line"
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
+                              style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
+                              <Waypoints size={12} /> Line
+                            </button>
+                            <button onClick={() => connectPieces(true)} disabled={pcs.length < 3} title={pcs.length < 3 ? "Select 3 or more to make a shape" : "Join them in a shape"}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
+                              style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, opacity: pcs.length < 3 ? 0.4 : 1 }}>
+                              <Pentagon size={12} /> Shape
+                            </button>
+                          </div>
+                          <p className="text-xs" style={{ color: TEXT_MUTED }}>It stretches as they move. Drag it to move them together.</p>
+                          {pcs.length === 2 && (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs" style={{ color: TEXT_MUTED }}>Distance <span style={{ color: TEXT_PRIMARY, fontWeight: 700 }}>{metres(geo, Math.hypot(pcs[0].x - pcs[1].x, pcs[0].y - pcs[1].y))} m</span></span>
+                              <button onClick={measurePieces} className="px-2 py-1 rounded text-xs hover:brightness-110" style={{ background: SURFACE_2, color: TEXT_MUTED }}>Show on board</button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 )
               })()
@@ -2927,7 +3073,7 @@ function TacticsBoard() {
               <div className="p-3 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>
-                    {selP ? (selP.kind === "marker" ? "✕ marker" : selP.kind === "ball" ? "Ball" : "Player") : selA ? "Arrow" : selT ? "Text" : selS ? "Shape" : selI ? "Image" : sel.kind === "zone" ? "Zone" : "Element"}
+                    {selP ? (selP.kind === "marker" ? "✕ marker" : selP.kind === "ball" ? "Ball" : selP.ghost ? "Ghost" : "Player") : selA ? "Arrow" : selT ? "Text" : selS ? (selS.ids ? (selS.closed === false ? "Team line" : "Team shape") : "Shape") : selI ? "Image" : sel.kind === "zone" ? "Zone" : "Element"}
                   </p>
                   <button onClick={deleteSelected} className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: DS_ERROR }}>
                     <Trash2 size={13} />
@@ -3005,6 +3151,21 @@ function TacticsBoard() {
                       <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
                       <span style={{ color: TEXT_PRIMARY }}>Glow highlight</span>
                     </label>
+                    <div className="flex flex-col gap-1.5 mt-1">
+                      <p className="text-xs" style={{ color: TEXT_MUTED }}>Ghost — where they were or will be</p>
+                      {!selP.ghost && (
+                        <div className="flex gap-1.5">
+                          <button onClick={() => addGhost(selP, false)} className="flex-1 py-1.5 rounded text-xs font-semibold hover:brightness-110"
+                            style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>+ Was here</button>
+                          <button onClick={() => addGhost(selP, true)} className="flex-1 py-1.5 rounded text-xs font-semibold hover:brightness-110"
+                            style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>+ Will be</button>
+                        </div>
+                      )}
+                      <label className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input type="checkbox" checked={selP.ghost || false} onChange={e => updP({ ghost: e.target.checked || undefined })} className="accent-green-400" />
+                        <span style={{ color: TEXT_PRIMARY }}>Faded ghost</span>
+                      </label>
+                    </div>
                   </div>
                 )}
 
@@ -3063,6 +3224,10 @@ function TacticsBoard() {
                       }} className="px-2 py-1 rounded text-xs hover:brightness-110"
                         style={{ background: SURFACE_2, color: TEXT_MUTED }}>Curve</button>
                     </div>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input type="checkbox" checked={selA.dist || false} onChange={e => updA({ dist: e.target.checked || undefined })} className="accent-green-400" />
+                      <span style={{ color: TEXT_PRIMARY }}>Show length · {metres(geo, curveLen(selA))} m</span>
+                    </label>
                     <p className="text-[10px] italic mt-1" style={{ color: TEXT_MUTED }}>Drag the handle on the arrow to curve manually.</p>
                   </div>
                 )}
@@ -3133,21 +3298,38 @@ function TacticsBoard() {
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
-                    <ColorPicker label="Fill" colors={SHAPE_FILLS} selected={selS.fill} onSelect={c => updS({ fill: c })} />
+                    {selS.ids && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs" style={{ color: TEXT_MUTED }}>Follows {selS.ids.filter(Boolean).length} players</span>
+                        <button onClick={() => updS({ ids: undefined })}
+                          className="px-2 py-1 rounded text-xs hover:brightness-110" style={{ background: SURFACE_2, color: TEXT_MUTED }}>Detach</button>
+                      </div>
+                    )}
+                    {selS.kind === "polygon" && (
+                      <label className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input type="checkbox" checked={selS.dist || false} onChange={e => updS({ dist: e.target.checked || undefined })} className="accent-green-400" />
+                        <span style={{ color: TEXT_PRIMARY }}>Show distances in metres</span>
+                      </label>
+                    )}
+                    {selS.closed !== false && (
+                      <>
+                        <ColorPicker label="Fill" colors={[PS_VOLT, ...SHAPE_FILLS]} selected={selS.fill} onSelect={c => updS({ fill: c })} />
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs" style={{ color: TEXT_MUTED }}>Opacity {Math.round(selS.fillOpacity * 100)}%</span>
+                          <input type="range" min={5} max={95} value={Math.round(selS.fillOpacity * 100)}
+                            onChange={e => updS({ fillOpacity: +e.target.value / 100 })} className="w-full accent-green-400" />
+                        </label>
+                      </>
+                    )}
+                    <ColorPicker label={selS.closed === false ? "Colour" : "Border"} colors={PALETTE} selected={selS.stroke} onSelect={c => updS({ stroke: c })} />
                     <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Opacity {Math.round(selS.fillOpacity * 100)}%</span>
-                      <input type="range" min={5} max={95} value={Math.round(selS.fillOpacity * 100)}
-                        onChange={e => updS({ fillOpacity: +e.target.value / 100 })} className="w-full accent-green-400" />
-                    </label>
-                    <ColorPicker label="Border" colors={PALETTE} selected={selS.stroke} onSelect={c => updS({ stroke: c })} />
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Border width {selS.strokeW}px</span>
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>{selS.closed === false ? "Width" : "Border width"} {selS.strokeW}px</span>
                       <input type="range" min={1} max={6} value={selS.strokeW}
                         onChange={e => updS({ strokeW: +e.target.value })} className="w-full accent-green-400" />
                     </label>
                     <label className="flex items-center gap-2 text-xs cursor-pointer">
                       <input type="checkbox" checked={selS.strokeDash} onChange={e => updS({ strokeDash: e.target.checked })} className="accent-green-400" />
-                      <span style={{ color: TEXT_PRIMARY }}>Dashed border</span>
+                      <span style={{ color: TEXT_PRIMARY }}>{selS.closed === false ? "Dashed" : "Dashed border"}</span>
                     </label>
                   </div>
                 )}
@@ -3783,6 +3965,15 @@ function TacticsBoard() {
                       onContextMenu={e => openMenu(e, { kind: "shape", id: s.id }, s.locked)}
                       style={{ cursor: tool === "select" && !s.locked ? "move" : "default" }}>
                       {renderShapePath(s)}
+                      {/* An open line is easy to grab, and can show the distance along each side */}
+                      {s.kind === "polygon" && s.closed === false && (
+                        <polyline points={s.pts.map(([x, y]) => `${x},${y}`).join(" ")} fill="none" stroke="transparent" strokeWidth={16} />
+                      )}
+                      {s.dist && s.kind === "polygon" && s.pts.map((pt, i) => {
+                        if (i === s.pts.length - 1 && (s.closed === false || s.pts.length < 3)) return null
+                        const q = s.pts[(i + 1) % s.pts.length]
+                        return <DistTag key={i} x={(pt[0] + q[0]) / 2} y={(pt[1] + q[1]) / 2} m={metres(geo, Math.hypot(q[0] - pt[0], q[1] - pt[1]))} />
+                      })}
                       {s.label && (() => {
                         const lx = s.kind === "polygon" && s.pts && s.pts.length > 0
                           ? s.pts.reduce((a, [px]) => a + px, 0) / s.pts.length
@@ -3886,6 +4077,10 @@ function TacticsBoard() {
                               style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>{a.step}</text>
                           </g>
                         )}
+                        {a.dist && (() => {
+                          const at = a.step ? curveAt(e.x1, e.y1, a.cpx, a.cpy, e.x2, e.y2, 0.3) : mid // clear of the step number
+                          return <DistTag x={at.x} y={at.y} m={metres(geo, curveLen(a))} />
+                        })()}
                         {a.label && (
                           <text x={(a.x1 + a.x2) / 2} y={(a.y1 + a.y2) / 2 - (a.step ? 22 : 8)}
                             textAnchor="middle" fill={a.color} fontSize={12} fontWeight="600"
@@ -3955,7 +4150,7 @@ function TacticsBoard() {
                     const numFontSize = Math.max(10 * s, Math.min(18 * s * labelScale, r * (labelScale > 1 ? 0.9 : 0.8)) * Math.min(1, 3 / Math.max(3, numberText.length)))
                     const ringW = (tokenStyle === "minimal" ? 1.5 : 3) * s // minimal pieces are flat: a thin ring and no drop shadow
                     return (
-                      <g key={p.id} transform={`translate(${p.x},${p.y})`}
+                      <g key={p.id} transform={`translate(${p.x},${p.y})`} opacity={p.ghost ? 0.45 : undefined}
                         onPointerDown={e => {
                           if (p.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } // locked: the press goes through to the board
                           if (tool === "homePlayer" || tool === "awayPlayer") {
@@ -3998,11 +4193,11 @@ function TacticsBoard() {
                           <>
                             {/* Main circle (a patterned kit lays its second colour on top, then the ring) */}
                             {(p.pat ?? "solid") === "solid" ? (
-                              <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={ringW} />
+                              <circle r={r} fill={p.bg} stroke={p.ring} strokeWidth={ringW} strokeDasharray={p.ghost ? `${4 * s},${3 * s}` : undefined} />
                             ) : (
                               <>
                                 <KitFill cid={`kc-${p.id}`} r={r} pat={p.pat!} c1={p.bg} c2={p.bg2 ?? "#ffffff"} />
-                                <circle r={r} fill="none" stroke={p.ring} strokeWidth={ringW} />
+                                <circle r={r} fill="none" stroke={p.ring} strokeWidth={ringW} strokeDasharray={p.ghost ? `${4 * s},${3 * s}` : undefined} />
                               </>
                             )}
                             {/* Number inside circle */}
