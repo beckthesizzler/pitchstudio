@@ -2,20 +2,19 @@ import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Com
 import type { ReactNode } from "react"
 import React from "react"
 import { toPng, toJpeg, toBlob, toCanvas as nodeToCanvas, getFontEmbedCSS } from "html-to-image"
-import jsPDF from "jspdf"
 import {
   MousePointer2, UserPlus, ArrowUpRight, Type, Pentagon,
-  Trash2, Download, Layers, RotateCcw, RotateCw,
+  Trash2, Download, RotateCcw, RotateCw,
   ChevronDown, FileImage, Move, Hand, PanelLeftClose, PanelLeftOpen,
   ImagePlus, Square, Circle, Minus, Plus, BookOpen,
-  Lock, Star, X, RefreshCw, Magnet, ChevronRight,
-  Save, FolderOpen, LogIn, LogOut, User, AlertCircle, Check, Clock, MoreHorizontal, Copy, BringToFront, SendToBack, Unlock,
-  LayoutGrid, StickyNote, Video, FileText, UserSquare, Archive,
+  Lock, X, RefreshCw, ChevronRight,
+  Save, FolderOpen, LogIn, LogOut, AlertCircle, Check, Clock, MoreHorizontal, Copy, BringToFront, SendToBack, Unlock,
+  Video,
   Settings, ArrowLeft, HelpCircle, Mail, AlignLeft, ChevronUp,
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
-  Grid3x3, Rows3, PenLine, Pencil, Waypoints, Lightbulb, Eye, EyeOff, Play,
+  Grid3x3, Rows3, Pencil, Waypoints, Eye, EyeOff, Play,
 } from "lucide-react"
 import { createClient } from "@supabase/supabase-js"
 import { projectId, publicAnonKey } from "../../utils/supabase/info"
@@ -116,7 +115,7 @@ interface Template {
 
 /** How a board looks. Saved with the board so it reopens exactly the same. */
 interface BoardSettings {
-  workspaceMode: "tactics" | "report" | "brainstorm"
+  workspaceMode: "tactics" | "brainstorm"
   canvasMode: "full" | "half" | "blank"
   showPitch: boolean
   pitchColor: "green" | "white"
@@ -157,7 +156,7 @@ interface BoardData {
   steps?: BoardStep[]; step?: number // a move in steps: every step (this one too) and which is on screen. Only boards with 2 or more steps have them
 }
 const DEFAULT_BOARD_SETTINGS: BoardSettings = {
-  workspaceMode: "tactics", canvasMode: "full", showPitch: true, pitchColor: "green", bgColor: "#0d1117",
+  workspaceMode: "tactics", canvasMode: "full", showPitch: true, pitchColor: "green", bgColor: "#2D2F34",
   pitchScale: 1, pitchOffX: 0, pitchOffY: 0, view3d: false, rotation: 0,
   homeColor: "#fbbf24", awayColor: "#1d4ed8", showPlayerLabels: true, textLayer: "foreground",
   showLanes: false, show18Zones: false, pitchVisible: true,
@@ -179,7 +178,7 @@ function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSet
   const bool = (x: unknown, fallback: boolean) => (typeof x === "boolean" ? x : fallback)
   const str = (x: unknown, fallback: string) => (typeof x === "string" && x ? x : fallback)
   return {
-    workspaceMode: oneOf(v.workspaceMode, ["tactics", "report", "brainstorm"] as const, d.workspaceMode),
+    workspaceMode: oneOf(v.workspaceMode, ["tactics", "brainstorm"] as const, d.workspaceMode), // an old Report board opens as a tactics board
     canvasMode: oneOf(v.canvasMode, ["full", "half", "blank"] as const, d.canvasMode),
     showPitch: bool(v.showPitch, d.showPitch),
     pitchColor: oneOf(v.pitchColor, ["green", "white"] as const, d.pitchColor),
@@ -279,9 +278,9 @@ const waitForSaves = (maxMs: number) =>
 /** The save each saved board is waiting on. Opening that board waits for it: it may hold the last change made before Back. */
 const boardSavesInFlight = new Map<string, Promise<unknown>>()
 const waitForBoardSave = (id: string) => boardSavesInFlight.get(id) ?? Promise.resolve()
-/** Hands a board (or Braindump) from the hub to the board page. Kept in memory: a board with photos can be too big for browser storage. */
-const boardHandoff: { preload: { canvas_data: unknown; title: string | null; id: string; narrative: string | null; updated_at: string | null } | null; braindump: boolean } =
-  { preload: null, braindump: false }
+/** Hands a board (or Braindump, or the drops) from the hub to the board page. Kept in memory: a board with photos can be too big for browser storage. */
+const boardHandoff: { preload: { canvas_data: unknown; title: string | null; id: string; narrative: string | null; updated_at: string | null } | null; braindump: boolean; drops: boolean } =
+  { preload: null, braindump: false, drops: false }
 /** Unsaved new boards are kept on this device (one for the board, one for Braindump),
  *  so the browser's Back button, a closed tab or a crash doesn't lose them. Boards with big photos are too large to keep. */
 const DRAFT_MAX_CHARS = 1000000
@@ -301,7 +300,6 @@ const CW = 1400, CH = 900    // canvas dimensions
 const PW = 1050, PH = 680    // pitch dimensions
 const PX = (CW - PW) / 2    // = 175, pitch x offset
 const PY = (CH - PH) / 2    // = 110, pitch y offset
-const CX = CW / 2, CY = CH / 2  // canvas center (700, 450)
 const SVG_DISPLAY_W = 980 // the board is shown at most 980 × 630 at 100% zoom
 
 /** Where the pitch sits on the canvas. Horizontal: as it always has. Vertical: turned a quarter, home goal at the bottom. */
@@ -390,13 +388,11 @@ function BallGlyph({ r, icon = false }: { r: number; icon?: boolean }) {
 }
 /** PS Volt: the PitchStudio signature highlight. Reserved for the one key idea on a board. */
 const PS_VOLT = "#d7ff3c"
-// The first ten are the original swatches (same order, so nothing moves); the rest are colours clubs wear, named by colour only
-const PALETTE = ["#ffffff","#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6","#000000",
-  "#e5e7eb","#6b7280","#da291c","#a50044","#7a263a","#6cabdd","#1d4ed8","#0b1f4b","#15803d","#edbb00","#f97316","#7c3aed","#92400e", PS_VOLT]
-const SHAPE_FILLS = ["#fbbf24","#f87171","#60a5fa","#4ade80","#c084fc","#fb923c","#34d399","#f472b6"]
-// The last two are the Night and Paper looks
-const BG_PRESETS = ["#0d1117","#1a1a2e","#0f2027","#1b2838","#2c2c2c","#f5f5f0","#ffffff","#1a472a","#0a0c0f","#f1ebdf"]
-const ZONE_COLOURS = ["#3fb950","#f97316","#58a6ff","#f85149","#fbbf24","#c084fc","#34d399","#ffffff"]
+/** The one row of colours every picker shows, + opens any colour: white, black, PS Volt, red, amber, sky, royal, green, pink */
+const SWATCHES = ["#ffffff", "#000000", PS_VOLT, "#f87171", "#fbbf24", "#60a5fa", "#1d4ed8", "#4ade80", "#f472b6"]
+const SHAPE_FILLS = ["#fbbf24", "#f87171", "#60a5fa", "#4ade80", "#f472b6", PS_VOLT] // new shapes take these in turn
+// Grey (the default), the old near-black, grass, white, then the Night and Paper looks
+const BG_PRESETS = ["#2D2F34","#0d1117","#1a472a","#ffffff","#06080b","#ddd6c3"]
 /** Black or white, whichever reads better on this colour (kit numbers). Same answer as before for the original swatches. */
 const inkOn = (hex: string) => {
   const m = /^#([0-9a-f]{6})$/i.exec(hex)
@@ -414,6 +410,7 @@ const KITS: Kit[] = [
   kit("royal", "Royal blue", "solid", "#1d4ed8", "#1d4ed8", "#ffffff"),
   kit("navy", "Navy", "solid", "#0b1f4b", "#0b1f4b", "#ffffff"),
   kit("yellow", "Yellow", "solid", "#edbb00", "#edbb00", "#000000"),
+  kit("amber", "Amber", "solid", "#fbbf24", "#fbbf24", "#000000"), // the home team's starting kit
   kit("green", "Green", "solid", "#15803d", "#15803d", "#ffffff"),
   kit("black", "Black", "solid", "#111111", "#111111", "#ffffff"),
   kit("orange", "Orange", "solid", "#f97316", "#f97316", "#000000"),
@@ -431,6 +428,8 @@ const KITS: Kit[] = [
   kit("red-white-sleeves", "Red with white sleeves", "sleeves", "#da291c", "#ffffff", "#ffffff"),
   kit("white-black-sleeves", "White with black sleeves", "sleeves", "#ffffff", "#111111", "#000000"),
 ]
+/** The kits a team block shows before "More kits" */
+const TOP_KITS = ["white", "red", "sky", "royal", "navy", "black-white-stripes"]
 const GK_KITS: Kit[] = [
   kit("gk-lime", "Lime", "solid", "#a3e635", "#a3e635", "#000000"),
   kit("gk-pink", "Pink", "solid", "#f472b6", "#f472b6", "#000000"),
@@ -446,7 +445,6 @@ const wearsKit = (p: Player, k: { pat: KitPattern; c1: string; c2: string }, def
 /** What a player needs to wear a kit. A plain colour stays exactly as boards always stored it */
 const kitProps = (k: { pat: KitPattern; c1: string; c2: string; num: string }): Partial<Player> =>
   k.pat === "solid" ? { bg: k.c1, fg: k.num, pat: undefined, bg2: undefined, outline: false } : { bg: k.c1, fg: k.num, pat: k.pat, bg2: k.c2, outline: true }
-const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315, 360]
 
 /* ── Design tokens ──────────────────────────────────────────────
    Fonts (do not mix roles):
@@ -454,13 +452,15 @@ const SNAP_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315, 360]
    · Barlow Condensed   — logo badges, chrome labels, uppercase UI
    · Inter              — all body text, inputs, and buttons
 ──────────────────────────────────────────────────────────────── */
-const SURFACE_BASE    = "#08080A"
-const SURFACE_1       = "#121215"
-const SURFACE_2       = "#1C1C21"
-const ACCENT_GRADIENT = "linear-gradient(135deg, #7C5CFF, #B14AED)"
-const ACCENT_SOLID    = "#7C5CFF"
+const SURFACE_BASE    = "#242529"
+const SURFACE_1       = "#2C2D32"
+const SURFACE_2       = "#35363C"
+// One accent: PS Volt. Anything filled with it takes dark ink
+const ACCENT_GRADIENT = "#d7ff3c"
+const ACCENT_SOLID    = "#d7ff3c"
+const ACCENT_INK      = "#0a0c0f"
 const TEXT_PRIMARY    = "#F5F5F7"
-const TEXT_MUTED      = "#8A8A94"
+const TEXT_MUTED      = "#A3A3AD"
 const DS_ERROR        = "#f85149"
 const DS_BORDER       = "rgba(255,255,255,0.08)"
 
@@ -790,6 +790,8 @@ type TeamShape = BoardSettings["homeShape"]
 const POS_CODES = new Set(FORMATIONS.flatMap(f => f.positions.map(p => p.pos)))
 const IN_X: Record<string, number> = { GK: 140, CB: 330, LB: 560, RB: 560, LWB: 760, RWB: 760, DM: 470, CM: 640, LM: 720, RM: 720, LW: 830, RW: 830, AM: 740, SS: 800, ST: 900 }
 const OUT_X: Record<string, number> = { g: 95, d: 230, dm: 320, m: 390, a: 480, s: 560 }
+/** In possession, the front players stay just onside: level with where a team out of possession holds its back line */
+const ONSIDE_X = PW - OUT_X.d - 12
 /** Where a formation's players stand: as written (lineup), in possession or out of possession. Home team, attacking to the right. */
 function shapePositions(f: Formation, shape: TeamShape): FormationPos[] {
   if (shape === "base") return f.positions
@@ -822,7 +824,7 @@ function shapePositions(f: Formation, shape: TeamShape): FormationPos[] {
     if (p.pos === "LWB" || p.pos === "RWB") y = top(p) ? 45 : 635
     if (p.pos === "LM" || p.pos === "RM") y = wide ? (top(p) ? 200 : 480) : (top(p) ? 50 : 630)
     if (p.pos === "LW" || p.pos === "RW") y = top(p) ? 195 : 485
-    return { ...p, x: Math.min(960, x), y: Math.max(40, Math.min(640, y)) }
+    return { ...p, x: Math.min(ONSIDE_X, x), y: Math.max(40, Math.min(640, y)) }
   })
 }
 /** Pairs each row with a different column at the lowest total cost (the Hungarian method). Needs rows ≤ columns. */
@@ -997,10 +999,6 @@ function DistTag({ x, y, m }: { x: number; y: number; m: number }) {
         style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.04em" }}>{t}</text>
     </g>
   )
-}
-function snapAngle(deg: number, snap: boolean): number {
-  if (!snap) return deg
-  return SNAP_ANGLES.reduce((a, b) => Math.abs(b - deg) < Math.abs(a - deg) ? b : a)
 }
 
 /* ─────────────────────────── Pitch SVG ─────────────────────── */
@@ -2078,7 +2076,7 @@ function DropThumb({ data, crop }: { data: CanvasState; crop?: [number, number, 
   return (
     <svg viewBox={box ? `${box.x} ${box.y} ${box.w} ${box.h}` : "150 90 1100 720"} width="100%" style={{ display: "block", background: data.bgColor }} aria-hidden="true">
       <g transform={pitchTransformAttr(geo)}>
-        <PitchSVG pitchColor="green" look={st} upright={geo.v} />
+        {data.settings?.canvasMode !== "blank" && <PitchSVG pitchColor={data.settings?.pitchColor ?? "green"} look={st} upright={geo.v} />}
         {(data.customZones ?? []).map(z => <rect key={z.id} x={z.x} y={z.y} width={z.w} height={z.h} rx={4} fill={z.color} fillOpacity={z.opacity * 1.6} />)}
       </g>
       {data.shapes.map(s => <g key={s.id}>{renderShapePath(s)}</g>)}
@@ -2099,22 +2097,18 @@ function DropThumb({ data, crop }: { data: CanvasState; crop?: [number, number, 
 }
 
 function TemplateModal({
-  templates, onClose, onLoad, onSave, onDelete, onTogglePublish, isAdmin, onAdminToggle,
+  templates, onClose, onLoad, onSave, onDelete,
 }: {
   templates: Template[]
   onClose: () => void
   onLoad: (t: Template) => void
   onSave: (name: string) => void
   onDelete: (id: string) => void
-  onTogglePublish: (id: string) => void
-  isAdmin: boolean
-  onAdminToggle: () => void
 }) {
-  const [tab, setTab] = useState<"drops" | "my" | "library">("drops")
+  const [tab, setTab] = useState<"drops" | "my">("drops")
   const [cat, setCat] = useState<DropCat | "All">("All")
   const [newName, setNewName] = useState("")
-  const published = templates.filter(t => t.published)
-  const mine = templates.filter(t => !t.published)
+  const mine = templates // every template saved in this browser (ones once marked "published" included)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.7)" }}
@@ -2127,23 +2121,15 @@ function TemplateModal({
           <div className="flex items-center gap-2">
             <BookOpen size={16} style={{ color: ACCENT_SOLID }} />
             <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
-              TEMPLATE LIBRARY
+              TEMPLATES
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={onAdminToggle}
-              className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors"
-              style={{ background: isAdmin ? ACCENT_GRADIENT : SURFACE_2, color: isAdmin ? "#ffffff" : TEXT_MUTED }}>
-              {isAdmin ? <Lock size={12} /> : <Lock size={12} />}
-              {isAdmin ? "Admin" : "Viewer"}
-            </button>
-            <button onClick={onClose} className="p-1 rounded hover:bg-white/10"><X size={16} /></button>
-          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-white/10"><X size={16} /></button>
         </div>
 
         {/* Tabs */}
         <div className="flex border-b" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
-          {(["drops", "library", "my"] as const).map(t => (
+          {(["drops", "my"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className="px-5 py-2.5 text-xs font-semibold uppercase transition-colors"
               style={{
@@ -2151,7 +2137,7 @@ function TemplateModal({
                 borderBottom: tab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent",
                 color: tab === t ? ACCENT_SOLID : TEXT_MUTED,
               }}>
-              {t === "drops" ? `Drops (${DROPS.length})` : t === "library" ? `Published Library (${published.length})` : `My Templates (${mine.length})`}
+              {t === "drops" ? `Drops (${DROPS.length})` : `My Templates (${mine.length})`}
             </button>
           ))}
         </div>
@@ -2189,7 +2175,7 @@ function TemplateModal({
                       <span className="font-semibold leading-tight" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.03em", fontSize: 16 }}>{x.name}</span>
                       <p className="text-xs flex-1" style={{ color: TEXT_MUTED }}>{x.blurb}</p>
                       <button onClick={() => onLoad({ id: `drop-${x.no}`, name: x.name, data: buildDrop(x), published: false, createdAt: Date.now() })}
-                        className="py-1 rounded text-xs font-medium transition-colors" style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
+                        className="py-1 rounded text-xs font-semibold transition-colors hover:brightness-125" style={{ background: SURFACE_1, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
                         Use drop
                       </button>
                     </div>
@@ -2198,46 +2184,6 @@ function TemplateModal({
               </div>
             </>
           )}
-          {tab === "library" && (
-            <>
-              {published.length === 0 && (
-                <p className="text-center py-8 text-sm" style={{ color: TEXT_MUTED }}>
-                  No published templates yet.{isAdmin ? " Publish one from My Templates." : ""}
-                </p>
-              )}
-              <div className="grid grid-cols-2 gap-3">
-                {published.map(t => (
-                  <div key={t.id} className="rounded-lg border p-3 flex flex-col gap-2"
-                    style={{ borderColor: "rgba(255,255,255,0.1)", background: SURFACE_2 }}>
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>
-                        {t.name}
-                      </span>
-                      <Star size={12} style={{ color: ACCENT_SOLID, flexShrink: 0 }} />
-                    </div>
-                    <p className="text-xs" style={{ color: TEXT_MUTED }}>
-                      {t.data.players.length} players · {t.data.arrows.length} arrows · {t.data.shapes.length} shapes
-                    </p>
-                    <div className="flex gap-1.5 mt-1">
-                      <button onClick={() => onLoad(t)}
-                        className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                        style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
-                        Use Template
-                      </button>
-                      {isAdmin && (
-                        <button onClick={() => onDelete(t.id)}
-                          className="p-1 rounded transition-colors hover:bg-red-500/20"
-                          style={{ color: "#f85149" }}>
-                          <Trash2 size={13} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
           {tab === "my" && (
             <>
               {/* Save new template */}
@@ -2250,7 +2196,7 @@ function TemplateModal({
                 />
                 <button onClick={() => { if (newName.trim()) { onSave(newName.trim()); setNewName("") } }}
                   className="px-3 py-1.5 rounded text-sm font-medium transition-colors"
-                  style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
+                  style={{ background: ACCENT_GRADIENT, color: ACCENT_INK }}>
                   Save Current
                 </button>
               </div>
@@ -2270,17 +2216,10 @@ function TemplateModal({
                     </p>
                     <div className="flex gap-1.5 mt-1">
                       <button onClick={() => onLoad(t)}
-                        className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                        style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
+                        className="flex-1 py-1 rounded text-xs font-semibold transition-colors hover:brightness-125"
+                        style={{ background: SURFACE_1, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
                         Load
                       </button>
-                      {isAdmin && (
-                        <button onClick={() => onTogglePublish(t.id)}
-                          className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors"
-                          style={{ background: `${ACCENT_SOLID}20`, color: ACCENT_SOLID }}>
-                          <Star size={11} /> Publish
-                        </button>
-                      )}
                       <button onClick={() => onDelete(t.id)}
                         className="p-1 rounded transition-colors hover:bg-red-500/20"
                         style={{ color: "#f85149" }}>
@@ -2324,7 +2263,7 @@ function TacticsBoard() {
   const [title, setTitle] = useState("Untitled board")
   const [editingTitle, setEditingTitle] = useState(false)
   const [editingText, setEditingText] = useState<string | null>(null)
-  const [bgColor, setBgColor] = useState("#0d1117")
+  const [bgColor, setBgColor] = useState(DEFAULT_BOARD_SETTINGS.bgColor)
   const [showPitch, setShowPitch] = useState(true)
   const [canvasMode, setCanvasMode] = useState<"full" | "half" | "blank">("full")
   const [pitchColor, setPitchColor] = useState<"green" | "white">("green")
@@ -2367,16 +2306,16 @@ function TacticsBoard() {
   const [stepIdx, setStepIdx] = useState(0) // the step on screen
   const [play, setPlay] = useState<null | { t: number }>(null) // the moment of the move on screen, while it plays or is being exported
   const [making, setMaking] = useState<null | { fmt: "gif" | "mp4"; done: number }>(null) // a GIF or a video being made
-  const [kitEditor, setKitEditor] = useState({ home: false, away: false })
+  const [kitEditor, setKitEditor] = useState<Record<"home" | "away", "" | "more" | "own">>({ home: "", away: "" }) // a team's kits: the few, all of them, or your own
+  const [namesFor, setNamesFor] = useState<"home" | "away" | null>(null) // the team whose names are open
+  const [kitMode, setKitMode] = useState<null | "gk" | "own">(null) // the kit choice open for the selected player
+  useEffect(() => { setKitMode(null) }, [sel?.id])
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
-  const [isAdmin, setIsAdmin] = useState(false)
   const [sideTab, setSideTab] = useState<"selected" | "board">("board")
   const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
-  const [boardGroups, setBoardGroups] = useState({ frame: true, formation: true, teams: true, labels: false, zones: false, pitch: false, editorial: false, animation: false, canvas: false })
+  const [boardGroups, setBoardGroups] = useState({ frame: true, teams: true, pitch: false, editorial: false, animation: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
-  const [selectedFormation, setSelectedFormation] = useState("4-3-3")
-  const [formShape, setFormShape] = useState<TeamShape>("base") // the shape the formation buttons use
   const [homeFormation, setHomeFormation] = useState("")
   const [homeShape, setHomeShape] = useState<TeamShape>("base")
   const [awayFormation, setAwayFormation] = useState("")
@@ -2454,10 +2393,11 @@ function TacticsBoard() {
       entryRef.current = "braindump"
       setWorkspaceMode("brainstorm")
       setCanvasMode("blank")
-      setBgColor("#08080A")
+      setBgColor(DEFAULT_BOARD_SETTINGS.bgColor)
       setShowPitch(false)
       return
     }
+    if (boardHandoff.drops) { boardHandoff.drops = false; setShowTemplates(true) } // "Start from a drop" on the hub
     const preload = boardHandoff.preload
     if (preload) {
       boardHandoff.preload = null
@@ -2468,7 +2408,7 @@ function TacticsBoard() {
 
   const [saveError, setSaveError] = useState("")
   const [showSaveMenu, setShowSaveMenu] = useState(false)
-  const [headerMenu, setHeaderMenu] = useState<null | "export" | "account" | "more">(null) // the header menu that's open
+  const [headerMenu, setHeaderMenu] = useState<null | "export" | "more">(null) // the header menu that's open
 
   /** Saves the whole board: elements, zones, pitch settings, title and narrative.
    *  forceNew = "Save as new board". auto = the quiet background save (no sign-in prompt, no analytics event).
@@ -2629,14 +2569,14 @@ function TacticsBoard() {
   }
 
   /* ── Workspace mode ── */
-  const [workspaceMode, setWorkspaceMode] = useState<"tactics" | "report" | "brainstorm">("tactics")
+  const [workspaceMode, setWorkspaceMode] = useState<"tactics" | "brainstorm">("tactics")
 
   /* ── Zone overlays ── */
   const [show18Zones, setShow18Zones] = useState(false)
   const [pitchVisible, setPitchVisible] = useState(true)
   const [showLanes, setShowLanes] = useState(false)
   const [customZones, setCustomZones] = useState<CustomZone[]>([])
-  const [zoneColor, setZoneColor] = useState("#3fb950")
+  const [zoneColor, setZoneColor] = useState("#4ade80")
   const [zoneOpacity, setZoneOpacity] = useState(0.25)
   const zoneColorRef = useRef("#3fb950")
   const zoneOpacityRef = useRef(0.25)
@@ -2725,6 +2665,7 @@ function TacticsBoard() {
   hasUnsavedWorkRef.current = hasUnsavedWork
   // The Save button only says "Saved" when nothing has changed since the last save
   const changedSinceSave = !sameParts(boardParts(title, narrative, collectBoard()), savedPartsRef.current)
+  const savedNow = !!currentBoardId && !changedSinceSave // nothing new to save
   /** Keeps an unsaved new board on this device, and removes that copy once it's saved, emptied or thrown away. */
   const writeDraft = () => {
     if (!authUser) return
@@ -2796,7 +2737,7 @@ function TacticsBoard() {
   /** "Discard" on the restored-board notice: throw the draft away and start with an empty board */
   const discardDraft = () => {
     removeDraft()
-    openBoard(workspaceMode === "brainstorm" ? { settings: { workspaceMode: "brainstorm", canvasMode: "blank", bgColor: "#08080A", showPitch: false } } : null, null, null, null, null)
+    openBoard(workspaceMode === "brainstorm" ? { settings: { workspaceMode: "brainstorm", canvasMode: "blank", bgColor: DEFAULT_BOARD_SETTINGS.bgColor, showPitch: false } } : null, null, null, null, null)
   }
 
   // Closing or reloading the tab with unsaved work: the browser asks first.
@@ -2944,6 +2885,7 @@ function TacticsBoard() {
   const shapeDrawRef = useRef<{ x1: number; y1: number } | null>(null)
   const [shapeDraftPreview, setShapeDraftPreview] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
   const [mouse, setMouse] = useState({ x: 0, y: 0 })
+  const drawingRef = useRef(false)
 
   /* ── Refs ── */
   const svgRef = useRef<SVGSVGElement>(null)
@@ -2983,6 +2925,7 @@ function TacticsBoard() {
     if (key && last && last.key === key && now - last.at < 1000) { last.at = now; return }
     histRef.current = histRef.current.slice(0, histIdx.current + 1)
     histRef.current.push(copySnap(boardNowRef.current()))
+    if (histRef.current.length > 100) histRef.current.shift() // undo goes back 100 steps, so a long session doesn't keep growing
     histIdx.current = histRef.current.length - 1
     editRef.current = key ? { key, at: now } : null
   }
@@ -3552,14 +3495,22 @@ function TacticsBoard() {
     else { setAwayColor(k.c1); setAwayPat(k.pat); setAwayC2(k.c2); setAwayNum(k.num) }
     setPlayers(prev => prev.map(p => wearsKit(p, cur, base) ? { ...p, ...kitProps(k) } : p))
   }
-  const teamKitBlock = (team: "home" | "away") => {
+  /** One team in the Teams group: its name, formation, kit and names */
+  const teamBlock = (team: "home" | "away") => {
     const k = kitOf(team)
     const label = team === "home" ? "Home" : "Away"
     const name = team === "home" ? homeName : awayName
-    const open = kitEditor[team]
+    const call = name.trim() || label // what the buttons call the team
+    const there = players.some(p => teamOf(p) === team)
+    const view = kitEditor[team]
     const match = KITS.find(x => x.pat === k.pat && x.c1 === k.c1 && (k.pat === "solid" || x.c2 === k.c2))
+    const shown = view === "more" ? KITS : [...KITS.filter(x => TOP_KITS.includes(x.id)), ...(match && !TOP_KITS.includes(match.id) ? [match] : [])]
+    const link = (text: string, v: "more" | "own") => (
+      <button onClick={() => setKitEditor(e => ({ ...e, [team]: e[team] === v ? "" : v }))} aria-expanded={view === v}
+        className="text-xs font-semibold hover:underline" style={{ color: view === v ? TEXT_PRIMARY : TEXT_MUTED, background: "transparent", border: "none", padding: 0 }}>{text}</button>
+    )
     return (
-      <div key={team} className="flex flex-col gap-2.5 pb-3" style={{ borderBottom: team === "home" ? `1px solid ${DS_BORDER}` : "none" }}>
+      <div key={team} className="flex flex-col gap-2 pb-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
         <div className="flex items-center gap-2">
           <KitDisc id={`${team}-head`} size={24} pat={k.pat} c1={k.c1} c2={k.c2} />
           <input value={name} maxLength={30} aria-label={`${label} team name`} placeholder={`${label} team name`}
@@ -3567,36 +3518,89 @@ function TacticsBoard() {
             className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none"
             style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
         </div>
-        <ColorPicker label={`${label} colour`} colors={PALETTE} selected={k.c1}
-          onSelect={c => applyTeamKit(team, { ...k, c1: c, num: k.pat === "solid" ? inkOn(c) : k.num }, `${team}Colour`)} />
-        <div>
-          <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Kit · {match ? match.name : "Custom"}</p>
-          <div className="flex flex-wrap gap-1">
-            {KITS.map(x => {
-              const on = match?.id === x.id
-              return (
-                <button key={x.id} title={x.name} aria-label={`${label} kit: ${x.name}`} aria-pressed={on} onClick={() => applyTeamKit(team, x)}
-                  className="rounded-full transition-transform hover:scale-110"
-                  style={{ padding: 2, border: `2px solid ${on ? ACCENT_SOLID : "transparent"}`, background: "transparent" }}>
-                  <KitDisc id={`${team}-${x.id}`} size={22} pat={x.pat} c1={x.c1} c2={x.c2} />
-                </button>
-              )
-            })}
+        <div className="flex gap-1.5">
+          <div className="flex-1 min-w-0">
+            <FormationPicker label={label} value={(team === "home" ? homeFormation : awayFormation) || "4-3-3"} onChange={v => setTeamFormation(team, v)} />
           </div>
+          {there ? (
+            <button onClick={() => openNames(team)} aria-pressed={namesFor === team}
+              className="px-3 rounded text-xs font-semibold transition-colors"
+              style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${namesFor === team ? ACCENT_SOLID : DS_BORDER}` }}>Names</button>
+          ) : (
+            <button onClick={() => addTeam(team)} title={`Add the ${label.toLowerCase()} team`}
+              className="px-3 rounded text-xs font-semibold hover:brightness-110"
+              style={{ background: k.c1, color: inkOn(k.c1), border: `1px solid ${DS_BORDER}` }}>+ {label}</button>
+          )}
         </div>
-        <button onClick={() => setKitEditor(e => ({ ...e, [team]: !e[team] }))} aria-expanded={open}
-          className="flex items-center gap-1.5 text-xs font-semibold"
-          style={{ color: TEXT_MUTED, background: "transparent", border: "none", textAlign: "left", padding: 0 }}>
-          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}Pattern and colours
-        </button>
-        {open && (
+        {!there && squads.length > 0 && (
+          <select value="" aria-label="Saved squad"
+            onChange={e => { const q = squads.find(x => x.id === e.target.value); if (q) { applyLineup(team, q.players, q); setSquadId(q.id) } }}
+            className="rounded px-2 py-1 text-xs outline-none"
+            style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
+            <option value="">Or add a saved squad…</option>
+            {squads.map(q => <option key={q.id} value={q.id}>{q.name} ({q.players.length})</option>)}
+          </select>
+        )}
+        <p className="text-xs" style={{ color: TEXT_MUTED }}>Kit · {match ? match.name : "Your own"}</p>
+        <div className="flex flex-wrap" style={{ gap: 3 }}>
+          {shown.map(x => {
+            const on = match?.id === x.id
+            return (
+              <button key={x.id} title={x.name} aria-label={`${label} kit: ${x.name}`} aria-pressed={on} onClick={() => applyTeamKit(team, x)}
+                className="rounded-full transition-transform hover:scale-110"
+                style={{ padding: 2, border: `2px solid ${on ? ACCENT_SOLID : "transparent"}`, background: "transparent" }}>
+                <KitDisc id={`${team}-${x.id}`} size={20} pat={x.pat} c1={x.c1} c2={x.c2} />
+              </button>
+            )
+          })}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {link(view === "more" ? "Fewer kits" : `More kits (${KITS.length})`, "more")}
+          <span className="text-xs" style={{ color: TEXT_MUTED }}>·</span>
+          {link("Make your own", "own")}
+        </div>
+        {view === "own" && (
           <div className="flex flex-col gap-2.5">
+            <ColorPicker label="Main colour" colors={SWATCHES} selected={k.c1}
+              onSelect={c => applyTeamKit(team, { ...k, c1: c, num: k.pat === "solid" ? inkOn(c) : k.num }, `${team}Colour`)} />
             <PatternRow value={k.pat}
               onChange={pt => applyTeamKit(team, { ...k, pat: pt, c2: pt !== "solid" && k.c2 === k.c1 ? (k.c1 === "#ffffff" ? "#111111" : "#ffffff") : k.c2 })} />
             {k.pat !== "solid" && (
-              <ColorPicker label="Second colour" colors={PALETTE} selected={k.c2} onSelect={c => applyTeamKit(team, { ...k, c2: c }, `${team}Second`)} />
+              <ColorPicker label="Second colour" colors={SWATCHES} selected={k.c2} onSelect={c => applyTeamKit(team, { ...k, c2: c }, `${team}Second`)} />
             )}
-            <ColorPicker label="Number colour" colors={PALETTE} selected={k.num} onSelect={c => applyTeamKit(team, { ...k, num: c }, `${team}Number`)} />
+            <ColorPicker label="Number colour" colors={SWATCHES} selected={k.num} onSelect={c => applyTeamKit(team, { ...k, num: c }, `${team}Number`)} />
+          </div>
+        )}
+        {namesFor === team && there && (
+          <div className="flex flex-col gap-2 pt-1">
+            <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Names · {call}</p>
+            <textarea value={lineupText} onChange={e => setLineupText(e.target.value)} rows={7} aria-label="Lineup names"
+              placeholder={"One per line or with commas: goalkeeper first, then each line right to left. A shirt number next to a name is used too."}
+              className="rounded px-2 py-1.5 text-xs outline-none resize-y"
+              style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
+            <button disabled={!lineupText.trim()} onClick={() => applyLineup(team, parseLineup(lineupText))}
+              className="py-1.5 rounded text-xs font-semibold hover:brightness-110"
+              style={{ background: ACCENT_SOLID, color: ACCENT_INK, opacity: lineupText.trim() ? 1 : 0.4 }}>Name {call}</button>
+            {squads.length > 0 && (
+              <div className="flex gap-1.5">
+                <select value="" aria-label="Saved squad"
+                  onChange={e => { const q = squads.find(x => x.id === e.target.value); if (q) { applyLineup(team, q.players, q); setSquadId(q.id); setNamesFor(null) } }}
+                  className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none"
+                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
+                  <option value="">Use a saved squad…</option>
+                  {squads.map(q => <option key={q.id} value={q.id}>{q.name} ({q.players.length})</option>)}
+                </select>
+                <button onClick={() => squadId && deleteSquad(squadId)} disabled={!squadId} aria-label="Delete the last squad used" title={squadId ? `Delete ${squads.find(x => x.id === squadId)?.name ?? "squad"}` : "Use a squad first"}
+                  className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: DS_ERROR, opacity: squadId ? 1 : 0.4 }}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )}
+            <button onClick={() => saveSquad(team)}
+              className="text-xs font-semibold text-left hover:underline" style={{ color: TEXT_MUTED, background: "transparent", border: "none", padding: 0 }}>
+              Save {call} as a squad
+            </button>
+            <p className="text-xs" style={{ color: TEXT_MUTED }}>A squad keeps the names, numbers and kit in this browser, for any board.</p>
           </div>
         )}
       </div>
@@ -3621,7 +3625,7 @@ function TacticsBoard() {
   }
   /** Puts a team into a formation. The players already there move to the spot that suits them (the left-back stays the left-back),
    *  keep their names and numbers, and anyone still named after a position takes the new one. Missing players are added. Gives the new piece list. */
-  const placeTeam = (list: Player[], f: Formation, team: "home" | "away", shape: TeamShape): Player[] => {
+  const placeTeam = (list: Player[], f: Formation, team: "home" | "away", shape: TeamShape, fill = true): Player[] => { // fill = false: only move the players already there
     const target = shapePositions(f, shape)
     const mine = list.filter(p => teamOf(p) === team && !p.locked)
     const at = mine.map(p => teamPt(team, p))
@@ -3634,7 +3638,7 @@ function TacticsBoard() {
     const used = new Set(mine.map(p => p.num))
     const freeNum = (n: number) => { let k = n; while (used.has(String(k))) k++; used.add(String(k)); return String(k) }
     const added: Player[] = f.positions.flatMap((pos, j) => {
-      if (slotOf.includes(j)) return []
+      if (!fill || slotOf.includes(j)) return []
       const t = fromTeamPt(team, target[j])
       return [{ id: uid(), x: t.x, y: t.y, name: pos.pos, num: freeNum(pos.num), ...(team === "home" ? HOME_COLORS : AWAY_COLORS), ...teamKit(team), glow: false, team }]
     })
@@ -3645,13 +3649,65 @@ function TacticsBoard() {
       return { ...p, x: t.x, y: t.y, team, ...(name === "" || POS_CODES.has(name) ? { name: f.positions[j].pos } : {}) }
     }), ...added]
   }
-  /** The formation button: moves the team into the picked formation and shape, or adds it. One undo step. */
-  const setFormation = (formationName: string, team: "home" | "away") => {
-    const f = FORMATIONS.find(x => x.name === formationName)
+  /** Who has the ball, read from the two teams' shapes: the side on the ball is in possession, the other out of it */
+  const ballSide: "home" | "away" | "none" = homeShape === "in" || awayShape === "out" ? "home" : awayShape === "in" || homeShape === "out" ? "away" : "none"
+  const shapeFor = (team: "home" | "away", ball: "home" | "away" | "none"): TeamShape => (ball === "none" ? "base" : ball === team ? "in" : "out")
+  const formationFor = (team: "home" | "away") => formationOf(team).f ?? FORMATIONS.find(x => x.name === "4-3-3")!
+  /** Players that land on top of each other (two teams in the same lines) are eased apart across the pitch, so nobody's depth changes */
+  const easeApart = (list: Player[]): Player[] => {
+    const g = geoRef.current, out = list.map(p => ({ ...p }))
+    const live = out.filter(p => !p.locked && teamOf(p))
+    for (let round = 0; round < 12; round++) {
+      for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) {
+        const a = live[i], b = live[j]
+        const pa = toPitch(g, a.x, a.y), pb = toPitch(g, b.x, b.y), need = 76 / g.sc // two pieces and the name under one, in pitch units
+        const dx = pa.x - pb.x
+        if (Math.hypot(dx, pa.y - pb.y) >= need) continue
+        const room = Math.sqrt(need * need - dx * dx) // how far apart across the pitch they need to be
+        const side = pa.y === pb.y ? (teamOf(a) === "home" ? -1 : 1) : Math.sign(pa.y - pb.y), mid = (pa.y + pb.y) / 2
+        const ya = Math.max(20, Math.min(PH - 20, mid + (side * room) / 2)), yb = Math.max(20, Math.min(PH - 20, mid - (side * room) / 2))
+        const ca = toCanvas(g, pa.x, ya), cb = toCanvas(g, pb.x, yb)
+        a.x = ca.x; a.y = ca.y; b.x = cb.x; b.y = cb.y
+      }
+    }
+    return out
+  }
+  /** Who has the ball: both teams set out in a formation move into their shapes at once. Players placed by hand stay put, and nobody is added. One undo step. */
+  const setBall = (ball: "home" | "away" | "none") => {
+    undoPoint()
+    let list = players
+    for (const team of ["home", "away"] as const) {
+      const shape = shapeFor(team, ball), f = formationOf(team).f
+      if (f && list.some(p => teamOf(p) === team)) {
+        list = placeTeam(list, f, team, shape, false)
+        recordFormation(team, f.name, shape)
+      } else if (team === "home") setHomeShape(shape)
+      else setAwayShape(shape)
+    }
+    setPlayers(ball === "none" ? list : easeApart(list))
+    ;(window as any).posthog?.capture("possession_set", { ball })
+  }
+  /** A team's formation: a team on the board moves into it straight away. One undo step. */
+  const setTeamFormation = (team: "home" | "away", name: string) => {
+    const f = FORMATIONS.find(x => x.name === name)
     if (!f) return
     undoPoint()
-    setPlayers(placeTeam(players, f, team, formShape))
-    recordFormation(team, f.name, formShape)
+    const shape = shapeFor(team, ballSide)
+    if (players.some(p => teamOf(p) === team)) {
+      const list = placeTeam(players, f, team, shape)
+      setPlayers(shape === "base" ? list : easeApart(list))
+    }
+    recordFormation(team, f.name, shape)
+    ;(window as any).posthog?.capture("formation_used", { formation: f.name, shape })
+  }
+  /** Adds a whole team in its formation, in the shape that suits who has the ball. One undo step. */
+  const addTeam = (team: "home" | "away") => {
+    const f = formationFor(team), shape = shapeFor(team, ballSide)
+    undoPoint()
+    const list = placeTeam(players, f, team, shape)
+    setPlayers(shape === "base" ? list : easeApart(list))
+    recordFormation(team, f.name, shape)
+    ;(window as any).posthog?.capture("formation_used", { formation: f.name, shape })
   }
   /** A team in team-sheet order: goalkeeper, then each line from the back, right to left */
   const lineupOf = (list: Player[], team: "home" | "away", f: Formation | undefined, shape: TeamShape): Player[] => {
@@ -3667,7 +3723,7 @@ function TacticsBoard() {
     undoPoint()
     let list = players, { f, shape } = formationOf(team)
     if (!list.some(p => teamOf(p) === team)) {
-      f = FORMATIONS.find(x => x.name === selectedFormation) ?? FORMATIONS[0]; shape = formShape
+      f = formationFor(team); shape = shapeFor(team, ballSide)
       list = placeTeam(list, f, team, shape)
       recordFormation(team, f.name, shape)
     }
@@ -3699,11 +3755,18 @@ function TacticsBoard() {
     const next = squads.filter(x => x.id !== id)
     setSquads(next); writeSquads(next); setSquadId("")
   }
+  /** Opens a team's names, filled in with the team as it stands: number and name, goalkeeper first */
+  const openNames = (team: "home" | "away") => {
+    if (namesFor === team) { setNamesFor(null); return }
+    const { f, shape } = formationOf(team)
+    setLineupText(lineupOf(players, team, f, shape).map(p => `${p.num} ${p.name}`.trim()).join(String.fromCharCode(10))) // one player per line
+    setNamesFor(team)
+  }
 
   /* ── SVG pointer events (unifies mouse, touch, and pen) ── */
   const onSVGMouseMove = useCallback((e: React.PointerEvent) => {
     const { x, y } = svgXY(e)
-    setMouse({ x, y })
+    if (drawingRef.current) setMouse({ x, y })
 
     // Track drag distance
     const dx = e.clientX - mouseDownPosRef.current.x
@@ -3814,15 +3877,19 @@ function TacticsBoard() {
     if (hasDraggedRef.current) return
     const { x, y } = svgXY(e)
 
-    // A new player's number counts players only, not ✕ markers, the ball or ghosts
-    const nextNum = String(players.filter(q => !q.kind && !q.ghost).length + 1)
+    // A new player gets the lowest shirt number their own team isn't using yet
+    const nextNum = (team: "home" | "away") => {
+      const used = new Set(players.filter(q => teamOf(q) === team).map(q => q.num))
+      let n = 1; while (used.has(String(n))) n++
+      return String(n)
+    }
     if (tool === "homePlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...HOME_COLORS, ...teamKit("home"), glow: false, scale: 1, team: "home" }
+      const p: Player = { id: uid(), x, y, name: "", num: nextNum("home"), ...HOME_COLORS, ...teamKit("home"), glow: false, scale: 1, team: "home" }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "awayPlayer") {
       snapshot()
-      const p: Player = { id: uid(), x, y, name: "", num: nextNum, ...AWAY_COLORS, ...teamKit("away"), glow: false, scale: 1, team: "away" }
+      const p: Player = { id: uid(), x, y, name: "", num: nextNum("away"), ...AWAY_COLORS, ...teamKit("away"), glow: false, scale: 1, team: "away" }
       setPlayers(prev => [...prev, p]); setSel({ kind: "player", id: p.id }); setTool("select")
     } else if (tool === "marker" || tool === "ball") {
       snapshot()
@@ -3978,6 +4045,7 @@ function TacticsBoard() {
         const url = await toPng(node, opts)
         const img = new Image(); img.src = url
         await new Promise(r => { img.onload = r })
+        const { default: jsPDF } = await import("jspdf") // the PDF maker is only downloaded when someone exports a PDF
         const pdf = new jsPDF({ orientation: img.width >= img.height ? "landscape" : "portrait", unit: "px", format: [img.width, img.height] })
         pdf.addImage(url, "PNG", 0, 0, img.width, img.height)
         pdf.save(`${name}.pdf`)
@@ -3987,7 +4055,7 @@ function TacticsBoard() {
       ;(window as any).posthog?.capture("board_exported", { format: fmt })
     } catch (err) {
       console.error(err)
-      if (fmt === "copy") setExportNote("Couldn't copy: your browser didn't allow it. Use PNG instead.")
+      setExportNote(fmt === "copy" ? "Couldn't copy: your browser didn't allow it. Use PNG instead." : `Couldn't export the ${fmt.toUpperCase()}. Try again.`)
     }
     finally { setSelection(keepSelection) }
   }
@@ -4180,8 +4248,8 @@ function TacticsBoard() {
     setShowTemplates(false)
   }
   const deleteTemplate = (id: string) => saveTemplates(templates.filter(t => t.id !== id))
-  const togglePublish = (id: string) => saveTemplates(templates.map(t => t.id === id ? { ...t, published: !t.published } : t))
 
+  drawingRef.current = !!arrowDraft || !!polyDraft
   /* ── Selected element refs ── */
   const selP = sel?.kind === "player" ? players.find(p => p.id === sel.id) : null
   const selA = sel?.kind === "arrow" ? arrows.find(a => a.id === sel.id) : null
@@ -4206,8 +4274,6 @@ function TacticsBoard() {
   const pitchInnerTransform = view3d ? UPRIGHT_3D : "none"
 
   /* ── Layer splits ── */
-  const bgTexts = texts.filter(t => t.layer === "background")
-  const fgTexts = texts.filter(t => t.layer === "foreground")
   const bgImages = images.filter(i => i.layer === "background")
   const ovImages = images.filter(i => i.layer === "overlay")
   /* ── What the board shows: the live board, or one moment of the move while it plays or is exported ── */
@@ -4227,26 +4293,16 @@ function TacticsBoard() {
     <div className="flex flex-col h-screen overflow-hidden select-none"
       style={{ fontFamily: "'Inter', sans-serif", background: SURFACE_BASE, color: TEXT_PRIMARY }}>
 
-      {/* ── Top Header ── (on narrower screens the less-used controls move into the ⋯ menu) */}
+      {/* ── Top Header ── (on narrower screens Templates, My Boards, undo and redo move into the ⋯ menu) */}
       <header className="flex items-center gap-2 lg:gap-3 px-2 sm:px-3 py-2 border-b flex-shrink-0"
-        style={{ borderColor: "rgba(255,255,255,0.08)", background: SURFACE_1, minHeight: 48 }}>
+        style={{ borderColor: DS_BORDER, background: SURFACE_1, minHeight: 48 }}>
         {headerMenu && <div className="fixed inset-0 z-40" onClick={() => setHeaderMenu(null)} />}
-        {/* Logo + Workspace Mode Selector + Title */}
-        <div className="flex items-center gap-2 min-w-0">
+        {/* Logo (back to the hub) + title */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
             title="Back to Hub"
             onClick={async () => { if (await confirmLeave()) navigateBoard("/hub") }}
-            style={{ background: ACCENT_SOLID, color: "#ffffff", fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
-          <div className="hidden sm:block flex-shrink-0">
-            <WorkspaceModeSelector mode={workspaceMode} onChange={m => {
-              undoPoint()
-              setWorkspaceMode(m)
-              if (m === "report") { setCanvasMode("blank"); setBgColor("#f5f5f0"); setShowPitch(false) }
-              else if (m === "brainstorm") { setCanvasMode("blank"); setBgColor("#0d1117"); setShowPitch(false) }
-              else { setCanvasMode("full"); setBgColor("#0d1117"); setShowPitch(true) }
-            }} />
-          </div>
-          <div className="hidden sm:block w-px h-5 mx-1 xl:mx-3 flex-shrink-0" style={{ background: "rgba(255,255,255,0.12)" }} />
+            style={{ background: ACCENT_SOLID, color: ACCENT_INK, fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
           {editingTitle ? (
             <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)}
@@ -4257,23 +4313,13 @@ function TacticsBoard() {
             <button onClick={() => setEditingTitle(true)}
               className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-white/8 transition-colors min-w-0"
               title="Click to rename">
-              <span className="font-bold text-sm truncate max-w-28 xl:max-w-44"
+              <span className="font-bold text-sm truncate max-w-40 xl:max-w-72"
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>{title}</span>
               <Pencil size={11} className="opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: ACCENT_SOLID }} />
             </button>
           )}
         </div>
 
-        <div className="flex-1 hidden lg:flex items-center gap-2 justify-center">
-          {/* 3D toggle */}
-          <button onClick={() => setView3d(v => !v)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
-            style={{ background: view3d ? ACCENT_SOLID : SURFACE_2, color: view3d ? "#ffffff" : TEXT_PRIMARY }}>
-            <Layers size={13} />
-            {view3d ? "3D" : "2D"}
-          </button>
-        </div>
-        <div className="flex-1 lg:hidden" />
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {/* Templates */}
@@ -4290,14 +4336,19 @@ function TacticsBoard() {
               <FolderOpen size={13} /> <span className="hidden xl:inline">My Boards</span>
             </button>
           )}
-          {/* Save */}
+          {/* Undo/Redo */}
+          <button onClick={undo} className="hidden lg:block p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
+          <button onClick={redo} className="hidden lg:block p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
+          <div className="hidden lg:flex self-stretch items-center mx-1" style={{ width: 1, background: DS_BORDER }} />
+          {/* Save: outlined while there's something to save, quiet once it's saved */}
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-stretch">
               <button onClick={() => saveBoard()}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold transition-colors"
                 style={{
-                  background: saveStatus === "error" ? DS_ERROR : ACCENT_GRADIENT,
-                  color: "#ffffff",
+                  background: saveStatus === "error" ? DS_ERROR : SURFACE_2,
+                  color: saveStatus === "error" ? "#ffffff" : savedNow ? TEXT_MUTED : TEXT_PRIMARY,
+                  boxShadow: saveStatus !== "error" && !savedNow ? `inset 0 0 0 1px ${ACCENT_SOLID}` : "none",
                   opacity: saveStatus === "saving" ? 0.7 : 1,
                   borderRadius: currentBoardId ? "6px 0 0 6px" : 6,
                 }}>
@@ -4310,9 +4361,9 @@ function TacticsBoard() {
                     onClick={() => setShowSaveMenu(v => !v)}
                     className="flex items-center px-1.5 py-1.5 text-xs font-semibold transition-colors"
                     style={{
-                      background: saveStatus === "error" ? DS_ERROR : ACCENT_GRADIENT,
-                      color: "#ffffff",
-                      borderLeft: "1px solid rgba(255,255,255,0.25)",
+                      background: saveStatus === "error" ? DS_ERROR : SURFACE_2,
+                      color: saveStatus === "error" ? "#ffffff" : TEXT_MUTED,
+                      borderLeft: `1px solid ${DS_BORDER}`,
                       borderRadius: "0 6px 6px 0",
                     }}
                     title="Save as new board">
@@ -4336,53 +4387,18 @@ function TacticsBoard() {
               )}
             </div>
           </div>
-          {/* Auth */}
-          {authUser ? (
-            <div className="relative hidden lg:block">
-              <button onClick={() => setHeaderMenu(m => (m === "account" ? null : "account"))} aria-expanded={headerMenu === "account"}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium"
-                style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
-                <User size={13} />
-                <span className="max-w-20 truncate hidden xl:inline">{accountName || authUser.email?.split("@")[0]}</span>
-                <ChevronDown size={11} />
-              </button>
-              {headerMenu === "account" && (
-                <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 flex flex-col"
-                  style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-                  <button onClick={async () => { setHeaderMenu(null); if (await confirmLeave()) supabase.auth.signOut() }}
-                    className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left"
-                    style={{ color: "#f85149" }}>
-                    <LogOut size={12} /> Sign Out
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
+          {!authUser && (
             <button onClick={() => { setAuthInitialTab("signin"); setShowAuth(true) }}
               className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
               style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
               <LogIn size={13} /> Sign In
             </button>
           )}
-          {/* Undo/Redo */}
-          <button onClick={undo} className="hidden lg:block p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
-          <button onClick={redo} className="hidden lg:block p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
-          {/* Clear All — visually separated by a divider so it reads as destructive/distinct */}
-          <div className="hidden lg:flex self-stretch items-center mx-2" style={{ width: 1, background: DS_BORDER }} />
-          <button
-            onClick={() => setShowClearConfirm(true)}
-            className="hidden lg:flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium transition-colors hover:bg-red-500/20 ml-1"
-            style={{ color: DS_ERROR }}
-            title="Clear all canvas elements">
-            <Trash2 size={13} /> <span className="hidden xl:inline">Clear All</span>
-          </button>
-          {/* Export */}
+          {/* Export: the one solid button */}
           <div className="relative">
             <button onClick={() => setHeaderMenu(m => (m === "export" ? null : "export"))} aria-expanded={headerMenu === "export"} title="Export"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
-              style={{ background: "transparent", color: ACCENT_SOLID, border: `1px solid ${ACCENT_SOLID}` }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = `${ACCENT_SOLID}26` }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent" }}>
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
+              style={{ background: ACCENT_SOLID, color: ACCENT_INK }}>
               <Download size={13} /> <span className="hidden sm:inline">Export</span> <ChevronDown size={11} />
             </button>
             {headerMenu === "export" && (
@@ -4402,29 +4418,33 @@ function TacticsBoard() {
               </div>
             )}
           </div>
-          {/* ⋯ More: everything that doesn't fit in the bar on narrower screens */}
-          <div className="relative lg:hidden">
+          {/* ⋯ More: clearing the board, your account, and on narrower screens what doesn't fit in the bar */}
+          <div className="relative">
             <button onClick={() => setHeaderMenu(m => (m === "more" ? null : "more"))} aria-expanded={headerMenu === "more"}
               aria-label="More" title="More"
               className="p-1.5 rounded hover:bg-white/10 transition-colors" style={{ color: TEXT_PRIMARY }}>
               <MoreHorizontal size={16} />
             </button>
             {headerMenu === "more" && (
-              <div className="absolute right-0 top-full mt-1 w-48 rounded-lg shadow-xl border z-50 flex flex-col py-1"
+              <div className="absolute right-0 top-full mt-1 w-52 rounded-lg shadow-xl border z-50 flex flex-col py-1"
                 style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
+                {authUser && (
+                  <p className="px-3 py-2 text-xs truncate" style={{ color: TEXT_MUTED, borderBottom: `1px solid ${DS_BORDER}` }}>
+                    Signed in as <span style={{ color: TEXT_PRIMARY }}>{accountName || authUser.email?.split("@")[0]}</span>
+                  </p>
+                )}
                 {([
-                  { label: "Templates", icon: <BookOpen size={13} />, run: () => setShowTemplates(true) },
-                  ...(authUser ? [{ label: "My Boards", icon: <FolderOpen size={13} />, run: () => setShowMyBoards(true) }] : []),
-                  { label: "Undo", icon: <RotateCcw size={13} />, run: undo },
-                  { label: "Redo", icon: <RotateCw size={13} />, run: redo },
-                  { label: view3d ? "Switch to 2D" : "Switch to 3D", icon: <Layers size={13} />, run: () => setView3d(v => !v) },
-                  { label: "Clear All", icon: <Trash2 size={13} />, run: () => setShowClearConfirm(true), danger: true },
+                  { label: "Templates", icon: <BookOpen size={13} />, run: () => setShowTemplates(true), narrow: true },
+                  ...(authUser ? [{ label: "My Boards", icon: <FolderOpen size={13} />, run: () => setShowMyBoards(true), narrow: true }] : []),
+                  { label: "Undo", icon: <RotateCcw size={13} />, run: undo, narrow: true },
+                  { label: "Redo", icon: <RotateCw size={13} />, run: redo, narrow: true },
+                  { label: "Clear board", icon: <Trash2 size={13} />, run: () => setShowClearConfirm(true), danger: true },
                   authUser
                     ? { label: "Sign Out", icon: <LogOut size={13} />, run: async () => { if (await confirmLeave()) supabase.auth.signOut() }, danger: true }
                     : { label: "Sign In", icon: <LogIn size={13} />, run: () => { setAuthInitialTab("signin"); setShowAuth(true) } },
-                ] as { label: string; icon: React.ReactNode; run: () => void; danger?: boolean }[]).map(item => (
+                ] as { label: string; icon: React.ReactNode; run: () => void; danger?: boolean; narrow?: boolean }[]).map(item => (
                   <button key={item.label} onClick={() => { setHeaderMenu(null); item.run() }}
-                    className="flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-white/10"
+                    className={`${item.narrow ? "lg:hidden " : ""}flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-white/10`}
                     style={{ color: item.danger ? DS_ERROR : TEXT_PRIMARY }}>
                     {item.icon} {item.label}
                   </button>
@@ -4452,7 +4472,7 @@ function TacticsBoard() {
             <div key={btn.id} className="rl-wrap">
               <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
                 onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
-                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? "#fff" : btn.tint, transition: "background 0.12s, color 0.12s" }}
+                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? ACCENT_INK : btn.tint, transition: "background 0.12s, color 0.12s" }}
                 onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
                 onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = btn.tint } }}>
                 {btn.ic}
@@ -4472,7 +4492,7 @@ function TacticsBoard() {
             <div key={btn.id} className="rl-wrap">
               <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
                 onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
-                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? "#fff" : btn.tint, transition: "background 0.12s, color 0.12s" }}
+                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? ACCENT_INK : btn.tint, transition: "background 0.12s, color 0.12s" }}
                 onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
                 onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = btn.tint } }}>
                 {btn.ic}
@@ -4492,7 +4512,7 @@ function TacticsBoard() {
             <div key={btn.id} className="rl-wrap">
               <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
                 onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
-                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? "#fff" : TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
+                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? ACCENT_INK : TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
                 onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
                 onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED } }}>
                 {btn.ic}
@@ -4543,7 +4563,7 @@ function TacticsBoard() {
         </div>
 
         {panelOpen && (
-        <aside style={{ width: 230, flexShrink: 0, height: "100%", background: SURFACE_BASE, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <aside style={{ width: 248, flexShrink: 0, height: "100%", background: SURFACE_BASE, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ display: "flex", borderBottom: `1px solid ${DS_BORDER}`, flexShrink: 0 }}>
             {(["board", "selected"] as const).map(t => (
               <button key={t} onClick={() => setSideTab(t)}
@@ -4554,7 +4574,7 @@ function TacticsBoard() {
           </div>
 
           {/* ── SELECTED TAB ── */}
-          <div style={{ flex: 1, overflowY: "auto", display: sideTab === "selected" ? "flex" : "none", flexDirection: "column" }}>
+          {sideTab === "selected" && <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
             {selection.length > 1 ? (
               (() => {
                 const selPlayerIds = selection.filter(s => s.kind === "player").map(s => s.id)
@@ -4647,7 +4667,7 @@ function TacticsBoard() {
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
-                    <ColorPicker label="Colour" colors={PALETTE} selected={selP.bg} onSelect={c => updP({ bg: c })} />
+                    <ColorPicker label="Colour" colors={SWATCHES} selected={selP.bg} onSelect={c => updP({ bg: c })} />
                     <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
                       <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
                       <span style={{ color: TEXT_PRIMARY }}>Glow highlight</span>
@@ -4681,30 +4701,60 @@ function TacticsBoard() {
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
-                    <ColorPicker label="Kit colour" colors={PALETTE} selected={selP.bg}
-                      onSelect={c => updP({ bg: c, ...((selP.pat ?? "solid") === "solid" ? { fg: inkOn(c) } : {}) })} />
-                    <PatternRow value={selP.pat ?? "solid"}
-                      onChange={pt => updP(pt === "solid" ? { pat: undefined, bg2: undefined, outline: false } : { pat: pt, bg2: selP.bg2 ?? (selP.bg === "#ffffff" ? "#111111" : "#ffffff"), outline: true })} />
-                    {(selP.pat ?? "solid") !== "solid" && (
-                      <ColorPicker label="Second colour" colors={PALETTE} selected={selP.bg2 ?? "#ffffff"} onSelect={c => updP({ bg2: c })} />
-                    )}
-                    <ColorPicker label="Number colour" colors={PALETTE} selected={selP.fg} onSelect={c => updP({ fg: c })} />
-                    <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
-                      <input type="checkbox" checked={selP.outline || false} onChange={e => updP({ outline: e.target.checked })} className="accent-green-400" />
-                      <span style={{ color: TEXT_PRIMARY }}>Number outline</span>
-                    </label>
-                    <ColorPicker label="Ring colour" colors={PALETTE} selected={selP.ring} onSelect={c => updP({ ring: c })} allowTransparent={true} />
-                    <div>
-                      <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Goalkeeper kit</p>
-                      <div className="flex flex-wrap gap-1">
-                        {GK_KITS.map(x => (
-                          <button key={x.id} title={x.name} aria-label={`Goalkeeper kit: ${x.name}`} onClick={() => updP(kitProps(x))}
-                            className="rounded-full transition-transform hover:scale-110" style={{ padding: 2, border: "2px solid transparent", background: "transparent" }}>
-                            <KitDisc id={`sel-${x.id}`} size={22} pat={x.pat} c1={x.c1} c2={x.c2} />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    {(() => {
+                      // The kit: the team's, a goalkeeper's, or the player's own. Colours only show for their own kit.
+                      const team = teamOf(selP), tk = team ? kitOf(team) : null
+                      const gk = GK_KITS.find(x => (selP.pat ?? "solid") === x.pat && selP.bg === x.c1 && (x.pat === "solid" || selP.bg2 === x.c2))
+                      const mode = kitMode ?? (tk && wearsKit(selP, tk, team === "home" ? HOME_COLORS.bg : AWAY_COLORS.bg) ? "team" : gk ? "gk" : "own")
+                      const row = (m: "team" | "gk" | "own", disc: React.ReactNode, text: string, note: string, run: () => void) => (
+                        <button key={m} onClick={run} aria-pressed={mode === m}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors"
+                          style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${mode === m ? ACCENT_SOLID : DS_BORDER}` }}>
+                          {disc}<span className="flex-1 font-semibold">{text}</span><span className="truncate" style={{ color: TEXT_MUTED, maxWidth: 80 }}>{note}</span>
+                        </button>
+                      )
+                      const g0 = gk ?? GK_KITS[0]
+                      return (
+                        <>
+                          <div className="flex flex-col gap-1">
+                            <p className="text-xs" style={{ color: TEXT_MUTED }}>Kit</p>
+                            {tk && team && row("team", <KitDisc id="sel-team" size={18} pat={tk.pat} c1={tk.c1} c2={tk.c2} />, "Team kit", (team === "home" ? homeName : awayName).trim() || (team === "home" ? "Home" : "Away"),
+                              () => { setKitMode(null); updP(kitProps(tk)) })}
+                            {row("gk", <KitDisc id="sel-gk" size={18} pat={g0.pat} c1={g0.c1} c2={g0.c2} />, "Goalkeeper kit", gk ? gk.name : "",
+                              () => { setKitMode("gk"); if (!gk) updP(kitProps(GK_KITS[0])) })}
+                            {row("own", <span className="flex items-center justify-center rounded-full" style={{ width: 18, height: 18, border: "1px dashed rgba(255,255,255,0.4)" }}><Plus size={10} /></span>, "Own kit", "",
+                              () => setKitMode("own"))}
+                          </div>
+                          {mode === "gk" && (
+                            <div className="flex flex-wrap" style={{ gap: 3 }}>
+                              {GK_KITS.map(x => (
+                                <button key={x.id} title={x.name} aria-label={`Goalkeeper kit: ${x.name}`} aria-pressed={gk?.id === x.id} onClick={() => updP(kitProps(x))}
+                                  className="rounded-full transition-transform hover:scale-110" style={{ padding: 2, border: `2px solid ${gk?.id === x.id ? ACCENT_SOLID : "transparent"}`, background: "transparent" }}>
+                                  <KitDisc id={`sel-${x.id}`} size={20} pat={x.pat} c1={x.c1} c2={x.c2} />
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {mode === "own" && (
+                            <div className="flex flex-col gap-2">
+                              <ColorPicker label="Kit colour" colors={SWATCHES} selected={selP.bg}
+                                onSelect={c => updP({ bg: c, ...((selP.pat ?? "solid") === "solid" ? { fg: inkOn(c) } : {}) })} />
+                              <PatternRow value={selP.pat ?? "solid"}
+                                onChange={pt => updP(pt === "solid" ? { pat: undefined, bg2: undefined, outline: false } : { pat: pt, bg2: selP.bg2 ?? (selP.bg === "#ffffff" ? "#111111" : "#ffffff"), outline: true })} />
+                              {(selP.pat ?? "solid") !== "solid" && (
+                                <ColorPicker label="Second colour" colors={SWATCHES} selected={selP.bg2 ?? "#ffffff"} onSelect={c => updP({ bg2: c })} />
+                              )}
+                              <ColorPicker label="Number colour" colors={SWATCHES} selected={selP.fg} onSelect={c => updP({ fg: c })} />
+                              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                                <input type="checkbox" checked={selP.outline || false} onChange={e => updP({ outline: e.target.checked })} className="accent-green-400" />
+                                <span style={{ color: TEXT_PRIMARY }}>Number outline</span>
+                              </label>
+                              <ColorPicker label="Ring colour" colors={SWATCHES} selected={selP.ring} onSelect={c => updP({ ring: c })} allowTransparent={true} />
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
                     <label className="flex items-center gap-2 text-xs cursor-pointer mt-1">
                       <input type="checkbox" checked={selP.glow || false} onChange={e => updP({ glow: e.target.checked })} className="accent-green-400" />
                       <span style={{ color: TEXT_PRIMARY }}>Glow highlight</span>
@@ -4751,14 +4801,14 @@ function TacticsBoard() {
                         className="rounded px-2 py-1 text-xs outline-none"
                         style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                     </label>
-                    <ColorPicker label="Colour" colors={PALETTE} selected={selA.color} onSelect={c => updA({ color: c })} />
+                    <ColorPicker label="Colour" colors={SWATCHES} selected={selA.color} onSelect={c => updA({ color: c })} />
                     <div>
                       <p className="text-xs mb-1" style={{ color: TEXT_MUTED }}>Style</p>
                       <div className="flex gap-1">
                         {(["none","dashed","dotted"] as const).map(s => (
                           <button key={s} onClick={() => updA({ dash: s })}
                             className="flex-1 py-1 rounded text-xs font-medium transition-colors"
-                            style={{ background: selA.dash === s ? ACCENT_GRADIENT : SURFACE_2, color: selA.dash === s ? "#fff" : TEXT_MUTED }}>
+                            style={{ background: selA.dash === s ? ACCENT_GRADIENT : SURFACE_2, color: selA.dash === s ? ACCENT_INK : TEXT_MUTED }}>
                             {s === "none" ? "Solid" : s === "dashed" ? "Dashed" : "Dotted"}
                           </button>
                         ))}
@@ -4795,12 +4845,12 @@ function TacticsBoard() {
                     <div className="flex gap-1.5">
                       <button onClick={() => updT({ noBox: false, bg: "rgba(13,17,23,0.85)", border: ACCENT_SOLID })}
                         className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                        style={{ background: !selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: !selT.noBox ? "#fff" : TEXT_MUTED }}>
+                        style={{ background: !selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: !selT.noBox ? ACCENT_INK : TEXT_MUTED }}>
                         ▣ With Box
                       </button>
                       <button onClick={() => updT({ noBox: true, bg: "transparent", border: "transparent" })}
                         className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                        style={{ background: selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: selT.noBox ? "#fff" : TEXT_MUTED }}>
+                        style={{ background: selT.noBox ? ACCENT_GRADIENT : SURFACE_2, color: selT.noBox ? ACCENT_INK : TEXT_MUTED }}>
                         T Free Text
                       </button>
                     </div>
@@ -4820,9 +4870,9 @@ function TacticsBoard() {
                       <input type="range" min={80} max={500} value={selT.width}
                         onChange={e => updT({ width: +e.target.value })} className="w-full accent-green-400" />
                     </label>
-                    <ColorPicker label="Text colour" colors={PALETTE} selected={selT.fg} onSelect={c => updT({ fg: c })} />
-                    <ColorPicker label="Background" colors={PALETTE} selected={selT.bg} onSelect={c => updT({ bg: c })} allowTransparent={true} />
-                    <ColorPicker label="Border" colors={PALETTE} selected={selT.border} onSelect={c => updT({ border: c })} allowTransparent={true} />
+                    <ColorPicker label="Text colour" colors={SWATCHES} selected={selT.fg} onSelect={c => updT({ fg: c })} />
+                    <ColorPicker label="Background" colors={SWATCHES} selected={selT.bg} onSelect={c => updT({ bg: c })} allowTransparent={true} />
+                    <ColorPicker label="Border" colors={SWATCHES} selected={selT.border} onSelect={c => updT({ border: c })} allowTransparent={true} />
                     <div className="flex gap-2">
                       <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                         <input type="checkbox" checked={selT.bold} onChange={e => updT({ bold: e.target.checked })} className="accent-green-400" />
@@ -4839,7 +4889,7 @@ function TacticsBoard() {
                         {(["foreground","background"] as const).map(l => (
                           <button key={l} onClick={() => updT({ layer: l })}
                             className="flex-1 py-1 rounded text-xs transition-colors"
-                            style={{ background: selT.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selT.layer === l ? "#fff" : TEXT_MUTED }}>
+                            style={{ background: selT.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selT.layer === l ? ACCENT_INK : TEXT_MUTED }}>
                             {l === "foreground" ? "Front" : "Behind"}
                           </button>
                         ))}
@@ -4871,7 +4921,7 @@ function TacticsBoard() {
                     )}
                     {selS.closed !== false && (
                       <>
-                        <ColorPicker label="Fill" colors={[PS_VOLT, ...SHAPE_FILLS]} selected={selS.fill} onSelect={c => updS({ fill: c })} />
+                        <ColorPicker label="Fill" colors={SWATCHES} selected={selS.fill} onSelect={c => updS({ fill: c })} />
                         <label className="flex flex-col gap-1">
                           <span className="text-xs" style={{ color: TEXT_MUTED }}>Opacity {Math.round(selS.fillOpacity * 100)}%</span>
                           <input type="range" min={5} max={95} value={Math.round(selS.fillOpacity * 100)}
@@ -4879,7 +4929,7 @@ function TacticsBoard() {
                         </label>
                       </>
                     )}
-                    <ColorPicker label={selS.closed === false ? "Colour" : "Border"} colors={PALETTE} selected={selS.stroke} onSelect={c => updS({ stroke: c })} />
+                    <ColorPicker label={selS.closed === false ? "Colour" : "Border"} colors={SWATCHES} selected={selS.stroke} onSelect={c => updS({ stroke: c })} />
                     <label className="flex flex-col gap-1">
                       <span className="text-xs" style={{ color: TEXT_MUTED }}>{selS.closed === false ? "Width" : "Border width"} {selS.strokeW}px</span>
                       <input type="range" min={1} max={6} value={selS.strokeW}
@@ -4911,7 +4961,7 @@ function TacticsBoard() {
                         {(["background","overlay"] as const).map(l => (
                           <button key={l} onClick={() => l === "background" ? updI({ layer: l, x: 0, y: 0, width: CW, height: CH }) : updI({ layer: l })}
                             className="flex-1 py-1 rounded text-xs transition-colors"
-                            style={{ background: selI.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selI.layer === l ? "#fff" : TEXT_MUTED }}>
+                            style={{ background: selI.layer === l ? ACCENT_GRADIENT : SURFACE_2, color: selI.layer === l ? ACCENT_INK : TEXT_MUTED }}>
                             {l === "background" ? "Behind Pitch" : "Over Pitch"}
                           </button>
                         ))}
@@ -4938,7 +4988,7 @@ function TacticsBoard() {
                           className="rounded px-2 py-1 text-xs outline-none"
                           style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
                       </label>
-                      <ColorPicker label="Colour" colors={ZONE_COLOURS} selected={z.color} onSelect={c => updZ({ color: c })} />
+                      <ColorPicker label="Colour" colors={SWATCHES} selected={z.color} onSelect={c => updZ({ color: c })} />
                       <label className="flex flex-col gap-1">
                         <span className="text-xs" style={{ color: TEXT_MUTED }}>Opacity {Math.round(z.opacity * 100)}%</span>
                         <input type="range" min={5} max={80} value={Math.round(z.opacity * 100)}
@@ -4964,13 +5014,13 @@ function TacticsBoard() {
                     {(["none","dashed","dotted"] as const).map(d => (
                       <button key={d} onClick={() => setArrowDefaultDash(d)}
                         className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors"
-                        style={{ background: arrowDefaultDash === d ? ACCENT_GRADIENT : SURFACE_2, color: arrowDefaultDash === d ? "#fff" : TEXT_MUTED }}>
+                        style={{ background: arrowDefaultDash === d ? ACCENT_GRADIENT : SURFACE_2, color: arrowDefaultDash === d ? ACCENT_INK : TEXT_MUTED }}>
                         {d === "none" ? "—" : d === "dashed" ? "- -" : "···"}
                       </button>
                     ))}
                   </div>
                 </div>
-                <ColorPicker label="Colour" colors={PALETTE} selected={arrowDefaultColor} onSelect={setArrowDefaultColor} />
+                <ColorPicker label="Colour" colors={SWATCHES} selected={arrowDefaultColor} onSelect={setArrowDefaultColor} />
                 <label className="flex flex-col gap-1">
                   <span className="text-xs" style={{ color: TEXT_MUTED }}>Width {arrowDefaultW}px</span>
                   <input type="range" min={1} max={8} value={arrowDefaultW}
@@ -4986,7 +5036,7 @@ function TacticsBoard() {
                     {(["foreground","background"] as const).map(l => (
                       <button key={l} onClick={() => setTextLayer(l)}
                         className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
-                        style={{ background: textLayer === l ? ACCENT_GRADIENT : SURFACE_2, color: textLayer === l ? "#fff" : TEXT_MUTED }}>
+                        style={{ background: textLayer === l ? ACCENT_GRADIENT : SURFACE_2, color: textLayer === l ? ACCENT_INK : TEXT_MUTED }}>
                         {l === "foreground" ? "In Front" : "Behind Pitch"}
                       </button>
                     ))}
@@ -5005,21 +5055,31 @@ function TacticsBoard() {
                   ]).map(({ k, icon, tip }) => (
                     <button key={k} onClick={() => setShapeKind(k)} title={tip}
                       className="flex-1 flex items-center justify-center py-2 rounded text-xs transition-colors"
-                      style={{ background: shapeKind === k ? ACCENT_GRADIENT : SURFACE_2, color: shapeKind === k ? "#fff" : TEXT_MUTED }}>
+                      style={{ background: shapeKind === k ? ACCENT_GRADIENT : SURFACE_2, color: shapeKind === k ? ACCENT_INK : TEXT_MUTED }}>
                       {icon}
                     </button>
                   ))}
                 </div>
+              </div>
+            ) : tool === "zone" ? (
+              <div className="p-3 flex flex-col gap-2.5">
+                <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Zone defaults</p>
+                <ColorPicker label="Colour for new zones" colors={SWATCHES} selected={zoneColor} onSelect={setZoneColor} />
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs" style={{ color: TEXT_MUTED }}>Fill opacity {Math.round(zoneOpacity * 100)}%</span>
+                  <input type="range" min={5} max={80} value={Math.round(zoneOpacity * 100)}
+                    onChange={e => setZoneOpacity(+e.target.value / 100)} className="w-full accent-orange-400" />
+                </label>
               </div>
             ) : (
               <div className="p-4 text-center text-xs" style={{ color: TEXT_MUTED }}>
                 Select an element on the pitch to edit it.
               </div>
             )}
-          </div>
+          </div>}
 
-          {/* ── BOARD TAB ── */}
-          <div style={{ flex: 1, overflowY: "auto", display: sideTab === "board" ? "block" : "none" }}>
+          {/* ── BOARD TAB ── (five groups: Frame, Teams, Pitch, Editorial, Animation) */}
+          {sideTab === "board" && <div style={{ flex: 1, overflowY: "auto" }}>
 
             <button aria-expanded={boardGroups.frame}
               onClick={() => setBoardGroups(g => ({ ...g, frame: !g.frame }))}
@@ -5032,6 +5092,8 @@ function TacticsBoard() {
             </button>
             {boardGroups.frame && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                <Segmented label="View" value={view3d ? "3d" : "2d"} onChange={v => setView3d(v === "3d")}
+                  options={[["2d", "2D"], ["3d", "3D"]]} />
                 {canvasMode !== "blank" ? (
                   <>
                     <Segmented label="Pitch" value={vertical ? "v" : "h"} onChange={v => setOrientation(v === "v")}
@@ -5052,95 +5114,6 @@ function TacticsBoard() {
               </div>
             )}
 
-            <button aria-expanded={boardGroups.formation}
-              onClick={() => setBoardGroups(g => ({ ...g, formation: !g.formation }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.formation ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Formation
-            </button>
-            {boardGroups.formation && (
-              <div className="p-3 flex flex-col gap-2" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <FormationPicker value={selectedFormation} onChange={setSelectedFormation} />
-                <Segmented label="Shape" value={formShape} onChange={setFormShape}
-                  options={[["base", "Lineup"], ["in", "In possession"], ["out", "Out of possession"]]} />
-                <div className="flex gap-1.5">
-                  {(["home", "away"] as const).map(team => {
-                    const there = players.some(p => teamOf(p) === team), c = team === "home" ? homeColor : awayColor, label = team === "home" ? "Home" : "Away"
-                    return (
-                      <button key={team} onClick={() => { setFormation(selectedFormation, team); (window as any).posthog?.capture("formation_used", { formation: selectedFormation, shape: formShape }) }}
-                        title={there ? `Move the ${label.toLowerCase()} team into ${selectedFormation}` : `Add the ${label.toLowerCase()} team in ${selectedFormation}`}
-                        className="flex-1 py-1.5 rounded text-xs font-semibold"
-                        style={{ background: c, color: inkOn(c) }}>
-                        {there ? `Set ${label}` : `+ ${label}`}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>A team already on the board moves into the new shape. Players keep their names and numbers, and lines and shapes on them follow.</p>
-                <div className="flex flex-col gap-2 pt-2 mt-1" style={{ borderTop: `1px solid ${DS_BORDER}` }}>
-                  <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Lineup</p>
-                  <textarea value={lineupText} onChange={e => setLineupText(e.target.value)} rows={4} aria-label="Lineup names"
-                    placeholder={"Paste up to 11 names, one per line or with commas. Goalkeeper first, then each line right to left. A shirt number next to a name is used too."}
-                    className="rounded px-2 py-1.5 text-xs outline-none resize-none"
-                    style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                  <div className="flex gap-1.5">
-                    {(["home", "away"] as const).map(team => (
-                      <button key={team} disabled={!lineupText.trim()} onClick={() => applyLineup(team, parseLineup(lineupText))}
-                        className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
-                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, opacity: lineupText.trim() ? 1 : 0.4 }}>
-                        Name {team === "home" ? "Home" : "Away"}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-xs font-semibold uppercase mt-1" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Squads</p>
-                  {squads.length > 0 ? (
-                    <>
-                      <div className="flex gap-1.5">
-                        <select value={squadId} onChange={e => setSquadId(e.target.value)} aria-label="Saved squad"
-                          className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none"
-                          style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
-                          <option value="">Pick a squad…</option>
-                          {squads.map(q => <option key={q.id} value={q.id}>{q.name} ({q.players.length})</option>)}
-                        </select>
-                        <button onClick={() => squadId && deleteSquad(squadId)} disabled={!squadId} aria-label="Delete squad" title="Delete squad"
-                          className="p-1 rounded hover:bg-red-500/20 transition-colors" style={{ color: DS_ERROR, opacity: squadId ? 1 : 0.4 }}>
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                      <div className="flex gap-1.5">
-                        {(["home", "away"] as const).map(team => (
-                          <button key={team} disabled={!squadId}
-                            onClick={() => { const q = squads.find(x => x.id === squadId); if (q) applyLineup(team, q.players, q) }}
-                            className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
-                            style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, opacity: squadId ? 1 : 0.4 }}>
-                            Use for {team === "home" ? "Home" : "Away"}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <p className="text-xs" style={{ color: TEXT_MUTED }}>Save a team's names, numbers and kit to reuse them on any board.</p>
-                  )}
-                  <div className="flex gap-1.5">
-                    {(["home", "away"] as const).map(team => {
-                      const there = players.some(p => teamOf(p) === team)
-                      return (
-                        <button key={team} disabled={!there} onClick={() => saveSquad(team)}
-                          className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
-                          style={{ background: "transparent", color: TEXT_MUTED, border: `1px solid ${DS_BORDER}`, opacity: there ? 1 : 0.4 }}>
-                          Save {team === "home" ? "Home" : "Away"}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <p className="text-xs" style={{ color: TEXT_MUTED }}>A squad is saved under its team name, in this browser.</p>
-                </div>
-              </div>
-            )}
-
             <button aria-expanded={boardGroups.teams}
               onClick={() => setBoardGroups(g => ({ ...g, teams: !g.teams }))}
               className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
@@ -5152,87 +5125,24 @@ function TacticsBoard() {
             </button>
             {boardGroups.teams && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                {teamKitBlock("home")}
-                {teamKitBlock("away")}
+                <div>
+                  <Segmented label="Who has the ball?" value={ballSide} onChange={setBall}
+                    options={[["home", "Home"], ["away", "Away"], ["none", "Neither"]]} />
+                  <p className="text-xs mt-1.5" style={{ color: TEXT_MUTED }}>The team on the ball spreads out and the other drops into its block. Neither shows both lineups as written.</p>
+                </div>
+                {teamBlock("home")}
+                {teamBlock("away")}
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
                   <input type="checkbox" checked={showPlayerLabels} onChange={e => { undoPoint(); setShowPlayerLabels(e.target.checked) }} className="accent-green-400" />
                   <span style={{ color: TEXT_PRIMARY }}>Show names and numbers</span>
                 </label>
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>Kits are named by colour only. PitchStudio is not affiliated with any club, league or player.</p>
-              </div>
-            )}
-
-            <button aria-expanded={boardGroups.labels}
-              onClick={() => setBoardGroups(g => ({ ...g, labels: !g.labels }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.labels ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Readability
-            </button>
-            {boardGroups.labels && (
-              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                 <Segmented label="Label size" value={labelSize} onChange={v => { undoPoint(); setLabelSize(v) }}
                   options={[["standard", "Standard"], ["large", "Large"], ["xl", "Extra large"]]} />
                 <Segmented label="Names" value={nameStyle} onChange={v => { undoPoint(); setNameStyle(v) }}
                   options={[["halo", "Outline"], ["chip", "Chip"]]} />
                 <Segmented label="Pieces" value={tokenStyle} onChange={v => { undoPoint(); setTokenStyle(v) }}
-                  options={[["classic", "Classic"], ["minimal", "Minimal"]]} />
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>Larger labels, name chips and minimal pieces stay readable when a board is viewed on a phone.</p>
-              </div>
-            )}
-
-            <button aria-expanded={boardGroups.zones}
-              onClick={() => setBoardGroups(g => ({ ...g, zones: !g.zones }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.zones ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Zones &amp; Lanes
-            </button>
-            {boardGroups.zones && (
-              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <button onClick={() => { undoPoint(); setShow18Zones(v => !v) }}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                  style={{ background: show18Zones ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: show18Zones ? ACCENT_SOLID : DS_BORDER, color: show18Zones ? ACCENT_SOLID : TEXT_PRIMARY }}>
-                  <span className="flex items-center gap-2"><Grid3x3 size={14} />18 zones</span>
-                  <span className="px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: show18Zones ? ACCENT_SOLID : SURFACE_1, color: show18Zones ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
-                    {show18Zones ? "ON" : "OFF"}
-                  </span>
-                </button>
-                <button onClick={() => { undoPoint(); setShowLanes(v => !v) }}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                  style={{ background: showLanes ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: showLanes ? ACCENT_SOLID : DS_BORDER, color: showLanes ? ACCENT_SOLID : TEXT_PRIMARY }}>
-                  <span className="flex items-center gap-2"><Rows3 size={14} />Lanes</span>
-                  <span className="px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: showLanes ? ACCENT_SOLID : SURFACE_1, color: showLanes ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
-                    {showLanes ? "ON" : "OFF"}
-                  </span>
-                </button>
-                <div className="flex flex-col gap-2">
-                  <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Custom zones</p>
-                  <ColorPicker label="Colour for new zones" colors={ZONE_COLOURS} selected={zoneColor} onSelect={setZoneColor} />
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs" style={{ color: TEXT_MUTED }}>Fill opacity {Math.round(zoneOpacity * 100)}%</span>
-                    <input type="range" min={5} max={80} value={Math.round(zoneOpacity * 100)}
-                      onChange={e => setZoneOpacity(+e.target.value / 100)} className="w-full accent-orange-400" />
-                  </label>
-                  <button onClick={() => { setTool("zone"); setSel(null) }}
-                    className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-colors"
-                    style={{ background: tool === "zone" ? ACCENT_SOLID : SURFACE_2, color: tool === "zone" ? "#fff" : TEXT_PRIMARY, border: `1px solid ${tool === "zone" ? ACCENT_SOLID : DS_BORDER}` }}>
-                    {tool === "zone" ? <><PenLine size={13} />Drawing a zone…</> : <><Plus size={13} />Draw a zone</>}
-                  </button>
-                  {customZones.length > 0 && (
-                    <button onClick={() => { snapshot(); setCustomZones([]); setSel(null) }}
-                      className="w-full py-1 rounded text-xs hover:bg-red-500/20 transition-colors"
-                      style={{ color: DS_ERROR }}>
-                      Clear all zones ({customZones.length})
-                    </button>
-                  )}
-                </div>
+                  options={[["classic", "Detailed"], ["minimal", "Minimal"]]} />
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Kits are named by colour only. PitchStudio is not affiliated with any club, league or player.</p>
               </div>
             )}
 
@@ -5247,44 +5157,22 @@ function TacticsBoard() {
             </button>
             {boardGroups.pitch && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <div>
-                  <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Canvas mode</p>
-                  <div className="flex flex-col gap-1.5">
-                    {(["full","half","blank"] as const).map(mode => (
-                      <button key={mode} onClick={() => { undoPoint(); setCanvasMode(mode) }}
-                        className="px-3 py-1.5 rounded text-xs font-medium transition-colors text-left"
-                        style={{ background: canvasMode === mode ? ACCENT_GRADIENT : SURFACE_2, color: canvasMode === mode ? "#fff" : TEXT_MUTED }}>
-                        {mode === "full" ? "Full pitch" : mode === "half" ? "Half pitch" : "Blank canvas"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <Segmented label="Canvas" value={canvasMode} onChange={v => { undoPoint(); setCanvasMode(v) }}
+                  options={[["full", "Full pitch"], ["half", "Half pitch"], ["blank", "Blank"]]} />
                 {canvasMode !== "blank" && (
                   <Segmented label="Pitch style" value={pitchStyle}
                     onChange={v => { undoPoint(); setPitchStyle(v); setBgColor(v === "classic" ? DEFAULT_BOARD_SETTINGS.bgColor : PITCH_LOOKS[v].bg) }}
                     options={[["classic", "Classic"], ["night", "Night"], ["paper", "Paper"]]} />
                 )}
                 {canvasMode !== "blank" && pitchStyle === "classic" && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch colour</p>
-                    <div className="flex gap-1.5">
-                      <button onClick={() => { undoPoint(); setPitchColor("green") }}
-                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
-                        style={{ background: pitchColor === "green" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "green" ? "#fff" : TEXT_MUTED }}>
-                        Green
-                      </button>
-                      <button onClick={() => { undoPoint(); setPitchColor("white") }}
-                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
-                        style={{ background: pitchColor === "white" ? ACCENT_GRADIENT : SURFACE_2, color: pitchColor === "white" ? "#fff" : TEXT_MUTED }}>
-                        White lines
-                      </button>
-                    </div>
-                  </div>
+                  <Segmented label="Pitch colour" value={pitchColor} onChange={v => { undoPoint(); setPitchColor(v) }}
+                    options={[["green", "Green"], ["white", "White lines"]]} />
                 )}
+                <ColorPicker label="Canvas colour" colors={BG_PRESETS} selected={bgColor} onSelect={c => { undoPoint("bgColor"); setBgColor(c) }} />
                 {canvasMode !== "blank" && (
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Pitch size</p>
+                      <p className="text-xs" style={{ color: TEXT_MUTED }}>Pitch size</p>
                       <button onClick={() => { undoPoint(); setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
                         className="text-xs px-2 py-0.5 rounded hover:bg-white/10 transition-colors"
                         style={{ color: TEXT_MUTED }}>Reset</button>
@@ -5306,7 +5194,7 @@ function TacticsBoard() {
                       style={{ background: pitchVisible ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: pitchVisible ? ACCENT_SOLID : DS_BORDER, color: pitchVisible ? ACCENT_SOLID : TEXT_PRIMARY }}>
                       <span className="flex items-center gap-2">{pitchVisible ? <Eye size={14} /> : <EyeOff size={14} />}Show pitch</span>
                       <span className="px-1.5 py-0.5 rounded font-bold"
-                        style={{ background: pitchVisible ? ACCENT_SOLID : SURFACE_1, color: pitchVisible ? "#fff" : TEXT_MUTED, fontSize: 10 }}>
+                        style={{ background: pitchVisible ? ACCENT_SOLID : SURFACE_1, color: pitchVisible ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
                         {pitchVisible ? "ON" : "OFF"}
                       </span>
                     </button>
@@ -5316,6 +5204,48 @@ function TacticsBoard() {
                   </div>
                 ) : (
                   <p className="text-xs" style={{ color: TEXT_MUTED }}>A blank canvas has no pitch. Pick Full or Half pitch to draw one.</p>
+                )}
+                <button onClick={() => { undoPoint(); setShow18Zones(v => !v) }}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
+                  style={{ background: show18Zones ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: show18Zones ? ACCENT_SOLID : DS_BORDER, color: show18Zones ? ACCENT_SOLID : TEXT_PRIMARY }}>
+                  <span className="flex items-center gap-2"><Grid3x3 size={14} />18 zones</span>
+                  <span className="px-1.5 py-0.5 rounded font-bold"
+                    style={{ background: show18Zones ? ACCENT_SOLID : SURFACE_1, color: show18Zones ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
+                    {show18Zones ? "ON" : "OFF"}
+                  </span>
+                </button>
+                <button onClick={() => { undoPoint(); setShowLanes(v => !v) }}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
+                  style={{ background: showLanes ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: showLanes ? ACCENT_SOLID : DS_BORDER, color: showLanes ? ACCENT_SOLID : TEXT_PRIMARY }}>
+                  <span className="flex items-center gap-2"><Rows3 size={14} />Lanes</span>
+                  <span className="px-1.5 py-0.5 rounded font-bold"
+                    style={{ background: showLanes ? ACCENT_SOLID : SURFACE_1, color: showLanes ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
+                    {showLanes ? "ON" : "OFF"}
+                  </span>
+                </button>
+                {customZones.length > 0 && (
+                  <button onClick={() => { snapshot(); setCustomZones([]); setSel(null) }}
+                    className="w-full py-1 rounded text-xs hover:bg-red-500/20 transition-colors"
+                    style={{ color: DS_ERROR }}>
+                    Clear all zones ({customZones.length})
+                  </button>
+                )}
+                {images.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Images ({images.length})</p>
+                    <div className="flex flex-col gap-1.5">
+                      {images.map(img => (
+                        <div key={img.id} className="flex items-center justify-between rounded px-2 py-1.5 text-xs"
+                          style={{ background: SURFACE_2, border: sel?.id === img.id ? `1px solid ${ACCENT_SOLID}` : "1px solid transparent" }}>
+                          <span style={{ color: TEXT_PRIMARY }} className="truncate">{img.layer === "background" ? "BG Image" : "Overlay"}</span>
+                          <button onClick={() => { snapshot(); setImages(i => i.filter(x => x.id !== img.id)) }}
+                            className="p-0.5 rounded hover:bg-red-500/20 ml-1 flex-shrink-0" style={{ color: DS_ERROR }}>
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -5384,38 +5314,7 @@ function TacticsBoard() {
                 <p className="text-xs" style={{ color: TEXT_MUTED }}>Build a move with Steps under the board. + Step plays the runs and passes you've drawn, so the next step starts where they end. Numbered lines play in order. Play shows the move here; Export makes it a GIF or an MP4 video, with your seal and handle on the end card.</p>
               </div>
             )}
-            <button aria-expanded={boardGroups.canvas}
-              onClick={() => setBoardGroups(g => ({ ...g, canvas: !g.canvas }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.canvas ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Canvas
-            </button>
-            {boardGroups.canvas && (
-              <div className="p-3 flex flex-col gap-4" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <ColorPicker label="Canvas colour" colors={BG_PRESETS} selected={bgColor} onSelect={c => { undoPoint("bgColor"); setBgColor(c) }} />
-                {images.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Images ({images.length})</p>
-                    <div className="flex flex-col gap-1.5">
-                      {images.map(img => (
-                        <div key={img.id} className="flex items-center justify-between rounded px-2 py-1.5 text-xs"
-                          style={{ background: SURFACE_2, border: sel?.id === img.id ? `1px solid ${ACCENT_SOLID}` : "1px solid transparent" }}>
-                          <span style={{ color: TEXT_PRIMARY }} className="truncate">{img.layer === "background" ? "BG Image" : "Overlay"}</span>
-                          <button onClick={() => { snapshot(); setImages(i => i.filter(x => x.id !== img.id)) }}
-                            className="p-0.5 rounded hover:bg-red-500/20 ml-1 flex-shrink-0" style={{ color: DS_ERROR }}>
-                            <X size={11} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          </div>}
 
           <div style={{ padding: "9px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 11, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
             {lockHint ? "That's locked. Right-click it to unlock." : <>
@@ -5452,18 +5351,18 @@ function TacticsBoard() {
           {/* Empty state overlay */}
           {players.length === 0 && arrows.length === 0 && texts.length === 0 && shapes.length === 0 && images.length === 0 && customZones.length === 0 && (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
-              <div style={{ textAlign: "center" }}>
+              <div style={{ textAlign: "center", background: `${SURFACE_1}f0`, border: `1px solid ${DS_BORDER}`, borderRadius: 12, padding: "22px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
                 <p style={{ fontSize: 18, fontWeight: 700, color: TEXT_PRIMARY, margin: 0 }}>Start your board</p>
                 <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Add a full team, place players one at a time, or draw a zone.</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, padding: "0 12px", justifyContent: "center", pointerEvents: "auto" }}>
                   {([
                     { label: "Start from a drop", action: () => setShowTemplates(true) },
-                    { label: "Add formation", action: () => setFormation(selectedFormation, "home") },
+                    { label: "Add formation", action: () => addTeam("home") },
                     { label: "Place a player", action: () => setTool("homePlayer") },
                     { label: "Draw a zone", action: () => setTool("zone") },
                   ] as { label: string; action: () => void }[]).map(({ label, action }) => (
                     <button key={label} onClick={action}
-                      style={{ background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, color: TEXT_PRIMARY, cursor: "pointer" }}
+                      style={{ background: SURFACE_2, border: `1px solid ${DS_BORDER}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, color: TEXT_PRIMARY, cursor: "pointer" }}
                       onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = ACCENT_SOLID}
                       onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.borderColor = DS_BORDER}>
                       {label}
@@ -5966,7 +5865,7 @@ function TacticsBoard() {
                   {marquee && (
                     <rect x={Math.min(marquee.x1, marquee.x2)} y={Math.min(marquee.y1, marquee.y2)}
                       width={Math.abs(marquee.x2 - marquee.x1)} height={Math.abs(marquee.y2 - marquee.y1)}
-                      fill="rgba(124,92,255,0.1)" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="5,3" style={{ pointerEvents: "none" }} />
+                      fill="rgba(215,255,60,0.1)" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="5,3" style={{ pointerEvents: "none" }} />
                   )}
 
                   {/* The step on screen, "2/3" with its note, in the top corner (the editorial frame puts it in its slate) */}
@@ -6059,7 +5958,7 @@ function TacticsBoard() {
                 <>
                   <button onClick={() => (play ? stopPlay() : startPlay())} disabled={!!making} title={play ? "Stop (P)" : "Play the move (P)"}
                     className="flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold transition-colors"
-                    style={{ background: play ? PS_VOLT : ACCENT_SOLID, color: play ? "#0a0c0f" : "#ffffff" }}>
+                    style={{ background: play ? PS_VOLT : ACCENT_SOLID, color: play ? "#0a0c0f" : ACCENT_INK }}>
                     {play ? <Square size={10} fill="currentColor" /> : <Play size={11} fill="currentColor" />} {play ? "Stop" : "Play"}
                   </button>
                   <div className="w-px h-4 mx-1" style={{ background: "rgba(255,255,255,0.12)" }} />
@@ -6071,7 +5970,7 @@ function TacticsBoard() {
                 return (
                   <button key={i} onClick={() => goStep(i)} aria-pressed={on} aria-label={`Step ${i + 1}`} title={`Step ${i + 1}`}
                     className="w-6 h-6 rounded text-xs font-bold transition-colors"
-                    style={{ background: on ? ACCENT_SOLID : SURFACE_2, color: on ? "#ffffff" : TEXT_PRIMARY }}>
+                    style={{ background: on ? ACCENT_SOLID : SURFACE_2, color: on ? ACCENT_INK : TEXT_PRIMARY }}>
                     {i + 1}
                   </button>
                 )
@@ -6212,8 +6111,7 @@ function TacticsBoard() {
         <TemplateModal
           templates={templates} onClose={() => setShowTemplates(false)}
           onLoad={loadTemplate} onSave={saveTemplate}
-          onDelete={deleteTemplate} onTogglePublish={togglePublish}
-          isAdmin={isAdmin} onAdminToggle={() => setIsAdmin(v => !v)} />
+          onDelete={deleteTemplate} />
       )}
 
       {/* ── Auth modal ── */}
@@ -6237,6 +6135,7 @@ function TacticsBoard() {
             // The open board was deleted: what's on screen stays, and only changes you make from now on count as unsaved
             if (id === currentBoardIdRef.current) { bindBoard(null); loadedUpdatedAtRef.current = null; conflictRef.current = false; unsureRef.current = [] }
           }}
+          onBoardRenamed={(id, t) => { if (id === currentBoardIdRef.current) setTitle(t) }}
         />
       )}
 
@@ -6461,7 +6360,7 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: DS_BORDER }}>
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold"
-              style={{ background: ACCENT_SOLID, color: "#ffffff", fontFamily: "'Barlow Condensed', sans-serif" }}>PS</div>
+              style={{ background: ACCENT_SOLID, color: ACCENT_INK, fontFamily: "'Barlow Condensed', sans-serif" }}>PS</div>
             <span className="font-semibold text-sm" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em" }}>
               PITCHSTUDIO ACCOUNT
             </span>
@@ -6572,7 +6471,7 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
                       className="py-2 px-3 rounded-lg text-xs font-medium text-center transition-all"
                       style={{
                         background: identity === opt.value ? ACCENT_GRADIENT : SURFACE_2,
-                        color: identity === opt.value ? "#ffffff" : "#c9d1d9",
+                        color: identity === opt.value ? ACCENT_INK : "#c9d1d9",
                         border: `1px solid ${identity === opt.value ? ACCENT_SOLID : DS_BORDER}`,
                       }}>
                       {opt.label}
@@ -6600,7 +6499,7 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
             onClick={submit}
             disabled={loading || (showStep1 && (!email || !password))}
             className="w-full py-2.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
-            style={{ background: ACCENT_GRADIENT, color: "#ffffff" }}>
+            style={{ background: ACCENT_GRADIENT, color: ACCENT_INK }}>
             {loading ? (tab === "signin" ? "Signing in…" : "Creating account…") : tab === "signin" ? "Sign In" : step === 1 ? "Next →" : "Create Account"}
           </button>
 
@@ -6614,67 +6513,187 @@ function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
   )
 }
 
-/* ─────────────────────────── My Boards Modal ───────────────── */
-interface BoardRow { id: string; title: string; created_at: string }
+/* ─────────────────────── Your boards: the hub and My Boards ─────────────── */
+interface BoardCardRow { id: string; title: string; updated_at: string; thumb: CanvasState }
+/** What a board's card needs. The picture is drawn from its pieces, lines and zones, never its photos (they can be large). */
+const BOARD_CARD_COLS = "id, title, updated_at, players:canvas_data->players, arrows:canvas_data->arrows, shapes:canvas_data->shapes, zones:canvas_data->customZones, settings:canvas_data->settings, bg:canvas_data->bgColor"
+const boardCardOf = (r: any): BoardCardRow => {
+  const list = (v: unknown) => (Array.isArray(v) ? v : [])
+  const settings = settingsFrom(r.settings && typeof r.settings === "object" ? r.settings : { bgColor: typeof r.bg === "string" ? r.bg : "#0d1117" })
+  return {
+    id: r.id, title: r.title || "Untitled board", updated_at: r.updated_at,
+    thumb: { players: list(r.players), arrows: list(r.arrows), shapes: list(r.shapes), customZones: list(r.zones), texts: [], images: [], settings, title: "", bgColor: settings.bgColor, showPitch: true },
+  }
+}
 
-function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted }: {
+/** Every board you've saved, as cards with a picture: click one to open it; ⋯ renames, duplicates or deletes it */
+function BoardGrid({ userId, currentId = null, onOpen, onDeleted, onRenamed, empty, min = 220 }: {
+  userId: string
+  currentId?: string | null
+  onOpen: (b: BoardCardRow) => Promise<void> | void
+  onDeleted?: (id: string) => void
+  onRenamed?: (id: string, title: string) => void
+  empty: string
+  min?: number
+}) {
+  const [boards, setBoards] = useState<BoardCardRow[] | null>(null)
+  const [note, setNote] = useState("")
+  const [openingId, setOpeningId] = useState<string | null>(null)
+  const [menuId, setMenuId] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  const fetchBoards = async () => {
+    setNote("")
+    await waitForSaves(5000) // a save still on its way would make the list out of date
+    const { data, error } = await supabase.from("boards").select(BOARD_CARD_COLS)
+      .eq("user_id", userId).order("updated_at", { ascending: false }).limit(60)
+    if (error) { setNote("Couldn't load your boards. Check your connection."); setBoards(b => b ?? []); return }
+    setBoards((data ?? []).map(boardCardOf))
+  }
+  useEffect(() => { fetchBoards() }, [userId])
+  useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(""), 5000); return () => clearTimeout(t) }, [note])
+
+  const open = async (b: BoardCardRow) => {
+    if (openingId || renaming?.id === b.id) return // one at a time
+    setOpeningId(b.id)
+    try { await onOpen(b) } finally { setOpeningId(null) }
+  }
+  const rename = async () => {
+    if (!renaming) return
+    const b = boards?.find(x => x.id === renaming.id), text = renaming.text.trim().slice(0, 80)
+    setRenaming(null)
+    if (!b || !text || text === b.title) return
+    const { data, error } = await (supabase as any).from("boards").update({ title: text }).eq("id", b.id).eq("user_id", userId).select("id")
+    if (error || !data?.length) { setNote(`Couldn't rename "${b.title}". Try again.`); return }
+    setBoards(list => (list ?? []).map(x => (x.id === b.id ? { ...x, title: text } : x)))
+    onRenamed?.(b.id, text)
+  }
+  const duplicate = async (b: BoardCardRow) => {
+    setBusyId(b.id)
+    await waitForBoardSave(b.id)
+    const { data: src } = await supabase.from("boards").select("canvas_data, narrative").eq("id", b.id).single()
+    const title = `${b.title} (copy)`.slice(0, 80)
+    const res = src ? await (supabase as any).from("boards").insert({ user_id: userId, title, canvas_data: (src as any).canvas_data, narrative: (src as any).narrative ?? "" }).select("id, updated_at").single() : null
+    setBusyId(null)
+    if (!res || res.error || !res.data?.id) { setNote(`Couldn't duplicate "${b.title}". Try again.`); return }
+    setBoards(list => [{ ...b, id: res.data.id, title, updated_at: res.data.updated_at ?? new Date().toISOString() }, ...(list ?? [])])
+  }
+  const remove = async (b: BoardCardRow) => {
+    setBusyId(b.id)
+    const { error } = await supabase.from("boards").delete().eq("id", b.id).eq("user_id", userId)
+    setBusyId(null); setConfirmId(null)
+    if (error) { setNote(`Couldn't delete "${b.title}". Check your connection and try again.`); return }
+    setBoards(list => (list ?? []).filter(x => x.id !== b.id))
+    onDeleted?.(b.id)
+  }
+
+  const item = (text: string, run: () => void, danger = false) => (
+    <button key={text} onClick={() => { setMenuId(null); run() }}
+      className="w-full text-left px-3 py-2 text-xs transition-colors hover:bg-white/10" style={{ color: danger ? DS_ERROR : TEXT_PRIMARY }}>{text}</button>
+  )
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.1em", margin: 0 }}>
+          Your boards{boards ? ` · ${boards.length}` : ""}
+        </p>
+        <p className="text-xs" style={{ color: TEXT_MUTED, margin: 0 }}>Newest first</p>
+      </div>
+      {note && (
+        <div className="flex items-center gap-2 rounded px-3 py-2 text-xs" style={{ background: "rgba(248,81,73,0.12)", color: TEXT_PRIMARY }}>
+          <AlertCircle size={13} style={{ color: DS_ERROR, flexShrink: 0 }} /> <span className="flex-1">{note}</span>
+          <button onClick={fetchBoards} className="font-semibold hover:underline" style={{ color: TEXT_PRIMARY }}>Reload</button>
+        </div>
+      )}
+      {boards === null && (
+        <div className="flex items-center justify-center py-12 gap-2 text-sm" style={{ color: TEXT_MUTED }}>
+          <Clock size={14} className="animate-spin" /> Loading boards…
+        </div>
+      )}
+      {boards?.length === 0 && <p className="text-center py-10 text-sm" style={{ color: TEXT_MUTED }}>{empty}</p>}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${min}px, 1fr))`, gap: 12 }}>
+        {(boards ?? []).map(b => {
+          const here = b.id === currentId
+          return (
+            <div key={b.id} className="rounded-lg border relative" style={{ background: SURFACE_1, borderColor: here ? ACCENT_SOLID : DS_BORDER }}>
+              <button onClick={() => open(b)} aria-label={`Open ${b.title}`} title={`Open ${b.title}`}
+                className="block w-full overflow-hidden transition-opacity hover:opacity-90" style={{ borderRadius: "8px 8px 0 0", padding: 0, border: "none", cursor: "pointer" }}>
+                <DropThumb data={b.thumb} />
+              </button>
+              <div className="flex items-start gap-2 px-3 py-2.5">
+                <div className="flex-1 min-w-0">
+                  {renaming?.id === b.id ? (
+                    <input autoFocus value={renaming.text} maxLength={80} aria-label="Board name"
+                      onChange={e => setRenaming({ id: b.id, text: e.target.value })} onBlur={rename}
+                      onKeyDown={e => { if (e.key === "Enter") rename(); if (e.key === "Escape") setRenaming(null) }}
+                      className="w-full rounded px-1.5 py-0.5 text-sm font-semibold outline-none"
+                      style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${ACCENT_SOLID}` }} />
+                  ) : (
+                    <button onClick={() => setRenaming({ id: b.id, text: b.title })} title="Click to rename"
+                      className="block max-w-full truncate text-left text-sm font-semibold" style={{ color: TEXT_PRIMARY, background: "transparent", border: "none", padding: 0 }}>{b.title}</button>
+                  )}
+                  <p className="text-xs mt-0.5" style={{ color: here ? ACCENT_SOLID : TEXT_MUTED, margin: 0 }}>
+                    {renaming?.id === b.id ? "Press Enter to save" : openingId === b.id ? "Opening…" : busyId === b.id ? "Working…" : here ? "Open now" : `Edited ${hubRelTime(b.updated_at)}`}
+                  </p>
+                </div>
+                <div className="relative flex-shrink-0">
+                  <button onClick={() => setMenuId(m => (m === b.id ? null : b.id))} aria-label={`More for ${b.title}`} aria-expanded={menuId === b.id} title="Rename, duplicate or delete"
+                    className="p-1 rounded hover:bg-white/10" style={{ color: TEXT_MUTED }}><MoreHorizontal size={16} /></button>
+                  {menuId === b.id && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setMenuId(null)} />
+                      <div className="absolute right-0 top-full mt-1 w-36 rounded-lg border shadow-xl z-50 py-1" style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
+                        {item("Rename", () => setRenaming({ id: b.id, text: b.title }))}
+                        {item("Duplicate", () => duplicate(b))}
+                        {item("Delete…", () => setConfirmId(b.id), true)}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+              {confirmId === b.id && (
+                <div className="absolute inset-0 rounded-lg flex flex-col items-center justify-center gap-3 p-4 text-center" style={{ background: "rgba(20,21,24,0.94)", zIndex: 5 }}>
+                  <p className="text-sm font-semibold" style={{ color: TEXT_PRIMARY, margin: 0 }}>Delete “{b.title}”?</p>
+                  <p className="text-xs" style={{ color: TEXT_MUTED, margin: 0 }}>This can't be undone.</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setConfirmId(null)} className="px-3 py-1.5 rounded text-xs font-semibold" style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>Cancel</button>
+                    <button onClick={() => remove(b)} disabled={busyId === b.id} className="px-3 py-1.5 rounded text-xs font-semibold disabled:opacity-60" style={{ background: DS_ERROR, color: "#ffffff" }}>
+                      {busyId === b.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ─────────────────────────── My Boards Modal ───────────────── */
+function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted, onBoardRenamed }: {
   userId: string
   currentBoardId: string | null
   onClose: () => void
-  onLoad: (canvasData: unknown, title: string, id: string, narrative: string | null, updatedAt: string | null) => void
+  onLoad: (canvasData: unknown, title: string, id: string, narrative: string | null, updatedAt: string | null) => Promise<void> | void
   onBoardDeleted: (id: string) => void
+  onBoardRenamed: (id: string, title: string) => void
 }) {
-  const [boards, setBoards] = useState<BoardRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadingId, setLoadingId] = useState<string | null>(null)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
-
-  const fetchBoards = async () => {
-    await waitForSaves(5000) // a save still on its way would make the list out of date
-    const { data } = await supabase
-      .from("boards")
-      .select("id, title, created_at")
-      .eq("user_id", userId)
-      .order("updated_at", { ascending: false })
-    setBoards(data ?? []); setLoading(false)
-  }
-
-  useEffect(() => { fetchBoards() }, [userId])
-
-  const loadBoard = async (b: BoardRow) => {
-    if (loadingId) return // one at a time
-    setLoadingId(b.id)
+  const open = async (b: BoardCardRow) => {
     await waitForBoardSave(b.id) // a save to this board that's still on its way lands first
     const { data } = await supabase.from("boards").select("canvas_data, title, narrative, updated_at").eq("id", b.id).single()
-    if (data) onLoad((data as any).canvas_data, (data as any).title, b.id, (data as any).narrative ?? null, (data as any).updated_at ?? null)
-    setLoadingId(null)
+    if (data) await onLoad((data as any).canvas_data, (data as any).title, b.id, (data as any).narrative ?? null, (data as any).updated_at ?? null)
   }
-
-  const deleteBoard = async (id: string) => {
-    setDeleting(true)
-    await supabase.from("boards").delete().eq("id", id).eq("user_id", userId)
-    setDeleting(false)
-    setConfirmDeleteId(null)
-    onBoardDeleted(id)
-    setBoards(prev => prev.filter(b => b.id !== id))
-  }
-
-  const fmt = (iso: string) => {
-    const d = new Date(iso)
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) + " · " +
-      d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-  }
-
-  const boardToDelete = boards.find(b => b.id === confirmDeleteId)
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.75)" }}
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.75)" }}
       onClick={onClose}>
-      <div className="relative w-full max-h-[75vh] flex flex-col rounded-xl border overflow-hidden"
-        style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.12)", maxWidth: 560 }}
+      <div className="relative w-full max-h-[80vh] flex flex-col rounded-xl border overflow-hidden"
+        style={{ background: SURFACE_BASE, borderColor: "rgba(255,255,255,0.12)", maxWidth: 760 }}
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: DS_BORDER }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: DS_BORDER, background: SURFACE_1 }}>
           <div className="flex items-center gap-2">
             <FolderOpen size={16} style={{ color: ACCENT_SOLID }} />
             <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
@@ -6683,94 +6702,11 @@ function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/10"><X size={16} /></button>
         </div>
-
         <div className="flex-1 overflow-y-auto p-4">
-          {loading && (
-            <div className="flex items-center justify-center py-12 gap-2 text-sm" style={{ color: TEXT_MUTED }}>
-              <Clock size={14} className="animate-spin" /> Loading boards…
-            </div>
-          )}
-          {!loading && boards.length === 0 && (
-            <div className="text-center py-12 text-sm" style={{ color: TEXT_MUTED }}>
-              No saved boards yet. Use the Save button to save your work.
-            </div>
-          )}
-          <div className="flex flex-col gap-2">
-            {boards.map(b => (
-              <div key={b.id}
-                className="flex items-center justify-between rounded-lg px-4 py-3 border transition-colors"
-                style={{ background: SURFACE_2, borderColor: b.id === currentBoardId ? `${ACCENT_SOLID}60` : DS_BORDER }}>
-                <div className="flex flex-col gap-0.5 min-w-0 flex-1 cursor-pointer" onClick={() => loadBoard(b)}>
-                  <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.04em" }}>
-                    {b.title || "Untitled board"}
-                    {b.id === currentBoardId && (
-                      <span className="ml-2 text-xs font-normal" style={{ color: ACCENT_SOLID, fontFamily: "'Inter', sans-serif", letterSpacing: 0 }}>
-                        (open)
-                      </span>
-                    )}
-                  </span>
-                  <span className="text-xs" style={{ color: TEXT_MUTED }}>{fmt(b.created_at)}</span>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                  <button
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors"
-                    style={{ background: loadingId === b.id ? SURFACE_2 : ACCENT_GRADIENT, color: loadingId === b.id ? TEXT_MUTED : "#ffffff" }}
-                    disabled={loadingId === b.id}
-                    onClick={() => loadBoard(b)}>
-                    {loadingId === b.id ? "Loading…" : "Load"}
-                  </button>
-                  <button
-                    onClick={() => setConfirmDeleteId(b.id)}
-                    className="p-1.5 rounded transition-colors hover:bg-red-500/20"
-                    style={{ color: DS_ERROR }}
-                    title="Delete board">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+          <BoardGrid userId={userId} currentId={currentBoardId} onOpen={open} onDeleted={onBoardDeleted} onRenamed={onBoardRenamed} min={200}
+            empty="No saved boards yet. Press Save to keep your work." />
         </div>
       </div>
-
-      {/* Delete confirmation */}
-      {confirmDeleteId && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4"
-          style={{ background: "rgba(0,0,0,0.6)" }}
-          onClick={() => setConfirmDeleteId(null)}>
-          <div className="rounded-xl border flex flex-col gap-5 p-6 w-full"
-            style={{ background: SURFACE_1, borderColor: DS_BORDER, maxWidth: 360 }}
-            onClick={e => e.stopPropagation()}>
-            <div>
-              <p style={{ color: TEXT_PRIMARY, fontSize: 15, fontWeight: 600, margin: 0, fontFamily: "'Inter', sans-serif" }}>
-                Delete this board?
-              </p>
-              {boardToDelete && (
-                <p style={{ color: ACCENT_SOLID, fontSize: 13, margin: "4px 0 0", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.04em" }}>
-                  {boardToDelete.title || "Untitled board"}
-                </p>
-              )}
-              <p style={{ color: TEXT_MUTED, fontSize: 13, margin: "6px 0 0", fontFamily: "'Inter', sans-serif" }}>
-                This cannot be undone.
-              </p>
-            </div>
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => setConfirmDeleteId(null)}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:brightness-110"
-                style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
-                Cancel
-              </button>
-              <button
-                onClick={() => confirmDeleteId && deleteBoard(confirmDeleteId)}
-                disabled={deleting}
-                className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:brightness-110 disabled:opacity-60"
-                style={{ background: DS_ERROR, color: "#ffffff" }}>
-                {deleting ? "Deleting…" : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -6877,97 +6813,12 @@ function EighteenZonesOverlay({ upright = false }: { upright?: boolean }) {
   )
 }
 
-/* ─────────────────────── Workspace Mode Selector ────────────── */
-const WORKSPACE_MODES = [
-  {
-    id: "tactics" as const,
-    label: "Tactics Board",
-    icon: <Waypoints size={15} />,
-    desc: "Full pitch — plan formations, movements & shapes",
-  },
-  {
-    id: "report" as const,
-    label: "Report",
-    icon: <FileText size={15} />,
-    desc: "Clean white canvas — build scouting reports & layouts",
-  },
-  {
-    id: "brainstorm" as const,
-    label: "Brainstorm",
-    icon: <Lightbulb size={15} />,
-    desc: "Empty space — think freely without constraints",
-  },
-]
-
-function WorkspaceModeSelector({
-  mode, onChange,
-}: { mode: "tactics" | "report" | "brainstorm"; onChange: (m: "tactics" | "report" | "brainstorm") => void }) {
-  const [open, setOpen] = useState(false)
-  const current = WORKSPACE_MODES.find(m => m.id === mode)!
-  return (
-    <div className="relative flex-shrink-0">
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors border"
-        style={{
-          background: open ? SURFACE_2 : SURFACE_1,
-          borderColor: open ? ACCENT_SOLID : "rgba(255,255,255,0.15)",
-          color: TEXT_PRIMARY,
-          minWidth: 150,
-        }}
-      >
-        <span className="flex items-center">{current.icon}</span>
-        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 13 }}>
-          {current.label.toUpperCase()}
-        </span>
-        <ChevronDown size={11} style={{ marginLeft: "auto", opacity: 0.6, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
-      </button>
-
-      {open && (
-        <>
-          {/* backdrop */}
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div
-            className="absolute left-0 top-full mt-1.5 rounded-xl border shadow-2xl z-50 overflow-hidden flex flex-col"
-            style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.12)", width: 280 }}
-          >
-            <div className="px-4 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-              <p className="text-xs font-bold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.1em" }}>What are you building?</p>
-            </div>
-            {WORKSPACE_MODES.map(m => (
-              <button
-                key={m.id}
-                onClick={() => { onChange(m.id); setOpen(false) }}
-                className="flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5"
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
-              >
-                <span className="flex items-center justify-center rounded-md flex-shrink-0" style={{ width: 28, height: 28, background: SURFACE_2, color: mode === m.id ? ACCENT_SOLID : TEXT_MUTED }}>{m.icon}</span>
-                <div className="flex flex-col gap-0.5 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", color: TEXT_PRIMARY }}>
-                      {m.label.toUpperCase()}
-                    </span>
-                    {mode === m.id && (
-                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: ACCENT_SOLID, color: "#ffffff", fontSize: 9, fontWeight: 700 }}>ACTIVE</span>
-                    )}
-                  </div>
-                  <span className="text-xs leading-snug" style={{ color: TEXT_MUTED }}>{m.desc}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
 /* ─────────────────────────── Sub-components ────────────────── */
-function FormationPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function FormationPicker({ value, onChange, label }: { value: string; onChange: (v: string) => void; label?: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div style={{ position: "relative", width: "100%" }}>
-      <button
+      <button aria-label={label ? `${label} formation` : undefined} aria-expanded={open}
         onClick={() => setOpen(o => !o)}
         style={{ width: "100%", background: SURFACE_2, border: `1px solid ${DS_BORDER}`, borderRadius: 6, padding: "8px 10px", fontSize: 13, color: TEXT_PRIMARY, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "'Inter', sans-serif" }}>
         <span>{value}</span>
@@ -7084,7 +6935,7 @@ function Segmented<T extends string>({ label, value, options, onChange }: { labe
         {options.map(([v, text]) => (
           <button key={v} onClick={() => onChange(v)} aria-pressed={value === v}
             className="px-2 py-1 rounded text-xs font-medium transition-colors"
-            style={{ background: value === v ? ACCENT_GRADIENT : SURFACE_2, color: value === v ? "#fff" : TEXT_MUTED }}>
+            style={{ background: value === v ? ACCENT_GRADIENT : SURFACE_2, color: value === v ? ACCENT_INK : TEXT_MUTED }}>
             {text}
           </button>
         ))}
@@ -7113,7 +6964,7 @@ function PatternRow({ value, onChange }: { value: KitPattern; onChange: (p: KitP
         {KIT_PATTERNS.map(p => (
           <button key={p} onClick={() => onChange(p)} aria-pressed={value === p}
             className="px-2 py-1 rounded text-xs font-medium transition-colors"
-            style={{ background: value === p ? ACCENT_GRADIENT : SURFACE_2, color: value === p ? "#fff" : TEXT_MUTED }}>
+            style={{ background: value === p ? ACCENT_GRADIENT : SURFACE_2, color: value === p ? ACCENT_INK : TEXT_MUTED }}>
             {PATTERN_LABELS[p]}
           </button>
         ))}
@@ -7381,7 +7232,7 @@ function PitchBackground() {
       {/* Mowed stripe background */}
       <div style={{
         position: "absolute", inset: 0,
-        background: `repeating-linear-gradient(-50deg, ${SURFACE_BASE} 0px, ${SURFACE_BASE} 44px, #0C140E 44px, #0C140E 88px)`,
+        background: `repeating-linear-gradient(-50deg, ${SURFACE_BASE} 0px, ${SURFACE_BASE} 44px, #1F2622 44px, #1F2622 88px)`,
       }} />
       {/* SVG pitch markings */}
       <svg viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"
@@ -7488,26 +7339,26 @@ function LandingPage() {
             marginTop: 10,
             padding: "13px 40px",
             borderRadius: 999,
-            background: "linear-gradient(135deg, #a855f7 0%, #ec4899 100%)",
-            color: "#ffffff",
+            background: ACCENT_SOLID,
+            color: ACCENT_INK,
             fontSize: 15,
             fontWeight: 600,
             fontFamily: "'Inter', sans-serif",
             border: "none",
             cursor: "pointer",
-            boxShadow: "0 4px 28px rgba(168,85,247,0.4)",
+            boxShadow: "0 4px 28px rgba(215,255,60,0.25)",
             letterSpacing: "0.02em",
             transition: "transform 0.12s, box-shadow 0.12s",
           }}
           onMouseEnter={e => {
             const el = e.currentTarget
             el.style.transform = "scale(1.04)"
-            el.style.boxShadow = "0 6px 36px rgba(168,85,247,0.55)"
+            el.style.boxShadow = "0 6px 36px rgba(215,255,60,0.4)"
           }}
           onMouseLeave={e => {
             const el = e.currentTarget
             el.style.transform = "scale(1)"
-            el.style.boxShadow = "0 4px 28px rgba(168,85,247,0.4)"
+            el.style.boxShadow = "0 4px 28px rgba(215,255,60,0.25)"
           }}>
           Sign Up
         </button>
@@ -7554,147 +7405,10 @@ function hubRelTime(iso: string): string {
   return `${diffMo} month${diffMo > 1 ? "s" : ""} ago`
 }
 
-interface HubRecentBoard { id: string; title: string; updated_at: string }
-
-interface HubCardDef {
-  id: string
-  title: string
-  desc: string
-  icon: React.ReactNode
-  available: boolean
-  primary?: boolean
-  span2?: boolean
-}
-
-function HubPitchSVG() {
-  const stripe = (i: number) => (
-    <rect key={i} x={0} y={i * 13} width={160} height={13}
-      fill={i % 2 === 0 ? "#2C7A48" : "#27703F"} />
-  )
-  const mkLine = (x1: number, y1: number, x2: number, y2: number) => (
-    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="white" strokeWidth={1.2} opacity={0.55} />
-  )
-  // 4-3-3 positions (y=0 top, y=230 bottom; GK at bottom)
-  const players: [number, number][] = [
-    // GK
-    [80, 210],
-    // Back 4
-    [28, 178], [60, 172], [100, 172], [132, 178],
-    // Mid 3
-    [38, 132], [80, 124], [122, 132],
-    // Front 3
-    [38, 74], [80, 62], [122, 74],
-  ]
-  return (
-    <svg viewBox="0 0 160 230" style={{ width: "100%", borderRadius: 6, display: "block" }}>
-      <style>{`
-        @keyframes hubPlayers {
-          0%, 100% { transform: translateY(0px); }
-          50%       { transform: translateY(-12px); }
-        }
-        .hub-players-g { animation: hubPlayers 6s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce) {
-          .hub-players-g { animation: none; }
-        }
-      `}</style>
-      {/* Mowed stripes — 18 bands of 13px each = 234px, covers 230 */}
-      {Array.from({ length: 18 }, (_, i) => stripe(i))}
-      {/* Pitch markings */}
-      <g fill="none" stroke="white" strokeWidth={1.2} opacity={0.55}>
-        {/* Outer boundary */}
-        <rect x={10} y={12} width={140} height={206} />
-        {/* Halfway line */}
-        {mkLine(10, 115, 150, 115)}
-        {/* Centre circle */}
-        <circle cx={80} cy={115} r={22} />
-        {/* Centre spot */}
-        <circle cx={80} cy={115} r={1.5} fill="white" />
-        {/* Top penalty box */}
-        <rect x={38} y={12} width={84} height={38} />
-        {/* Bottom penalty box */}
-        <rect x={38} y={180} width={84} height={38} />
-        {/* Top goal */}
-        <rect x={60} y={12} width={40} height={10} />
-        {/* Bottom goal */}
-        <rect x={60} y={208} width={40} height={10} />
-      </g>
-      {/* Players */}
-      <g className="hub-players-g">
-        {players.map(([cx, cy], i) => (
-          <circle key={i} cx={cx} cy={cy} r={6.5} fill="#F5F5F7" />
-        ))}
-      </g>
-    </svg>
-  )
-}
-
-function HubCard({ card, onClick }: { card: HubCardDef; onClick: () => void }) {
-  const [hovered, setHovered] = useState(false)
-  const isAvail = card.available
-  const isPrimary = card.primary
-
-  const borderColor = isPrimary
-    ? hovered ? ACCENT_SOLID : `${ACCENT_SOLID}80`
-    : isAvail
-      ? hovered ? `${ACCENT_SOLID}80` : DS_BORDER
-      : DS_BORDER
-
-  return (
-    <button
-      style={{
-        gridColumn: card.span2 ? "span 2" : "span 1",
-        textAlign: "left", border: `1px solid ${borderColor}`,
-        cursor: isAvail ? "pointer" : "not-allowed",
-        background: SURFACE_1,
-        borderRadius: 10, padding: 16, minHeight: 72,
-        transform: isAvail && hovered ? "translateY(-2px)" : "none",
-        transition: "transform 0.15s, border-color 0.15s",
-        opacity: isAvail ? 1 : 0.55,
-        position: "relative", fontFamily: "'Inter', sans-serif",
-        outline: "none",
-      }}
-      onClick={onClick}
-      aria-disabled={!isAvail ? true : undefined}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={() => setHovered(true)}
-      onBlur={() => setHovered(false)}
-      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() } }}>
-      {/* Primary card gradient overlay */}
-      {isPrimary && (
-        <div style={{
-          position: "absolute", inset: 0, borderRadius: 9,
-          background: ACCENT_GRADIENT, opacity: 0.18, pointerEvents: "none",
-        }} />
-      )}
-      {/* SOON badge */}
-      {!isAvail && (
-        <span style={{
-          position: "absolute", top: 12, right: 12,
-          fontSize: 9, letterSpacing: 0.5, textTransform: "uppercase",
-          color: TEXT_MUTED, border: "1px solid rgba(255,255,255,0.2)",
-          borderRadius: 999, padding: "2px 8px", fontFamily: "'Inter', sans-serif",
-        }}>
-          SOON
-        </span>
-      )}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, color: TEXT_PRIMARY, position: "relative" }}>
-        <span style={{ flexShrink: 0 }}>{card.icon}</span>
-        <span style={{ fontSize: 15, fontWeight: 600 }}>{card.title}</span>
-      </div>
-      <p style={{ margin: "4px 0 0", fontSize: 12, color: TEXT_MUTED, lineHeight: 1.4, position: "relative" }}>
-        {card.desc}
-      </p>
-    </button>
-  )
-}
-
 function HubPage() {
   const navigate = useNavigate()
   const [displayName, setDisplayName] = useState("")
   const [userId, setUserId] = useState<string | null>(null)
-  const [recentBoards, setRecentBoards] = useState<HubRecentBoard[] | null>(null)
-  const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [ready, setReady] = useState(false) // true once we know someone is signed in
   // First visit right after sign-up says "Welcome", every later visit says "Welcome back"
@@ -7714,34 +7428,17 @@ function HubPage() {
         .maybeSingle()
       const raw = (profile as any)?.display_name || (profile as any)?.handle || session.user.email?.split("@")[0] || ""
       setDisplayName(stripHandleSuffix(raw, uid, session.user.email))
-      await waitForSaves(5000) // coming straight from the board: let its last save land first
-      const { data: boards } = await supabase
-        .from("boards")
-        .select("id, title, updated_at")
-        .eq("user_id", uid)
-        .order("updated_at", { ascending: false })
-        .limit(3)
-      setRecentBoards((boards ?? []) as HubRecentBoard[])
     })
   }, [])
 
-  useEffect(() => {
-    if (!toastMsg) return
-    const t = setTimeout(() => setToastMsg(null), 3000)
-    return () => clearTimeout(t)
-  }, [toastMsg])
-
-  // Opening a recent board: one at a time, and only while you're still on the hub
-  const [openingId, setOpeningId] = useState<string | null>(null)
+  // Opening a board: only while you're still on the hub
   const onHubRef = useRef(true)
   useEffect(() => {
     onHubRef.current = true
-    boardHandoff.preload = null; boardHandoff.braindump = false // anything left over from earlier is out of date
+    boardHandoff.preload = null; boardHandoff.braindump = false; boardHandoff.drops = false // anything left over from earlier is out of date
     return () => { onHubRef.current = false }
   }, [])
-  const handleRecentClick = async (board: HubRecentBoard) => {
-    if (openingId) return
-    setOpeningId(board.id)
+  const openBoard = async (board: BoardCardRow) => {
     await waitForBoardSave(board.id) // its last save (say, from just before you pressed Back) lands first
     const { data } = await supabase.from("boards").select("canvas_data, title, narrative, updated_at").eq("id", board.id).single()
     if (!onHubRef.current) return
@@ -7754,183 +7451,106 @@ function HubPage() {
     navigate("/")
   }
 
-  const fireComingSoon = (title: string) => {
-    ;(window as any).posthog?.capture("coming_soon_click", { feature: title })
-    setToastMsg(`${title} — coming soon`)
-  }
-
-  const HUB_CARDS: HubCardDef[] = [
-    { id: "tactical",  title: "Tactical Board",       desc: "Build formations, arrows and zones on a full pitch.",  icon: <LayoutGrid size={18} />,  available: true,  primary: true, span2: true },
-    { id: "braindump", title: "Braindump",             desc: "A blank space to think — no pitch, no rules.",         icon: <StickyNote size={18} />,  available: true },
-    { id: "live",      title: "Live Game Analysis",    desc: "Annotate real match stills and screenshots.",          icon: <Video size={18} />,       available: false },
-    { id: "match",     title: "Match Report",          desc: "Publish an editorial-style match breakdown.",          icon: <FileText size={18} />,    available: false },
-    { id: "player",    title: "Player Report",         desc: "Profile a single player in depth.",                   icon: <UserSquare size={18} />,  available: false },
-    { id: "archive",   title: "Archive Closet",        desc: "Everything you've made, in one place.",               icon: <Archive size={18} />,     available: false },
-    { id: "profile",   title: "Creator Profile",        desc: "Your name, club, country and colours.",               icon: <Settings size={18} />,    available: true },
+  const START: { id: string; title: string; desc: string; run: () => void }[] = [
+    { id: "tactical", title: "New tactics board", desc: "A full pitch", run: () => navigate("/") },
+    { id: "drops", title: "Start from a drop", desc: `${DROPS.length} ready-made moves`, run: () => { boardHandoff.drops = true; navigate("/") } },
+    { id: "braindump", title: "Braindump", desc: "A blank page to think on", run: () => { boardHandoff.braindump = true; navigate("/") } },
   ]
-
-  const handleCardClick = (card: HubCardDef) => {
-    if (!card.available) { fireComingSoon(card.title); return }
-    if (card.id === "tactical") { navigate("/"); return }
-    if (card.id === "braindump") { boardHandoff.braindump = true; navigate("/"); return }
-    if (card.id === "profile") { navigate("/profile"); return }
-  }
-
-  const hPad = { base: 32, sm: 20 }
 
   if (!ready) return <div style={{ width: "100vw", height: "100vh", background: SURFACE_BASE }} />
 
   return (
-    <div style={{ display: "flex", width: "100vw", height: "100vh", overflow: "hidden", background: SURFACE_BASE, fontFamily: "'Inter', sans-serif", color: TEXT_PRIMARY, position: "relative" }}>
+    <div style={{ minHeight: "100vh", background: SURFACE_BASE, fontFamily: "'Inter', sans-serif", color: TEXT_PRIMARY }}>
       <style>{`
-        .hub-right { display: flex; }
-        .hub-left { width: 58%; }
-        @media (max-width: 1023px) {
-          .hub-right { display: none !important; }
-          .hub-left { width: 100% !important; }
-        }
         .hub-user-chip:hover { filter: brightness(1.1); }
+        .hub-start:hover { border-color: ${ACCENT_SOLID} !important; transform: translateY(-1px); }
         @media (max-width: 639px) {
           .hub-greeting { font-size: 24px !important; }
-          .hub-grid { grid-template-columns: 1fr !important; }
-          .hub-card-span2 { grid-column: span 1 !important; }
-          .hub-section-pad { padding-left: ${hPad.sm}px !important; padding-right: ${hPad.sm}px !important; }
-          .hub-recent-row { flex-direction: column !important; }
+          .hub-pad { padding-left: 20px !important; padding-right: 20px !important; }
+          .hub-start-row { grid-template-columns: 1fr !important; }
         }
       `}</style>
 
-      {/* ── Left content area ── */}
-      <div className="hub-left" style={{ height: "100%", display: "flex", flexDirection: "column", overflowY: "auto", flexShrink: 0 }}>
-
-        {/* Top bar */}
-        <div className="hub-section-pad" style={{
-          height: 56, display: "flex", alignItems: "center", justifyContent: "space-between",
-          borderBottom: `1px solid ${DS_BORDER}`, flexShrink: 0, paddingLeft: hPad.base, paddingRight: hPad.base,
-        }}>
-          <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, letterSpacing: 1, color: TEXT_PRIMARY, userSelect: "none" }}>
-            PITCHSTUDIO
-          </span>
-          <div style={{ position: "relative" }}>
-            <button
-              className="hub-user-chip"
-              onClick={() => setUserMenuOpen(v => !v)}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                background: SURFACE_2, borderRadius: 999, padding: "6px 12px",
-                border: "none", cursor: "pointer", transition: "filter 0.15s",
-              }}>
-              <div style={{ width: 24, height: 24, borderRadius: "50%", background: ACCENT_GRADIENT, flexShrink: 0 }} />
-              <span style={{ fontSize: 13, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
-                {displayName || "…"}
-              </span>
-            </button>
-            {userMenuOpen && (
-              <>
-                <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setUserMenuOpen(false)} />
-                <div style={{
-                  position: "absolute", top: "calc(100% + 8px)", right: 0,
-                  background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 8,
-                  zIndex: 100, minWidth: 140, overflow: "hidden",
-                  boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-                }}>
-                  <button
-                    onClick={handleSignOut}
-                    style={{
-                      display: "block", width: "100%", textAlign: "left",
-                      padding: "10px 16px", background: "none", border: "none",
-                      color: DS_ERROR, fontSize: 13, cursor: "pointer",
-                      fontFamily: "'Inter', sans-serif",
-                      transition: "background 0.12s",
-                    }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,81,73,0.1)" }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "none" }}>
-                    Sign out
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Greeting */}
-        <div className="hub-section-pad" style={{ paddingLeft: hPad.base, paddingRight: hPad.base, paddingTop: 36 }}>
-          <h1 className="hub-greeting" style={{
-            margin: 0, fontSize: 32, fontWeight: 700, color: TEXT_PRIMARY,
-            letterSpacing: "-0.5px", whiteSpace: "nowrap", overflow: "hidden",
-            textOverflow: "ellipsis", maxWidth: "100%", fontFamily: "'Inter', sans-serif",
-          }}>
-            {isNewUser ? "Welcome" : "Welcome back"}{displayName ? `, ${displayName}` : ""}
-          </h1>
-          <p style={{ margin: "6px 0 0", fontSize: 15, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
-            What do you want to work on today?
-          </p>
-        </div>
-
-        {/* Recent work strip */}
-        {recentBoards !== null && recentBoards.length > 0 && (
-          <div className="hub-section-pad" style={{ paddingLeft: hPad.base, paddingRight: hPad.base, paddingTop: 24 }}>
-            <p style={{ margin: "0 0 10px", fontSize: 10, letterSpacing: 1, color: TEXT_MUTED, textTransform: "uppercase", fontFamily: "'Inter', sans-serif" }}>
-              PICK UP WHERE YOU LEFT OFF
-            </p>
-            <div className="hub-recent-row" style={{ display: "flex", gap: 10 }}>
-              {recentBoards.map(board => (
-                <button
-                  key={board.id}
-                  className="hub-recent-card"
-                  onClick={() => handleRecentClick(board)}
-                  style={{
-                    flex: 1, textAlign: "left", background: SURFACE_1,
-                    border: `1px solid ${DS_BORDER}`, borderRadius: 8, padding: 12,
-                    cursor: "pointer", transition: "border-color 0.15s, transform 0.15s",
-                    fontFamily: "'Inter', sans-serif",
-                  }}>
-                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: TEXT_PRIMARY, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {board.title}
-                  </p>
-                  <p style={{ margin: "4px 0 0", fontSize: 11, color: TEXT_MUTED }}>
-                    {openingId === board.id ? "Opening…" : hubRelTime(board.updated_at)}
-                  </p>
-                </button>
-              ))}
+      {/* Top bar */}
+      <div className="hub-pad" style={{
+        height: 56, display: "flex", alignItems: "center", justifyContent: "space-between",
+        borderBottom: `1px solid ${DS_BORDER}`, paddingLeft: 32, paddingRight: 32,
+      }}>
+        <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, letterSpacing: 1, color: TEXT_PRIMARY, userSelect: "none" }}>
+          PITCHSTUDIO
+        </span>
+        <div style={{ position: "relative" }}>
+          <button
+            className="hub-user-chip"
+            onClick={() => setUserMenuOpen(v => !v)} aria-expanded={userMenuOpen}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              background: SURFACE_2, borderRadius: 999, padding: "6px 12px",
+              border: "none", cursor: "pointer", transition: "filter 0.15s",
+            }}>
+            <div style={{ width: 24, height: 24, borderRadius: "50%", background: ACCENT_SOLID, color: ACCENT_INK, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>
+              {(displayName || "?").slice(0, 1).toUpperCase()}
             </div>
-          </div>
-        )}
+            <span style={{ fontSize: 13, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
+              {displayName || "…"}
+            </span>
+            <ChevronDown size={12} style={{ color: TEXT_MUTED }} />
+          </button>
+          {userMenuOpen && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setUserMenuOpen(false)} />
+              <div style={{
+                position: "absolute", top: "calc(100% + 8px)", right: 0,
+                background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 8,
+                zIndex: 100, minWidth: 170, overflow: "hidden", padding: "4px 0",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+              }}>
+                <button onClick={() => navigate("/profile")}
+                  className="flex items-center gap-2 w-full text-left px-4 py-2.5 text-sm hover:bg-white/10" style={{ color: TEXT_PRIMARY }}>
+                  <Settings size={14} /> Creator profile
+                </button>
+                <button onClick={handleSignOut}
+                  className="flex items-center gap-2 w-full text-left px-4 py-2.5 text-sm hover:bg-red-500/10" style={{ color: DS_ERROR }}>
+                  <LogOut size={14} /> Sign out
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
 
-        {/* Card grid */}
-        <div className="hub-section-pad hub-grid" style={{
-          paddingLeft: hPad.base, paddingRight: hPad.base, paddingTop: 24, paddingBottom: 40,
-          display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12,
+      <div className="hub-pad" style={{ maxWidth: 1180, margin: "0 auto", paddingLeft: 32, paddingRight: 32, paddingTop: 36, paddingBottom: 48 }}>
+        {/* Greeting */}
+        <h1 className="hub-greeting" style={{
+          margin: 0, fontSize: 32, fontWeight: 700, color: TEXT_PRIMARY,
+          letterSpacing: "-0.5px", whiteSpace: "nowrap", overflow: "hidden",
+          textOverflow: "ellipsis", maxWidth: "100%", fontFamily: "'Inter', sans-serif",
         }}>
-          {HUB_CARDS.map(card => (
-            <HubCard key={card.id} card={card} onClick={() => handleCardClick(card)} />
+          {isNewUser ? "Welcome" : "Welcome back"}{displayName ? `, ${displayName}` : ""}
+        </h1>
+        <p style={{ margin: "6px 0 0", fontSize: 15, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
+          What do you want to work on today?
+        </p>
+
+        {/* Start something */}
+        <div className="hub-start-row" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginTop: 24 }}>
+          {START.map((s, i) => (
+            <button key={s.id} className="hub-start" onClick={s.run}
+              style={{
+                textAlign: "left", background: SURFACE_1, borderRadius: 10, padding: "16px 18px", cursor: "pointer",
+                border: `1px solid ${i === 0 ? ACCENT_SOLID : DS_BORDER}`, transition: "transform 0.15s, border-color 0.15s", fontFamily: "'Inter', sans-serif",
+              }}>
+              <span style={{ display: "block", fontSize: 16, fontWeight: 600, color: TEXT_PRIMARY }}>{s.title}</span>
+              <span style={{ display: "block", marginTop: 4, fontSize: 13, color: TEXT_MUTED }}>{s.desc}</span>
+            </button>
           ))}
         </div>
-      </div>
 
-      {/* ── Right pitch panel — desktop only ── */}
-      <div className="hub-right" style={{
-        width: "42%", flexShrink: 0, height: "100%",
-        background: SURFACE_BASE, borderLeft: `1px solid ${DS_BORDER}`,
-        padding: 20, alignItems: "center", justifyContent: "center",
-        pointerEvents: "none",
-      }}>
-        <div style={{ width: "100%", maxWidth: 320 }}>
-          <HubPitchSVG />
+        {/* Your boards */}
+        <div style={{ marginTop: 32 }}>
+          {userId && <BoardGrid userId={userId} onOpen={openBoard} empty="No boards yet. Start one above: it's saved here when you press Save." />}
         </div>
       </div>
-
-      {/* ── Coming-soon toast ── */}
-      {toastMsg && (
-        <div style={{
-          position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)",
-          background: SURFACE_1, color: TEXT_PRIMARY, padding: "11px 22px",
-          borderRadius: 8, fontSize: 14, fontFamily: "'Inter', sans-serif",
-          border: `1px solid ${DS_BORDER}`, boxShadow: "0 8px 32px rgba(0,0,0,0.55)",
-          zIndex: 200, whiteSpace: "nowrap", pointerEvents: "none",
-        }}>
-          {toastMsg}
-        </div>
-      )}
     </div>
   )
 }
@@ -7961,7 +7581,6 @@ const WORLD_COUNTRIES = [
   "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe",
 ]
 
-const PROFILE_ACCENT_COLORS = ["#7C5CFF","#B14AED","#3FB950","#FBBF24","#58A6FF","#F85149"]
 
 const IDENTITY_CHIPS = [
   { label: "Content Creator", value: "creator" },
@@ -8033,7 +7652,6 @@ function ProfilePage() {
   const [favoriteClub, setFavoriteClub] = useState("")
   const [favoritePlayer, setFavoritePlayer] = useState("")
   const [identity, setIdentity] = useState("")
-  const [accentColor, setAccentColor] = useState(PROFILE_ACCENT_COLORS[0])
 
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<"saved" | "error" | null>(null)
@@ -8046,7 +7664,7 @@ function ProfilePage() {
       setUserId(session.user.id)
       const { data } = await supabase
         .from("profiles")
-        .select("display_name, handle, bio, country, favorite_club, favorite_player, identity, accent_color")
+        .select("display_name, handle, bio, country, favorite_club, favorite_player, identity")
         .eq("id", session.user.id)
         .maybeSingle()
       if (data) {
@@ -8057,7 +7675,6 @@ function ProfilePage() {
         setFavoriteClub((data as any).favorite_club ?? "")
         setFavoritePlayer((data as any).favorite_player ?? "")
         setIdentity((data as any).identity ?? "")
-        setAccentColor((data as any).accent_color ?? PROFILE_ACCENT_COLORS[0])
       }
       setLoaded(true)
     })
@@ -8082,7 +7699,6 @@ function ProfilePage() {
       favorite_club: favoriteClub,
       favorite_player: favoritePlayer,
       identity: identity || null,
-      accent_color: accentColor,
     }).eq("id", userId)
     setSaving(false)
     if (error) {
@@ -8237,7 +7853,7 @@ function ProfilePage() {
                   style={{
                     padding: "8px 16px", borderRadius: 999, border: "none", cursor: "pointer",
                     background: active ? ACCENT_GRADIENT : SURFACE_2,
-                    color: active ? "#ffffff" : TEXT_MUTED,
+                    color: active ? ACCENT_INK : TEXT_MUTED,
                     fontSize: 13, fontFamily: "'Inter', sans-serif", fontWeight: active ? 600 : 400,
                     transition: "background 0.15s, color 0.15s",
                   }}>
@@ -8246,28 +7862,6 @@ function ProfilePage() {
               )
             })}
           </div>
-        </div>
-
-        {/* APPEARANCE */}
-        {sectionLabel("APPEARANCE")}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {PROFILE_ACCENT_COLORS.map(color => {
-            const active = accentColor === color
-            return (
-              <button
-                key={color}
-                aria-pressed={active}
-                onClick={() => setAccentColor(color)}
-                style={{
-                  width: 28, height: 28, borderRadius: "50%",
-                  background: color, border: "none", cursor: "pointer",
-                  outline: active ? `2px solid ${TEXT_PRIMARY}` : "2px solid transparent",
-                  outlineOffset: 2, transition: "outline-color 0.15s",
-                }}
-                title={color}
-              />
-            )
-          })}
         </div>
 
         {/* Save row */}
@@ -8284,7 +7878,7 @@ function ProfilePage() {
             style={{
               padding: "10px 24px", borderRadius: 8,
               background: saving ? SURFACE_2 : ACCENT_GRADIENT,
-              color: saving ? TEXT_MUTED : "#ffffff",
+              color: saving ? TEXT_MUTED : ACCENT_INK,
               fontSize: 14, fontWeight: 600, border: "none", cursor: saving ? "not-allowed" : "pointer",
               fontFamily: "'Inter', sans-serif", transition: "opacity 0.15s",
               opacity: saving ? 0.7 : 1,
@@ -8359,7 +7953,7 @@ function LeaveConfirmModal({ reason, onAnswer }: { reason: LeaveReason; onAnswer
           </button>
           <button onClick={() => onAnswer("save")} autoFocus={!saving} disabled={saving}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${saving ? "" : "hover:brightness-110"}`}
-            style={{ background: ACCENT_GRADIENT, color: "#ffffff", opacity: saving ? 0.7 : 1, cursor: saving ? "default" : "pointer" }}>
+            style={{ background: ACCENT_GRADIENT, color: ACCENT_INK, opacity: saving ? 0.7 : 1, cursor: saving ? "default" : "pointer" }}>
             {saving && <RefreshCw size={13} className="motion-safe:animate-spin" />}
             {copy.save}
           </button>
@@ -8380,10 +7974,10 @@ function ClearConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onC
         onClick={e => e.stopPropagation()}>
         <div>
           <p style={{ color: TEXT_PRIMARY, fontSize: 15, fontWeight: 600, margin: 0, fontFamily: "'Inter', sans-serif" }}>
-            Clear everything on the canvas?
+            Clear the board?
           </p>
           <p style={{ color: TEXT_MUTED, fontSize: 13, margin: "6px 0 0", fontFamily: "'Inter', sans-serif" }}>
-            This cannot be undone.
+            You start a fresh board. What you've saved stays in My Boards, and Undo brings this back.
           </p>
         </div>
         <div className="flex gap-3 justify-end">
@@ -8395,7 +7989,7 @@ function ClearConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onC
           <button onClick={onConfirm}
             className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:brightness-110"
             style={{ background: DS_ERROR, color: "#ffffff" }}>
-            Clear All
+            Clear board
           </button>
         </div>
       </div>
@@ -8457,7 +8051,7 @@ class AppErrorBoundary extends Component<
             onClick={() => window.location.reload()}
             style={{
               padding: "9px 22px", borderRadius: 8,
-              background: ACCENT_SOLID, color: "#ffffff",
+              background: ACCENT_SOLID, color: ACCENT_INK,
               fontSize: 14, fontWeight: 600, border: "none", cursor: "pointer",
             }}>
             Reload
