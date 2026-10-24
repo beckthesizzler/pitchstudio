@@ -14,15 +14,19 @@ import {
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
-  Grid3x3, Rows3, Pencil, Waypoints, Eye, EyeOff, Play,
+  Grid3x3, Rows3, Pencil, Waypoints, Eye, EyeOff, Play, Sun, Moon,
 } from "lucide-react"
-import { createClient } from "@supabase/supabase-js"
-import { projectId, publicAnonKey } from "../../utils/supabase/info"
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router"
-
-const _sbKey = `sb-client-${projectId}`
-// @ts-expect-error global singleton to survive HMR re-execution
-const supabase: ReturnType<typeof createClient> = (globalThis[_sbKey] ??= createClient(`https://${projectId}.supabase.co`, publicAnonKey))
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router"
+import { supabase } from "./lib/supabase"
+import { stripHandleSuffix } from "./lib/account"
+import {
+  PS_VOLT, SURFACE_BASE, SURFACE_1, SURFACE_2, ACCENT_GRADIENT, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT,
+  TEXT_PRIMARY, TEXT_MUTED, DS_ERROR, DS_ERROR_SOFT, DS_BORDER, DS_BORDER_STRONG, GLASS, SCRIM, useTheme,
+} from "./theme"
+import LandingPage from "./pages/Landing"
+import AuthPage from "./pages/Auth"
+import ProfilePage from "./pages/Profile"
+import Tour, { TOUR_KEY } from "./Tour"
 
 /* ─────────────────────────── Types ─────────────────────────── */
 type Tool =
@@ -278,9 +282,8 @@ const waitForSaves = (maxMs: number) =>
 /** The save each saved board is waiting on. Opening that board waits for it: it may hold the last change made before Back. */
 const boardSavesInFlight = new Map<string, Promise<unknown>>()
 const waitForBoardSave = (id: string) => boardSavesInFlight.get(id) ?? Promise.resolve()
-/** Hands a board (or Braindump, or the drops) from the hub to the board page. Kept in memory: a board with photos can be too big for browser storage. */
-const boardHandoff: { preload: { canvas_data: unknown; title: string | null; id: string; narrative: string | null; updated_at: string | null } | null; braindump: boolean; drops: boolean } =
-  { preload: null, braindump: false, drops: false }
+/** Tells the board page to open as Braindump (set by the "/braindump" page, read once when the board opens). */
+const boardHandoff = { braindump: false }
 /** Unsaved new boards are kept on this device (one for the board, one for Braindump),
  *  so the browser's Back button, a closed tab or a crash doesn't lose them. Boards with big photos are too large to keep. */
 const DRAFT_MAX_CHARS = 1000000
@@ -386,8 +389,6 @@ function BallGlyph({ r, icon = false }: { r: number; icon?: boolean }) {
     </g>
   )
 }
-/** PS Volt: the PitchStudio signature highlight. Reserved for the one key idea on a board. */
-const PS_VOLT = "#d7ff3c"
 /** The one row of colours every picker shows, + opens any colour: white, black, PS Volt, red, amber, sky, royal, green, pink */
 const SWATCHES = ["#ffffff", "#000000", PS_VOLT, "#f87171", "#fbbf24", "#60a5fa", "#1d4ed8", "#4ade80", "#f472b6"]
 const SHAPE_FILLS = ["#fbbf24", "#f87171", "#60a5fa", "#4ade80", "#f472b6", PS_VOLT] // new shapes take these in turn
@@ -452,17 +453,6 @@ const kitProps = (k: { pat: KitPattern; c1: string; c2: string; num: string }): 
    · Barlow Condensed   — logo badges, chrome labels, uppercase UI
    · Inter              — all body text, inputs, and buttons
 ──────────────────────────────────────────────────────────────── */
-const SURFACE_BASE    = "#242529"
-const SURFACE_1       = "#2C2D32"
-const SURFACE_2       = "#35363C"
-// One accent: PS Volt. Anything filled with it takes dark ink
-const ACCENT_GRADIENT = "#d7ff3c"
-const ACCENT_SOLID    = "#d7ff3c"
-const ACCENT_INK      = "#0a0c0f"
-const TEXT_PRIMARY    = "#F5F5F7"
-const TEXT_MUTED      = "#A3A3AD"
-const DS_ERROR        = "#f85149"
-const DS_BORDER       = "rgba(255,255,255,0.08)"
 
 /* ─────────────────────────── Formations ────────────────────── */
 interface FormationPos {
@@ -2114,21 +2104,21 @@ function TemplateModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.7)" }}
       onClick={onClose}>
       <div className="relative w-full max-h-[80vh] flex flex-col rounded-lg border overflow-hidden"
-        style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", maxWidth: 760 }}
+        style={{ background: SURFACE_1, borderColor: DS_BORDER_STRONG, maxWidth: 760 }}
         onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
+        <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: DS_BORDER_STRONG }}>
           <div className="flex items-center gap-2">
             <BookOpen size={16} style={{ color: ACCENT_SOLID }} />
             <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
               TEMPLATES
             </span>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/10"><X size={16} /></button>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--ps-hover)]"><X size={16} /></button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
+        <div className="flex border-b" style={{ borderColor: DS_BORDER_STRONG }}>
           {(["drops", "my"] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className="px-5 py-2.5 text-xs font-semibold uppercase transition-colors"
@@ -2158,7 +2148,7 @@ function TemplateModal({
               </div>
               <div className="grid grid-cols-3 gap-3">
                 {DROPS.filter(x => cat === "All" || x.cat === cat).map(x => (
-                  <div key={x.no} className="rounded-lg border overflow-hidden flex flex-col" style={{ borderColor: "rgba(255,255,255,0.1)", background: SURFACE_2 }}>
+                  <div key={x.no} className="rounded-lg border overflow-hidden flex flex-col" style={{ borderColor: DS_BORDER_STRONG, background: SURFACE_2 }}>
                     <DropThumb data={dropPreview(x)} crop={x.crop} />
                     <div className="p-2.5 flex flex-col gap-1.5 flex-1">
                       <div className="flex items-center gap-2">
@@ -2191,7 +2181,7 @@ function TemplateModal({
                 <input value={newName} onChange={e => setNewName(e.target.value)}
                   placeholder="Template name..."
                   className="flex-1 rounded px-3 py-1.5 text-sm outline-none"
-                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: "1px solid rgba(255,255,255,0.12)" }}
+                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER_STRONG}` }}
                   onKeyDown={e => { if (e.key === "Enter" && newName.trim()) { onSave(newName.trim()); setNewName("") } }}
                 />
                 <button onClick={() => { if (newName.trim()) { onSave(newName.trim()); setNewName("") } }}
@@ -2207,7 +2197,7 @@ function TemplateModal({
               <div className="grid grid-cols-2 gap-3">
                 {mine.map(t => (
                   <div key={t.id} className="rounded-lg border p-3 flex flex-col gap-2"
-                    style={{ borderColor: "rgba(255,255,255,0.1)", background: SURFACE_2 }}>
+                    style={{ borderColor: DS_BORDER_STRONG, background: SURFACE_2 }}>
                     <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>
                       {t.name}
                     </span>
@@ -2326,8 +2316,8 @@ function TacticsBoard() {
 
   /* ── Auth ── */
   const [authUser, setAuthUser] = useState<import("@supabase/supabase-js").User | null>(null)
-  const [showAuth, setShowAuth] = useState(false)
-  const [authInitialTab, setAuthInitialTab] = useState<"signin" | "signup">("signin")
+  const [showTour, setShowTour] = useState(false)
+  const { theme, toggle: toggleTheme } = useTheme()
   const [showMyBoards, setShowMyBoards] = useState(false)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
@@ -2385,7 +2375,7 @@ function TacticsBoard() {
     return () => { cancelled = true }
   }, [authUser?.id])
 
-  // Deep-link handlers: set by HubPage before navigating to "/"
+  // Opening as Braindump: set by the "/braindump" page before the board mounts
   const entryRef = useRef<"board" | "braindump" | "opened">("board") // how you got here (decides which unsaved draft comes back)
   useEffect(() => {
     if (boardHandoff.braindump) {
@@ -2397,14 +2387,13 @@ function TacticsBoard() {
       setShowPitch(false)
       return
     }
-    if (boardHandoff.drops) { boardHandoff.drops = false; setShowTemplates(true) } // "Start from a drop" on the hub
-    const preload = boardHandoff.preload
-    if (preload) {
-      boardHandoff.preload = null
-      openBoard(preload.canvas_data, preload.title, preload.id, preload.narrative, preload.updated_at)
-      entryRef.current = "opened"
-    }
   }, [])
+
+  useEffect(() => {
+    if (!authUser) return
+    try { if (localStorage.getItem(TOUR_KEY)) return } catch { /* no storage: treat as not seen */ }
+    if (Date.now() - new Date(authUser.created_at).getTime() < 15 * 60 * 1000) setShowTour(true)
+  }, [authUser?.id])
 
   const [saveError, setSaveError] = useState("")
   const [showSaveMenu, setShowSaveMenu] = useState(false)
@@ -2414,7 +2403,7 @@ function TacticsBoard() {
    *  forceNew = "Save as new board". auto = the quiet background save (no sign-in prompt, no analytics event).
    *  Resolves true once saved, false if it couldn't be. Never waits longer than saveTimeoutFor() allows. */
   const saveBoard = (forceNew = false, auto = false): Promise<boolean> => {
-    if (!authUser) { if (!auto) setShowAuth(true); return Promise.resolve(false) }
+    if (!authUser) { if (!auto) navigateBoard("/signin"); return Promise.resolve(false) }
     if (renderEpoch !== boardEpochRef.current) return Promise.resolve(false) // left over from a board that's no longer open
     setShowSaveMenu(false)
     if (forceNew && copyRef.current) return copyRef.current // a copy is already on its way
@@ -4297,11 +4286,11 @@ function TacticsBoard() {
       <header className="flex items-center gap-2 lg:gap-3 px-2 sm:px-3 py-2 border-b flex-shrink-0"
         style={{ borderColor: DS_BORDER, background: SURFACE_1, minHeight: 48 }}>
         {headerMenu && <div className="fixed inset-0 z-40" onClick={() => setHeaderMenu(null)} />}
-        {/* Logo (back to the hub) + title */}
+        {/* Logo (opens My Boards) + title */}
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
-            title="Back to Hub"
-            onClick={async () => { if (await confirmLeave()) navigateBoard("/hub") }}
+            title={authUser ? "My boards" : "PitchStudio"}
+            onClick={() => { if (authUser) setShowMyBoards(true) }}
             style={{ background: ACCENT_SOLID, color: ACCENT_INK, fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
           {editingTitle ? (
             <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
@@ -4311,7 +4300,7 @@ function TacticsBoard() {
               style={{ borderBottom: `1px solid ${ACCENT_SOLID}`, color: TEXT_PRIMARY, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 200 }} />
           ) : (
             <button onClick={() => setEditingTitle(true)}
-              className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-white/8 transition-colors min-w-0"
+              className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-[var(--ps-hover)] transition-colors min-w-0"
               title="Click to rename">
               <span className="font-bold text-sm truncate max-w-40 xl:max-w-72"
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>{title}</span>
@@ -4337,8 +4326,8 @@ function TacticsBoard() {
             </button>
           )}
           {/* Undo/Redo */}
-          <button onClick={undo} className="hidden lg:block p-1.5 rounded hover:bg-white/10 transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
-          <button onClick={redo} className="hidden lg:block p-1.5 rounded hover:bg-white/10 transition-colors" title="Redo"><RotateCw size={14} /></button>
+          <button onClick={undo} className="hidden lg:block p-1.5 rounded hover:bg-[var(--ps-hover)] transition-colors" title="Undo (Ctrl+Z)"><RotateCcw size={14} /></button>
+          <button onClick={redo} className="hidden lg:block p-1.5 rounded hover:bg-[var(--ps-hover)] transition-colors" title="Redo"><RotateCw size={14} /></button>
           <div className="hidden lg:flex self-stretch items-center mx-1" style={{ width: 1, background: DS_BORDER }} />
           {/* Save: outlined while there's something to save, quiet once it's saved */}
           <div className="flex flex-col items-end gap-1">
@@ -4376,7 +4365,7 @@ function TacticsBoard() {
                         style={{ background: SURFACE_1, borderColor: DS_BORDER, minWidth: 148 }}>
                         <button
                           onClick={() => saveBoard(true)}
-                          className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs transition-colors hover:bg-white/5"
+                          className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs transition-colors hover:bg-[var(--ps-hover)]"
                           style={{ color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
                           <Save size={12} /> Save as new board
                         </button>
@@ -4388,7 +4377,7 @@ function TacticsBoard() {
             </div>
           </div>
           {!authUser && (
-            <button onClick={() => { setAuthInitialTab("signin"); setShowAuth(true) }}
+            <button onClick={() => navigateBoard("/signin")}
               className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors"
               style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
               <LogIn size={13} /> Sign In
@@ -4396,7 +4385,7 @@ function TacticsBoard() {
           )}
           {/* Export: the one solid button */}
           <div className="relative">
-            <button onClick={() => setHeaderMenu(m => (m === "export" ? null : "export"))} aria-expanded={headerMenu === "export"} title="Export"
+            <button data-tour="export" onClick={() => setHeaderMenu(m => (m === "export" ? null : "export"))} aria-expanded={headerMenu === "export"} title="Export"
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110"
               style={{ background: ACCENT_SOLID, color: ACCENT_INK }}>
               <Download size={13} /> <span className="hidden sm:inline">Export</span> <ChevronDown size={11} />
@@ -4409,7 +4398,7 @@ function TacticsBoard() {
                   return (
                     <button key={f} title={off ? "Add a step first, with + Step under the board" : undefined}
                       onClick={() => { setHeaderMenu(null); if (off) setExportNote("Add a step first: + Step under the board."); else if (f === "gif" || f === "mp4") exportMotion(f); else doExport(f) }}
-                      className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-white/10 transition-colors text-left uppercase font-semibold"
+                      className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-[var(--ps-hover)] transition-colors text-left uppercase font-semibold"
                       style={{ letterSpacing: "0.06em", opacity: off ? 0.45 : 1, ...(f === "gif" || f === "copy" ? { borderTop: `1px solid ${DS_BORDER}` } : {}) }}>
                       {f === "copy" ? <Copy size={12} /> : f === "mp4" ? <Video size={12} /> : <FileImage size={12} />} {f === "copy" ? "Copy image" : f === "mp4" ? "Video (MP4)" : f}
                     </button>
@@ -4422,7 +4411,7 @@ function TacticsBoard() {
           <div className="relative">
             <button onClick={() => setHeaderMenu(m => (m === "more" ? null : "more"))} aria-expanded={headerMenu === "more"}
               aria-label="More" title="More"
-              className="p-1.5 rounded hover:bg-white/10 transition-colors" style={{ color: TEXT_PRIMARY }}>
+              className="p-1.5 rounded hover:bg-[var(--ps-hover)] transition-colors" style={{ color: TEXT_PRIMARY }}>
               <MoreHorizontal size={16} />
             </button>
             {headerMenu === "more" && (
@@ -4438,13 +4427,20 @@ function TacticsBoard() {
                   ...(authUser ? [{ label: "My Boards", icon: <FolderOpen size={13} />, run: () => setShowMyBoards(true), narrow: true }] : []),
                   { label: "Undo", icon: <RotateCcw size={13} />, run: undo, narrow: true },
                   { label: "Redo", icon: <RotateCw size={13} />, run: redo, narrow: true },
+                  ...(authUser ? [
+                    { label: "New board", icon: <Plus size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/") } },
+                    { label: "Braindump", icon: <Pencil size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/braindump") } },
+                    { label: "Creator profile", icon: <Settings size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/profile") } },
+                  ] : []),
+                  { label: theme === "night" ? "Day mode" : "Night mode", icon: theme === "night" ? <Sun size={13} /> : <Moon size={13} />, run: toggleTheme },
+                  ...(authUser ? [{ label: "Take the tour", icon: <HelpCircle size={13} />, run: () => setShowTour(true) }] : []),
                   { label: "Clear board", icon: <Trash2 size={13} />, run: () => setShowClearConfirm(true), danger: true },
                   authUser
                     ? { label: "Sign Out", icon: <LogOut size={13} />, run: async () => { if (await confirmLeave()) supabase.auth.signOut() }, danger: true }
-                    : { label: "Sign In", icon: <LogIn size={13} />, run: () => { setAuthInitialTab("signin"); setShowAuth(true) } },
+                    : { label: "Sign In", icon: <LogIn size={13} />, run: () => navigateBoard("/signin") },
                 ] as { label: string; icon: React.ReactNode; run: () => void; danger?: boolean; narrow?: boolean }[]).map(item => (
                   <button key={item.label} onClick={() => { setHeaderMenu(null); item.run() }}
-                    className={`${item.narrow ? "lg:hidden " : ""}flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-white/10`}
+                    className={`${item.narrow ? "lg:hidden " : ""}flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-[var(--ps-hover)]`}
                     style={{ color: item.danger ? DS_ERROR : TEXT_PRIMARY }}>
                     {item.icon} {item.label}
                   </button>
@@ -5114,7 +5110,7 @@ function TacticsBoard() {
               </div>
             )}
 
-            <button aria-expanded={boardGroups.teams}
+            <button data-tour="teams" aria-expanded={boardGroups.teams}
               onClick={() => setBoardGroups(g => ({ ...g, teams: !g.teams }))}
               className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
               style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
@@ -5174,7 +5170,7 @@ function TacticsBoard() {
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-xs" style={{ color: TEXT_MUTED }}>Pitch size</p>
                       <button onClick={() => { undoPoint(); setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
-                        className="text-xs px-2 py-0.5 rounded hover:bg-white/10 transition-colors"
+                        className="text-xs px-2 py-0.5 rounded hover:bg-[var(--ps-hover)] transition-colors"
                         style={{ color: TEXT_MUTED }}>Reset</button>
                     </div>
                     <input type="range" min={30} max={200} value={Math.round(pitchScale * 100)}
@@ -5182,7 +5178,7 @@ function TacticsBoard() {
                     <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>{Math.round(pitchScale * 100)}% · or drag a corner of the pitch</p>
                     {(pitchOffX !== 0 || pitchOffY !== 0) && (
                       <button onClick={() => { undoPoint(); setPitchOffX(0); setPitchOffY(0) }}
-                        className="mt-1.5 w-full py-1 rounded text-xs hover:bg-white/10 transition-colors"
+                        className="mt-1.5 w-full py-1 rounded text-xs hover:bg-[var(--ps-hover)] transition-colors"
                         style={{ color: TEXT_MUTED }}>Re-centre pitch</button>
                     )}
                   </div>
@@ -5191,7 +5187,7 @@ function TacticsBoard() {
                   <div className="flex flex-col gap-1.5">
                     <button onClick={() => { undoPoint(); setPitchVisible(v => !v) }} aria-pressed={pitchVisible}
                       className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                      style={{ background: pitchVisible ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: pitchVisible ? ACCENT_SOLID : DS_BORDER, color: pitchVisible ? ACCENT_SOLID : TEXT_PRIMARY }}>
+                      style={{ background: pitchVisible ? ACCENT_SOFT : SURFACE_2, borderColor: pitchVisible ? ACCENT_SOLID : DS_BORDER, color: pitchVisible ? ACCENT_SOLID : TEXT_PRIMARY }}>
                       <span className="flex items-center gap-2">{pitchVisible ? <Eye size={14} /> : <EyeOff size={14} />}Show pitch</span>
                       <span className="px-1.5 py-0.5 rounded font-bold"
                         style={{ background: pitchVisible ? ACCENT_SOLID : SURFACE_1, color: pitchVisible ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
@@ -5207,7 +5203,7 @@ function TacticsBoard() {
                 )}
                 <button onClick={() => { undoPoint(); setShow18Zones(v => !v) }}
                   className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                  style={{ background: show18Zones ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: show18Zones ? ACCENT_SOLID : DS_BORDER, color: show18Zones ? ACCENT_SOLID : TEXT_PRIMARY }}>
+                  style={{ background: show18Zones ? ACCENT_SOFT : SURFACE_2, borderColor: show18Zones ? ACCENT_SOLID : DS_BORDER, color: show18Zones ? ACCENT_SOLID : TEXT_PRIMARY }}>
                   <span className="flex items-center gap-2"><Grid3x3 size={14} />18 zones</span>
                   <span className="px-1.5 py-0.5 rounded font-bold"
                     style={{ background: show18Zones ? ACCENT_SOLID : SURFACE_1, color: show18Zones ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
@@ -5216,7 +5212,7 @@ function TacticsBoard() {
                 </button>
                 <button onClick={() => { undoPoint(); setShowLanes(v => !v) }}
                   className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                  style={{ background: showLanes ? `${ACCENT_SOLID}26` : SURFACE_2, borderColor: showLanes ? ACCENT_SOLID : DS_BORDER, color: showLanes ? ACCENT_SOLID : TEXT_PRIMARY }}>
+                  style={{ background: showLanes ? ACCENT_SOFT : SURFACE_2, borderColor: showLanes ? ACCENT_SOLID : DS_BORDER, color: showLanes ? ACCENT_SOLID : TEXT_PRIMARY }}>
                   <span className="flex items-center gap-2"><Rows3 size={14} />Lanes</span>
                   <span className="px-1.5 py-0.5 rounded font-bold"
                     style={{ background: showLanes ? ACCENT_SOLID : SURFACE_1, color: showLanes ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
@@ -5338,7 +5334,7 @@ function TacticsBoard() {
         {/* ── Main Canvas, with the narrative underneath ── */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         <main
-          ref={canvasRef}
+          ref={canvasRef} data-tour="canvas"
           className="flex-1 min-h-0 overflow-hidden relative flex items-center justify-center"
           style={{
             background: bgColor,
@@ -5351,7 +5347,7 @@ function TacticsBoard() {
           {/* Empty state overlay */}
           {players.length === 0 && arrows.length === 0 && texts.length === 0 && shapes.length === 0 && images.length === 0 && customZones.length === 0 && (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
-              <div style={{ textAlign: "center", background: `${SURFACE_1}f0`, border: `1px solid ${DS_BORDER}`, borderRadius: 12, padding: "22px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
+              <div style={{ textAlign: "center", background: GLASS, border: `1px solid ${DS_BORDER}`, borderRadius: 12, padding: "22px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
                 <p style={{ fontSize: 18, fontWeight: 700, color: TEXT_PRIMARY, margin: 0 }}>Start your board</p>
                 <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Add a full team, place players one at a time, or draw a zone.</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, padding: "0 12px", justifyContent: "center", pointerEvents: "auto" }}>
@@ -5376,7 +5372,7 @@ function TacticsBoard() {
 
           {/* Polygon floating hint */}
           {tool === "shape" && shapeKind === "polygon" && polyDraft && polyDraft.length >= 1 && (
-            <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", background: `${SURFACE_1}e6`, border: `1px solid ${DS_BORDER}`, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: TEXT_PRIMARY, pointerEvents: "none", zIndex: 20, whiteSpace: "nowrap" }}>
+            <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", background: GLASS, border: `1px solid ${DS_BORDER}`, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: TEXT_PRIMARY, pointerEvents: "none", zIndex: 20, whiteSpace: "nowrap" }}>
               Double-click to finish the shape
             </div>
           )}
@@ -5940,20 +5936,20 @@ function TacticsBoard() {
 
           {/* ── Zoom controls ── */}
           <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-lg px-2 py-1.5 border"
-            style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", zIndex: 10 }}>
-            <button onClick={() => applyZoom(0.87)} className="p-1 rounded hover:bg-white/10 transition-colors"><Minus size={13} /></button>
+            style={{ background: SURFACE_1, borderColor: DS_BORDER_STRONG, zIndex: 10 }}>
+            <button onClick={() => applyZoom(0.87)} className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Minus size={13} /></button>
             <span className="text-xs font-mono w-12 text-center" style={{ color: TEXT_PRIMARY }}>
               {Math.round(zoom * 100)}%
             </span>
-            <button onClick={() => applyZoom(1.15)} className="p-1 rounded hover:bg-white/10 transition-colors"><Plus size={13} /></button>
-            <div className="w-px h-4 mx-1" style={{ background: "rgba(255,255,255,0.12)" }} />
-            <button onClick={fitToView} className="px-1.5 py-0.5 rounded text-xs hover:bg-white/10 transition-colors"
+            <button onClick={() => applyZoom(1.15)} className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Plus size={13} /></button>
+            <div className="w-px h-4 mx-1" style={{ background: DS_BORDER_STRONG }} />
+            <button onClick={fitToView} className="px-1.5 py-0.5 rounded text-xs hover:bg-[var(--ps-hover)] transition-colors"
               style={{ color: TEXT_MUTED }}>Fit</button>
           </div>
           {/* ── Steps: build a move one step at a time, and play it ── */}
           {workspaceMode !== "brainstorm" && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-lg px-1.5 py-1 border"
-              style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.1)", zIndex: 31 }} onPointerDown={e => e.stopPropagation()}>
+              style={{ background: SURFACE_1, borderColor: DS_BORDER_STRONG, zIndex: 31 }} onPointerDown={e => e.stopPropagation()}>
               {stepList.length > 1 && (
                 <>
                   <button onClick={() => (play ? stopPlay() : startPlay())} disabled={!!making} title={play ? "Stop (P)" : "Play the move (P)"}
@@ -5961,7 +5957,7 @@ function TacticsBoard() {
                     style={{ background: play ? PS_VOLT : ACCENT_SOLID, color: play ? "#0a0c0f" : ACCENT_INK }}>
                     {play ? <Square size={10} fill="currentColor" /> : <Play size={11} fill="currentColor" />} {play ? "Stop" : "Play"}
                   </button>
-                  <div className="w-px h-4 mx-1" style={{ background: "rgba(255,255,255,0.12)" }} />
+                  <div className="w-px h-4 mx-1" style={{ background: DS_BORDER_STRONG }} />
                 </>
               )}
               <span className="text-[10px] font-semibold uppercase px-1" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Steps</span>
@@ -6006,7 +6002,7 @@ function TacticsBoard() {
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs" style={{ color: TEXT_MUTED }}>
                   <span>{Math.round(making.done * 100)}%</span>
-                  <button onClick={() => { cancelMakeRef.current = true }} className="px-2 py-1 rounded hover:bg-white/10 transition-colors" style={{ color: TEXT_PRIMARY }}>Cancel</button>
+                  <button onClick={() => { cancelMakeRef.current = true }} className="px-2 py-1 rounded hover:bg-[var(--ps-hover)] transition-colors" style={{ color: TEXT_PRIMARY }}>Cancel</button>
                 </div>
               </div>
             </div>
@@ -6033,12 +6029,12 @@ function TacticsBoard() {
                     : <RotateCcw size={14} style={{ color: ACCENT_SOLID, flexShrink: 0 }} />}
                   <span style={{ color: TEXT_PRIMARY }}>{problem ? saveError : "We kept your unsaved board."}</span>
                   <button onClick={() => (problem ? saveBoard(conflict) : discardDraft())}
-                    className="px-2 py-1 rounded text-xs font-semibold whitespace-nowrap transition-colors hover:bg-white/10"
+                    className="px-2 py-1 rounded text-xs font-semibold whitespace-nowrap transition-colors hover:bg-[var(--ps-hover)]"
                     style={{ color: problem ? ACCENT_SOLID : TEXT_MUTED }}>
                     {problem ? (conflict ? "Save as new board" : "Try again") : "Discard"}
                   </button>
                   <button onClick={() => (problem ? setNoticeHidden(true) : setDraftNotice(false))} aria-label="Close"
-                    className="p-1 rounded transition-colors hover:bg-white/10" style={{ color: TEXT_MUTED }}>
+                    className="p-1 rounded transition-colors hover:bg-[var(--ps-hover)]" style={{ color: TEXT_MUTED }}>
                     <X size={13} />
                   </button>
                 </div>
@@ -6070,7 +6066,7 @@ function TacticsBoard() {
         <section aria-label="Narrative" className="flex-shrink-0 border-t" style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
           <style>{`.ps-narrative:focus { border-color: ${ACCENT_SOLID} !important; } input.accent-green-400, input.accent-orange-400 { accent-color: ${ACCENT_SOLID}; }`}</style>
           <button type="button" onClick={() => setNarrativeOpen(o => !o)} aria-expanded={narrativeOpen} aria-controls="ps-narrative-text"
-            className="w-full flex items-center gap-2 px-4 text-left hover:bg-white/5 transition-colors" style={{ height: 40 }}>
+            className="w-full flex items-center gap-2 px-4 text-left hover:bg-[var(--ps-hover)] transition-colors" style={{ height: 40 }}>
             <AlignLeft size={14} style={{ color: TEXT_MUTED, flexShrink: 0 }} />
             <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", color: TEXT_PRIMARY, flexShrink: 0 }}>
               NARRATIVE
@@ -6114,8 +6110,8 @@ function TacticsBoard() {
           onDelete={deleteTemplate} />
       )}
 
-      {/* ── Auth modal ── */}
-      {showAuth && <AuthModal onClose={() => setShowAuth(false)} initialTab={authInitialTab} />}
+      {/* ── First-visit tour ── */}
+      {showTour && <Tour onDone={() => setShowTour(false)} />}
 
       {/* ── My Boards modal ── */}
       {showMyBoards && authUser && (
@@ -6157,7 +6153,7 @@ function TacticsBoard() {
               ]
             ).map((item: { label: string; hint?: string; icon: React.ReactNode; run: () => void; danger?: boolean }) => (
               <button key={item.label} onClick={() => { setCtxMenu(null); item.run() }}
-                className="flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-white/10"
+                className="flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-[var(--ps-hover)]"
                 style={{ color: item.danger ? DS_ERROR : TEXT_PRIMARY }}>
                 {item.icon}<span className="flex-1">{item.label}</span>
                 {item.hint && <span style={{ color: TEXT_MUTED }}>{item.hint}</span>}
@@ -7214,183 +7210,8 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   )
 }
 
-/* ─────────────────────────── Pitch Background ──────────────── */
-function PitchBackground() {
-  return (
-    <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
-      <style>{`
-        @keyframes pitchSweep {
-          0%   { transform: translateX(-140%) skewX(-18deg); opacity: 0; }
-          12%  { opacity: 1; }
-          88%  { opacity: 1; }
-          100% { transform: translateX(240%) skewX(-18deg); opacity: 0; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .pitch-sweep { animation: none !important; opacity: 0 !important; }
-        }
-      `}</style>
-      {/* Mowed stripe background */}
-      <div style={{
-        position: "absolute", inset: 0,
-        background: `repeating-linear-gradient(-50deg, ${SURFACE_BASE} 0px, ${SURFACE_BASE} 44px, #1F2622 44px, #1F2622 88px)`,
-      }} />
-      {/* SVG pitch markings */}
-      <svg viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-        <rect x="130" y="50" width="740" height="540" fill="none" stroke="white" strokeWidth="2" opacity="0.35" />
-        <line x1="500" y1="50" x2="500" y2="590" stroke="white" strokeWidth="2" opacity="0.35" />
-        <circle cx="500" cy="320" r="80" fill="none" stroke="white" strokeWidth="2" opacity="0.35" />
-        <circle cx="500" cy="320" r="4" fill="white" opacity="0.35" />
-      </svg>
-      {/* Diagonal light sweep */}
-      <div className="pitch-sweep" style={{
-        position: "absolute", top: 0, left: 0,
-        width: "30%", height: "100%",
-        background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.055) 50%, transparent 100%)",
-        animation: "pitchSweep 6s ease-in-out infinite alternate",
-        pointerEvents: "none",
-      }} />
-    </div>
-  )
-}
-
-/* ─────────────────────────── Landing Page ──────────────────── */
-function LandingPage() {
-  const navigate = useNavigate()
-  const [showAuth, setShowAuth] = useState(false)
-  const [authInitialTab, setAuthInitialTab] = useState<"signin" | "signup">("signup")
-
-  const openSignUp = () => {
-    ;(window as any).posthog?.capture("cta_click", { button: "sign_up" })
-    authHandoff.toHub = true
-    setAuthInitialTab("signup")
-    setShowAuth(true)
-  }
-
-  const openSignIn = () => {
-    authHandoff.toHub = true
-    setAuthInitialTab("signin")
-    setShowAuth(true)
-  }
-
-  return (
-    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", position: "relative", background: SURFACE_BASE }}>
-      <PitchBackground />
-
-      {/* Sign In — top right */}
-      <button
-        onClick={openSignIn}
-        style={{
-          position: "absolute",
-          top: 20,
-          right: 28,
-          color: "rgba(255,255,255,0.65)",
-          fontSize: 14,
-          fontFamily: "'Inter', sans-serif",
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-          padding: "6px 10px",
-          borderRadius: 6,
-          transition: "color 0.15s",
-          zIndex: 10,
-        }}
-        onMouseEnter={e => { (e.target as HTMLElement).style.color = "rgba(255,255,255,1)" }}
-        onMouseLeave={e => { (e.target as HTMLElement).style.color = "rgba(255,255,255,0.65)" }}>
-        Sign in
-      </button>
-
-      {/* Centered hero content */}
-      <div style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 14,
-        zIndex: 1,
-      }}>
-        <h1 style={{
-          fontFamily: "'Cormorant Garamond', Georgia, serif",
-          fontSize: "clamp(44px, 7.5vw, 90px)",
-          fontWeight: 600,
-          letterSpacing: "0.12em",
-          color: "#ffffff",
-          margin: 0,
-          lineHeight: 1,
-          textAlign: "center",
-        }}>
-          PITCHSTUDIO
-        </h1>
-
-        <div style={{ textAlign: "center", lineHeight: 1.75, marginTop: 4 }}>
-          <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 16, margin: 0, fontFamily: "'Inter', sans-serif", fontWeight: 400 }}>
-            Enable your creativity.
-          </p>
-          <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 14, margin: 0, fontFamily: "'Inter', sans-serif", fontWeight: 400 }}>
-            Where your genius comes to life.
-          </p>
-        </div>
-
-        <button
-          onClick={openSignUp}
-          style={{
-            marginTop: 10,
-            padding: "13px 40px",
-            borderRadius: 999,
-            background: ACCENT_SOLID,
-            color: ACCENT_INK,
-            fontSize: 15,
-            fontWeight: 600,
-            fontFamily: "'Inter', sans-serif",
-            border: "none",
-            cursor: "pointer",
-            boxShadow: "0 4px 28px rgba(215,255,60,0.25)",
-            letterSpacing: "0.02em",
-            transition: "transform 0.12s, box-shadow 0.12s",
-          }}
-          onMouseEnter={e => {
-            const el = e.currentTarget
-            el.style.transform = "scale(1.04)"
-            el.style.boxShadow = "0 6px 36px rgba(215,255,60,0.4)"
-          }}
-          onMouseLeave={e => {
-            const el = e.currentTarget
-            el.style.transform = "scale(1)"
-            el.style.boxShadow = "0 4px 28px rgba(215,255,60,0.25)"
-          }}>
-          Sign Up
-        </button>
-      </div>
-
-      {/* Small print */}
-      <p style={{ position: "absolute", bottom: 14, left: 0, right: 0, margin: 0, textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.35)", fontFamily: "'Inter', sans-serif", zIndex: 1, pointerEvents: "none" }}>
-        PitchStudio is not affiliated with any club, league or player.
-      </p>
-      {showAuth && (
-        <AuthModal
-          onClose={() => setShowAuth(false)}
-          initialTab={authInitialTab}
-          onSignedIn={() => navigate("/hub")}
-        />
-      )}
-    </div>
-  )
-}
-
 /* ─────────────────────────── Hub Menu Item ─────────────────── */
 /* ─────────────────────────── Hub Page ──────────────────────── */
-
-/** Names the system made from the email look like "<email name>_<first 4 of user id>" (e.g. beckhamng07_826b).
- *  Show those without the suffix. Names people chose (tiki_taka, messi_8f2a) are always shown in full. */
-function stripHandleSuffix(name: string, userId?: string | null, email?: string | null): string {
-  if (!userId || !email) return name
-  const short = userId.slice(0, 4)
-  const emailName = email.split("@")[0]
-  const auto = [`${emailName}_${short}`, `${normalizeHandle(emailName).slice(0, 25)}_${short}`]
-  return auto.includes(name) ? name.slice(0, -(short.length + 1)) : name
-}
 
 function hubRelTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime()
@@ -7549,342 +7370,6 @@ function HubPage() {
         {/* Your boards */}
         <div style={{ marginTop: 32 }}>
           {userId && <BoardGrid userId={userId} onOpen={openBoard} empty="No boards yet. Start one above: it's saved here when you press Save." />}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ─────────────────────────── Creator Profile Page ──────────── */
-const WORLD_COUNTRIES = [
-  "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia","Australia",
-  "Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin",
-  "Bhutan","Bolivia","Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi",
-  "Cabo Verde","Cambodia","Cameroon","Canada","Central African Republic","Chad","Chile","China","Colombia",
-  "Comoros","Congo (DRC)","Congo (Republic)","Costa Rica","Croatia","Cuba","Cyprus","Czech Republic","Denmark",
-  "Djibouti","Dominica","Dominican Republic","Ecuador","Egypt","El Salvador","Equatorial Guinea","Eritrea",
-  "Estonia","Eswatini","Ethiopia","Fiji","Finland","France","Gabon","Gambia","Georgia","Germany","Ghana",
-  "Greece","Grenada","Guatemala","Guinea","Guinea-Bissau","Guyana","Haiti","Honduras","Hungary","Iceland",
-  "India","Indonesia","Iran","Iraq","Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya",
-  "Kiribati","Kosovo","Kuwait","Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya",
-  "Liechtenstein","Lithuania","Luxembourg","Madagascar","Malawi","Malaysia","Maldives","Mali","Malta",
-  "Marshall Islands","Mauritania","Mauritius","Mexico","Micronesia","Moldova","Monaco","Mongolia","Montenegro",
-  "Morocco","Mozambique","Myanmar","Namibia","Nauru","Nepal","Netherlands","New Zealand","Nicaragua","Niger",
-  "Nigeria","North Korea","North Macedonia","Norway","Oman","Pakistan","Palau","Palestine","Panama",
-  "Papua New Guinea","Paraguay","Peru","Philippines","Poland","Portugal","Qatar","Romania","Russia","Rwanda",
-  "Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Samoa","San Marino",
-  "Sao Tome and Principe","Saudi Arabia","Senegal","Serbia","Seychelles","Sierra Leone","Singapore","Slovakia",
-  "Slovenia","Solomon Islands","Somalia","South Africa","South Korea","South Sudan","Spain","Sri Lanka","Sudan",
-  "Suriname","Sweden","Switzerland","Syria","Taiwan","Tajikistan","Tanzania","Thailand","Timor-Leste","Togo",
-  "Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Tuvalu","Uganda","Ukraine",
-  "United Arab Emirates","United Kingdom","United States","Uruguay","Uzbekistan","Vanuatu","Vatican City",
-  "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe",
-]
-
-
-const IDENTITY_CHIPS = [
-  { label: "Content Creator", value: "creator" },
-  { label: "Coach",           value: "coach" },
-  { label: "Analyst",         value: "analyst" },
-  { label: "Just Here to Play", value: "fan" },
-]
-
-const inputStyle: React.CSSProperties = {
-  width: "100%", background: SURFACE_2, border: `1px solid ${DS_BORDER}`,
-  borderRadius: 6, padding: "10px 12px", color: TEXT_PRIMARY, fontSize: 14,
-  fontFamily: "'Inter', sans-serif", outline: "none", boxSizing: "border-box",
-  transition: "border-color 0.15s",
-}
-
-function ProfileInput({
-  id, label, value, onChange, type = "text", prefix, maxLength, rows, hint,
-  onFocus, onBlur, focusedId,
-}: {
-  id: string; label: string; value: string; onChange: (v: string) => void;
-  type?: string; prefix?: string; maxLength?: number; rows?: number; hint?: string;
-  onFocus?: () => void; onBlur?: () => void; focusedId?: string | null;
-}) {
-  const focused = focusedId === id
-  const style: React.CSSProperties = { ...inputStyle, borderColor: focused ? ACCENT_SOLID : DS_BORDER }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <label htmlFor={id} style={{ fontSize: 12, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
-        {label}
-      </label>
-      <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-        {prefix && (
-          <span style={{
-            position: "absolute", left: 12, color: TEXT_MUTED, fontSize: 14,
-            fontFamily: "'Inter', sans-serif", pointerEvents: "none", userSelect: "none",
-          }}>{prefix}</span>
-        )}
-        {rows ? (
-          <textarea
-            id={id} value={value} onChange={e => onChange(e.target.value)}
-            rows={rows} maxLength={maxLength}
-            onFocus={onFocus} onBlur={onBlur}
-            style={{ ...style, resize: "none", lineHeight: 1.5 }}
-          />
-        ) : (
-          <input
-            id={id} type={type} value={value} onChange={e => onChange(e.target.value)}
-            maxLength={maxLength}
-            onFocus={onFocus} onBlur={onBlur}
-            style={{ ...style, paddingLeft: prefix ? 24 : 12 }}
-          />
-        )}
-      </div>
-      {hint && <span style={{ fontSize: 11, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>{hint}</span>}
-    </div>
-  )
-}
-
-function ProfilePage() {
-  const navigate = useNavigate()
-  const [userId, setUserId] = useState<string | null>(null)
-  const [loaded, setLoaded] = useState(false)
-
-  const [displayName, setDisplayName] = useState("")
-  const [handle, setHandle] = useState("")
-  const [bio, setBio] = useState("")
-  const [country, setCountry] = useState("")
-  const [favoriteClub, setFavoriteClub] = useState("")
-  const [favoritePlayer, setFavoritePlayer] = useState("")
-  const [identity, setIdentity] = useState("")
-
-  const [saving, setSaving] = useState(false)
-  const [saveMsg, setSaveMsg] = useState<"saved" | "error" | null>(null)
-  const [handleError, setHandleError] = useState("")
-  const [focusedId, setFocusedId] = useState<string | null>(null)
-
-  useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session?.user) { navigate("/"); return }
-      setUserId(session.user.id)
-      const { data } = await supabase
-        .from("profiles")
-        .select("display_name, handle, bio, country, favorite_club, favorite_player, identity")
-        .eq("id", session.user.id)
-        .maybeSingle()
-      if (data) {
-        setDisplayName((data as any).display_name ?? "")
-        setHandle((data as any).handle ?? "")
-        setBio((data as any).bio ?? "")
-        setCountry((data as any).country ?? "")
-        setFavoriteClub((data as any).favorite_club ?? "")
-        setFavoritePlayer((data as any).favorite_player ?? "")
-        setIdentity((data as any).identity ?? "")
-      }
-      setLoaded(true)
-    })
-  }, [])
-
-  const sanitizeHandle = normalizeHandle // same rule as sign-up and the database
-
-  const handleSave = async () => {
-    if (!userId) return
-    setSaving(true); setHandleError(""); setSaveMsg(null)
-    const cleanHandle = sanitizeHandle(handle)
-    setHandle(cleanHandle)
-    if (cleanHandle.length < 3) {
-      setHandleError("Use at least 3 letters, numbers or underscores.")
-      setSaving(false); return
-    }
-    const { error } = await supabase.from("profiles").update({
-      display_name: displayName,
-      handle: cleanHandle,
-      bio,
-      country,
-      favorite_club: favoriteClub,
-      favorite_player: favoritePlayer,
-      identity: identity || null,
-    }).eq("id", userId)
-    setSaving(false)
-    if (error) {
-      if ((error as any).code === "23505") {
-        setHandleError("That handle's already taken. Try another.")
-      } else {
-        setSaveMsg("error")
-        setTimeout(() => setSaveMsg(null), 3000)
-      }
-    } else {
-      setSaveMsg("saved")
-      ;(window as any).posthog?.capture("profile_updated")
-      setTimeout(() => setSaveMsg(null), 2000)
-    }
-  }
-
-  if (!loaded) return <div style={{ width: "100vw", height: "100vh", background: SURFACE_BASE }} />
-
-  const sectionLabel = (text: string): React.ReactNode => (
-    <p style={{
-      margin: "32px 0 12px", fontSize: 11, letterSpacing: 1,
-      color: TEXT_MUTED, textTransform: "uppercase",
-      fontFamily: "'Inter', sans-serif", fontWeight: 600,
-    }}>{text}</p>
-  )
-
-  const focusProps = (id: string) => ({
-    onFocus: () => setFocusedId(id),
-    onBlur: () => setFocusedId(null),
-    focusedId,
-  })
-
-  return (
-    <div style={{ minHeight: "100vh", background: SURFACE_BASE, fontFamily: "'Inter', sans-serif", color: TEXT_PRIMARY }}>
-      <style>{`
-        .profile-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        .profile-3col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-        @media (max-width: 639px) {
-          .profile-2col { grid-template-columns: 1fr !important; }
-          .profile-3col { grid-template-columns: 1fr !important; }
-          .profile-pad { padding-left: 20px !important; padding-right: 20px !important; }
-          .profile-topbar { padding-left: 20px !important; padding-right: 20px !important; }
-        }
-        .profile-select:focus { border-color: ${ACCENT_SOLID} !important; outline: none; }
-        .profile-input-focus:focus { border-color: ${ACCENT_SOLID} !important; outline: none; }
-      `}</style>
-
-      {/* Top bar */}
-      <div className="profile-topbar" style={{
-        height: 56, display: "flex", alignItems: "center", justifyContent: "space-between",
-        borderBottom: `1px solid ${DS_BORDER}`, paddingLeft: 32, paddingRight: 32, flexShrink: 0,
-      }}>
-        <button
-          onClick={() => navigate("/hub")}
-          style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "none", border: "none", cursor: "pointer",
-            color: TEXT_MUTED, fontSize: 13, fontFamily: "'Inter', sans-serif",
-            padding: "4px 0", transition: "color 0.15s",
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY }}
-          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED }}>
-          <ArrowLeft size={16} /> Back to hub
-        </button>
-        <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, letterSpacing: 1, color: TEXT_PRIMARY, userSelect: "none" }}>
-          PITCHSTUDIO
-        </span>
-      </div>
-
-      {/* Content */}
-      <div className="profile-pad" style={{ maxWidth: 720, margin: "0 auto", paddingLeft: 32, paddingRight: 32, paddingBottom: 80 }}>
-
-        {/* Heading */}
-        <div style={{ marginTop: 32 }}>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
-            Creator Profile
-          </h1>
-          <p style={{ margin: "4px 0 0", fontSize: 14, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
-            How you show up in the studio.
-          </p>
-        </div>
-
-        {/* IDENTITY */}
-        {sectionLabel("IDENTITY")}
-        <div className="profile-2col">
-          <ProfileInput id="displayName" label="Display name" value={displayName} onChange={setDisplayName} {...focusProps("displayName")} />
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label htmlFor="handle" style={{ fontSize: 12, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>Handle</label>
-            <div style={{ position: "relative" }}>
-              <span style={{
-                position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
-                color: TEXT_MUTED, fontSize: 14, fontFamily: "'Inter', sans-serif",
-                pointerEvents: "none", userSelect: "none",
-              }}>@</span>
-              <input
-                id="handle"
-                type="text"
-                value={handle}
-                maxLength={30}
-                onChange={e => { setHandle(e.target.value); setHandleError("") }}
-                onFocus={() => setFocusedId("handle")}
-                onBlur={() => setFocusedId(null)}
-                className="profile-input-focus"
-                style={{ ...inputStyle, paddingLeft: 24, borderColor: handleError ? DS_ERROR : focusedId === "handle" ? ACCENT_SOLID : DS_BORDER }}
-              />
-            </div>
-            {handleError && <span style={{ fontSize: 12, color: DS_ERROR, fontFamily: "'Inter', sans-serif" }}>{handleError}</span>}
-          </div>
-        </div>
-        <div style={{ marginTop: 16 }}>
-          <ProfileInput
-            id="bio" label="Bio" value={bio} onChange={setBio}
-            rows={3} maxLength={160}
-            hint={`${bio.length}/160`}
-            {...focusProps("bio")}
-          />
-        </div>
-
-        {/* FOOTBALL */}
-        {sectionLabel("FOOTBALL")}
-        <div className="profile-3col">
-          {/* Country select */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label htmlFor="country" style={{ fontSize: 12, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>Country</label>
-            <select
-              id="country"
-              value={country}
-              onChange={e => setCountry(e.target.value)}
-              className="profile-select"
-              style={{ ...inputStyle, borderColor: focusedId === "country" ? ACCENT_SOLID : DS_BORDER, appearance: "none", cursor: "pointer" }}
-              onFocus={() => setFocusedId("country")}
-              onBlur={() => setFocusedId(null)}>
-              <option value="">Select country</option>
-              {WORLD_COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <ProfileInput id="favoriteClub" label="Favourite club" value={favoriteClub} onChange={setFavoriteClub} {...focusProps("favoriteClub")} />
-          <ProfileInput id="favoritePlayer" label="Favourite player" value={favoritePlayer} onChange={setFavoritePlayer} {...focusProps("favoritePlayer")} />
-        </div>
-
-        {/* Identity chips */}
-        <div style={{ marginTop: 20 }}>
-          <p style={{ margin: "0 0 8px", fontSize: 13, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>You are a…</p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {IDENTITY_CHIPS.map(chip => {
-              const active = identity === chip.value
-              return (
-                <button
-                  key={chip.value}
-                  aria-pressed={active}
-                  onClick={() => setIdentity(active ? "" : chip.value)}
-                  style={{
-                    padding: "8px 16px", borderRadius: 999, border: "none", cursor: "pointer",
-                    background: active ? ACCENT_GRADIENT : SURFACE_2,
-                    color: active ? ACCENT_INK : TEXT_MUTED,
-                    fontSize: 13, fontFamily: "'Inter', sans-serif", fontWeight: active ? 600 : 400,
-                    transition: "background 0.15s, color 0.15s",
-                  }}>
-                  {chip.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Save row */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 16, marginTop: 32 }}>
-          {saveMsg === "saved" && (
-            <span style={{ fontSize: 14, color: ACCENT_SOLID, fontFamily: "'Inter', sans-serif", fontWeight: 500 }}>Saved</span>
-          )}
-          {saveMsg === "error" && (
-            <span style={{ fontSize: 14, color: DS_ERROR, fontFamily: "'Inter', sans-serif" }}>Something went wrong. Try again.</span>
-          )}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            style={{
-              padding: "10px 24px", borderRadius: 8,
-              background: saving ? SURFACE_2 : ACCENT_GRADIENT,
-              color: saving ? TEXT_MUTED : ACCENT_INK,
-              fontSize: 14, fontWeight: 600, border: "none", cursor: saving ? "not-allowed" : "pointer",
-              fontFamily: "'Inter', sans-serif", transition: "opacity 0.15s",
-              opacity: saving ? 0.7 : 1,
-            }}>
-            {saving ? "Saving…" : "Save changes"}
-          </button>
         </div>
       </div>
     </div>
