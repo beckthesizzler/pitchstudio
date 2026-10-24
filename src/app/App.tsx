@@ -6228,288 +6228,20 @@ function TacticsBoard() {
   )
 }
 
-/* ─────────────────────────── Auth Modal ────────────────────── */
-const IDENTITY_OPTIONS = [
-  { label: "Content Creator", value: "creator" },
-  { label: "Coach", value: "coach" },
-  { label: "Analyst", value: "analyst" },
-  { label: "Just Here to Play", value: "fan" },
-] as const
-
-/** Same rule as the database: lowercase letters, numbers and underscores, max 30. */
-const normalizeHandle = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 30)
-
-/** Hand-off from the landing page's sign-in box to the rest of the app (memory only).
- *  toHub: send the person straight to the hub the moment they're signed in (no flash of the board).
- *  isNewUser: they just created their account, so the hub says "Welcome" instead of "Welcome back". */
-const authHandoff = { toHub: false, isNewUser: false }
-
-/** Turns Supabase auth errors into plain words. */
-function friendlyAuthError(err: { message?: string; code?: string } | null): string {
-  const code = err?.code ?? ""
-  const msg = (err?.message ?? "").toLowerCase()
-  if (code === "invalid_credentials" || msg.includes("invalid login")) return "Wrong email or password."
-  if (code === "email_not_confirmed" || msg.includes("not confirmed")) return "Confirm your email first. The link is in your inbox."
-  if (code === "email_address_invalid" || msg.includes("invalid format")) return "Enter a valid email address."
-  if (code.includes("rate_limit") || msg.includes("rate limit")) return "Too many attempts. Wait a minute and try again."
-  if (msg.includes("not authorized") || msg.includes("sending confirmation")) return "We couldn't send your confirmation email. Try again later."
-  if (msg.includes("failed to fetch") || msg.includes("network")) return "Can't reach PitchStudio. Check your connection and try again."
-  return err?.message || "Something went wrong. Try again."
+function hubRelTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const diffMin = Math.floor(diffMs / 60000)
+  if (diffMin < 2) return "just now"
+  if (diffMin < 60) return `${diffMin} minutes ago`
+  const diffH = Math.floor(diffMin / 60)
+  if (diffH < 24) return `${diffH} hour${diffH > 1 ? "s" : ""} ago`
+  const diffD = Math.floor(diffH / 24)
+  if (diffD < 30) return `${diffD} day${diffD > 1 ? "s" : ""} ago`
+  const diffMo = Math.floor(diffD / 30)
+  return `${diffMo} month${diffMo > 1 ? "s" : ""} ago`
 }
 
-function AuthModal({ onClose, initialTab = "signin", onSignedIn }: {
-  onClose: () => void
-  initialTab?: "signin" | "signup"
-  onSignedIn?: () => void
-}) {
-  const [tab, setTab] = useState<"signin" | "signup">(initialTab)
-  const [step, setStep] = useState<1 | 2>(1)
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [handle, setHandle] = useState("")
-  const [identity, setIdentity] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [sentTo, setSentTo] = useState<string | null>(null) // set when Supabase must email a confirmation link
-
-  const switchTab = (t: "signin" | "signup") => { setTab(t); setError(""); setStep(1); setSentTo(null) }
-
-  const submit = async () => {
-    if (loading) return
-    setError("")
-    const cleanEmail = email.trim()
-
-    if (tab === "signup") {
-      if (step === 1) {
-        if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) { setError("Enter a valid email address."); return }
-        if (password.length < 6) { setError("Use at least 6 characters for your password."); return }
-        setStep(2); return
-      }
-      const h = normalizeHandle(handle)
-      if (h.length < 3) { setError("Pick a name with at least 3 letters or numbers."); return }
-      if (!identity) { setError("Choose how you see yourself on the pitch."); return }
-
-      setLoading(true)
-      // Is the name free? (The database also guards this when the account is created.)
-      const { data: free, error: freeErr } = await (supabase as any).rpc("handle_available", { candidate: h })
-      if (!freeErr && free === false) { setError("That name's taken. Try another."); setLoading(false); return }
-
-      // The name and identity travel with the sign-up; the database saves them
-      // the moment the account is created, so nothing is lost if email confirmation is on.
-      authHandoff.isNewUser = true
-      const { data, error: signUpErr } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password,
-        options: { data: { handle: h, identity }, emailRedirectTo: window.location.origin },
-      })
-      if (signUpErr) {
-        authHandoff.isNewUser = false
-        const code = signUpErr.code ?? ""
-        if (code === "user_already_exists" || /already registered/i.test(signUpErr.message)) {
-          setTab("signin"); setStep(1)
-          setError("That email already has an account. Sign in instead.")
-        } else {
-          if (code === "weak_password" || code === "email_address_invalid" || /password|invalid format/i.test(signUpErr.message)) setStep(1)
-          setError(friendlyAuthError(signUpErr))
-        }
-        setLoading(false); return
-      }
-
-      // With "Confirm email" on, Supabase hides an existing email by returning a user with no identities
-      if (!data.session && data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-        authHandoff.isNewUser = false
-        setTab("signin"); setStep(1)
-        setError("That email already has an account. Sign in instead.")
-        setLoading(false); return
-      }
-
-      ;(window as any).posthog?.capture("sign_up", { identity, $set: { handle: h, identity } })
-      setLoading(false)
-      if (!data.session) { authHandoff.isNewUser = false; setSentTo(cleanEmail); return } // "Confirm email" is on: wait for the link
-      // Only if the database step hasn't been set up yet (the name check above failed): save the answers directly.
-      if (freeErr && data.user) void supabase.from("profiles").update({ handle: h, identity }).eq("id", data.user.id).then(() => {})
-      onSignedIn?.()
-      onClose()
-      return
-    }
-
-    setLoading(true)
-    const { error: e } = await supabase.auth.signInWithPassword({ email: cleanEmail, password })
-    setLoading(false)
-    if (e) { setError(friendlyAuthError(e)); return }
-    onSignedIn?.()
-    onClose()
-  }
-
-  const showStep1 = tab === "signin" || step === 1
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      style={{ background: "rgba(0,0,0,0.75)" }}
-      onClick={onClose}>
-      <div className="relative rounded-xl border overflow-hidden flex flex-col w-full"
-        style={{ background: SURFACE_1, borderColor: "rgba(255,255,255,0.12)", maxWidth: 400 }}
-        onClick={e => e.stopPropagation()}>
-        <style>{`.ps-field:focus-within { border-color: ${ACCENT_SOLID} !important; }`}</style>
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: DS_BORDER }}>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold"
-              style={{ background: ACCENT_SOLID, color: ACCENT_INK, fontFamily: "'Barlow Condensed', sans-serif" }}>PS</div>
-            <span className="font-semibold text-sm" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em" }}>
-              PITCHSTUDIO ACCOUNT
-            </span>
-          </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/10"><X size={16} /></button>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex border-b" style={{ borderColor: DS_BORDER }}>
-          {(["signin", "signup"] as const).map(t => (
-            <button key={t} onClick={() => switchTab(t)}
-              className="flex-1 py-2.5 text-xs font-semibold uppercase transition-colors"
-              style={{
-                letterSpacing: "0.08em",
-                borderBottom: tab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent",
-                color: tab === t ? ACCENT_SOLID : TEXT_MUTED,
-              }}>
-              {t === "signin" ? "Sign In" : "Create Account"}
-            </button>
-          ))}
-        </div>
-
-        {/* Step indicator — sign-up only */}
-        {tab === "signup" && !sentTo && (
-          <div className="flex items-center justify-center gap-2 pt-3 pb-0">
-            {([1, 2] as const).map(s => (
-              <span key={s} style={{
-                display: "inline-block",
-                width: 7, height: 7, borderRadius: "50%",
-                background: step >= s ? ACCENT_SOLID : "rgba(255,255,255,0.18)",
-                transition: "background 0.2s",
-              }} />
-            ))}
-          </div>
-        )}
-
-        <div className="p-5 flex flex-col gap-3">
-          {sentTo ? (
-            <div className="flex flex-col items-center text-center gap-3 py-2">
-              <div className="w-11 h-11 rounded-full flex items-center justify-center"
-                style={{ background: `${ACCENT_SOLID}26`, color: ACCENT_SOLID }}>
-                <Mail size={20} />
-              </div>
-              <p className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Check your inbox</p>
-              <p className="text-xs leading-relaxed" style={{ color: TEXT_MUTED }}>
-                We sent a link to <span className="break-all" style={{ color: TEXT_PRIMARY }}>{sentTo}</span>.
-                Open it to finish creating your account. It signs you in automatically.
-              </p>
-              <button onClick={() => switchTab("signin")}
-                className="w-full py-2.5 rounded-lg text-sm font-semibold transition-colors hover:bg-white/10"
-                style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
-                Back to sign in
-              </button>
-            </div>
-          ) : (<>
-          {showStep1 ? (
-            <>
-              <input type="email" placeholder="Email" aria-label="Email" autoComplete="email"
-                autoFocus={typeof window !== "undefined" && !!window.matchMedia?.("(pointer: fine)").matches}
-                value={email} onChange={e => setEmail(e.target.value)}
-                className="ps-field w-full rounded-lg px-3 py-2.5 text-[16px] sm:text-sm outline-none"
-                style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}
-                onKeyDown={e => e.key === "Enter" && submit()} />
-
-              <input type="password" placeholder="Password" aria-label="Password"
-                autoComplete={tab === "signin" ? "current-password" : "new-password"}
-                value={password} onChange={e => setPassword(e.target.value)}
-                className="ps-field w-full rounded-lg px-3 py-2.5 text-[16px] sm:text-sm outline-none"
-                style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}
-                onKeyDown={e => e.key === "Enter" && submit()} />
-            </>
-          ) : (
-            <>
-              <div>
-                <label htmlFor="ps-handle" className="block text-xs mb-1.5 font-medium" style={{ color: TEXT_MUTED }}>
-                  What should we call you?
-                </label>
-                <div className="ps-field flex items-center rounded-lg px-3"
-                  style={{ background: SURFACE_2, border: `1px solid ${DS_BORDER}` }}>
-                  <span className="text-[16px] sm:text-sm select-none" style={{ color: TEXT_MUTED }}>@</span>
-                  <input
-                    id="ps-handle"
-                    type="text"
-                    placeholder="tactician99"
-                    value={handle}
-                    maxLength={30}
-                    onChange={e => setHandle(normalizeHandle(e.target.value))}
-                    autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false}
-                    className="flex-1 min-w-0 bg-transparent py-2.5 pl-0.5 text-[16px] sm:text-sm outline-none"
-                    style={{ color: TEXT_PRIMARY }}
-                    onKeyDown={e => e.key === "Enter" && submit()}
-                    autoFocus
-                  />
-                </div>
-                <p className="text-[11px] mt-1.5" style={{ color: TEXT_MUTED }}>
-                  Letters, numbers and underscores. You can change it later in Creator Profile.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs mb-2 font-medium" style={{ color: TEXT_MUTED }}>
-                  How do you see yourself on the pitch?
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {IDENTITY_OPTIONS.map(opt => (
-                    <button key={opt.value}
-                      onClick={() => setIdentity(opt.value)}
-                      className="py-2 px-3 rounded-lg text-xs font-medium text-center transition-all"
-                      style={{
-                        background: identity === opt.value ? ACCENT_GRADIENT : SURFACE_2,
-                        color: identity === opt.value ? ACCENT_INK : "#c9d1d9",
-                        border: `1px solid ${identity === opt.value ? ACCENT_SOLID : DS_BORDER}`,
-                      }}>
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <button onClick={() => { setStep(1); setError("") }}
-                className="text-xs self-start transition-colors hover:underline"
-                style={{ color: TEXT_MUTED }}>
-                ← Back
-              </button>
-            </>
-          )}
-
-          {error && (
-            <div role="alert" className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
-              style={{ background: `${DS_ERROR}20`, color: DS_ERROR }}>
-              <AlertCircle size={13} /> {error}
-            </div>
-          )}
-
-          <button
-            onClick={submit}
-            disabled={loading || (showStep1 && (!email || !password))}
-            className="w-full py-2.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
-            style={{ background: ACCENT_GRADIENT, color: ACCENT_INK }}>
-            {loading ? (tab === "signin" ? "Signing in…" : "Creating account…") : tab === "signin" ? "Sign In" : step === 1 ? "Next →" : "Create Account"}
-          </button>
-
-          <p className="text-center text-xs" style={{ color: TEXT_MUTED }}>
-            Save boards to your account and access them anywhere.
-          </p>
-          </>)}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ─────────────────────── Your boards: the hub and My Boards ─────────────── */
+/* ─────────────────────── Your boards: My Boards ─────────────── */
 interface BoardCardRow { id: string; title: string; updated_at: string; thumb: CanvasState }
 /** What a board's card needs. The picture is drawn from its pieces, lines and zones, never its photos (they can be large). */
 const BOARD_CARD_COLS = "id, title, updated_at, players:canvas_data->players, arrows:canvas_data->arrows, shapes:canvas_data->shapes, zones:canvas_data->customZones, settings:canvas_data->settings, bg:canvas_data->bgColor"
@@ -6587,7 +6319,7 @@ function BoardGrid({ userId, currentId = null, onOpen, onDeleted, onRenamed, emp
 
   const item = (text: string, run: () => void, danger = false) => (
     <button key={text} onClick={() => { setMenuId(null); run() }}
-      className="w-full text-left px-3 py-2 text-xs transition-colors hover:bg-white/10" style={{ color: danger ? DS_ERROR : TEXT_PRIMARY }}>{text}</button>
+      className="w-full text-left px-3 py-2 text-xs transition-colors hover:bg-[var(--ps-hover)]" style={{ color: danger ? DS_ERROR : TEXT_PRIMARY }}>{text}</button>
   )
   return (
     <div className="flex flex-col gap-3">
@@ -6636,7 +6368,7 @@ function BoardGrid({ userId, currentId = null, onOpen, onDeleted, onRenamed, emp
                 </div>
                 <div className="relative flex-shrink-0">
                   <button onClick={() => setMenuId(m => (m === b.id ? null : b.id))} aria-label={`More for ${b.title}`} aria-expanded={menuId === b.id} title="Rename, duplicate or delete"
-                    className="p-1 rounded hover:bg-white/10" style={{ color: TEXT_MUTED }}><MoreHorizontal size={16} /></button>
+                    className="p-1 rounded hover:bg-[var(--ps-hover)]" style={{ color: TEXT_MUTED }}><MoreHorizontal size={16} /></button>
                   {menuId === b.id && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setMenuId(null)} />
@@ -6684,10 +6416,10 @@ function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted
     if (data) await onLoad((data as any).canvas_data, (data as any).title, b.id, (data as any).narrative ?? null, (data as any).updated_at ?? null)
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.75)" }}
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: SCRIM }}
       onClick={onClose}>
       <div className="relative w-full max-h-[80vh] flex flex-col rounded-xl border overflow-hidden"
-        style={{ background: SURFACE_BASE, borderColor: "rgba(255,255,255,0.12)", maxWidth: 760 }}
+        style={{ background: SURFACE_BASE, borderColor: DS_BORDER_STRONG, maxWidth: 760 }}
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: DS_BORDER, background: SURFACE_1 }}>
           <div className="flex items-center gap-2">
@@ -6696,7 +6428,7 @@ function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted
               MY BOARDS
             </span>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/10"><X size={16} /></button>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--ps-hover)]"><X size={16} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
           <BoardGrid userId={userId} currentId={currentBoardId} onOpen={open} onDeleted={onBoardDeleted} onRenamed={onBoardRenamed} min={200}
@@ -7210,172 +6942,6 @@ function TextSVG({ t, sel, editingText, setEditingText, startDrag, startResize, 
   )
 }
 
-/* ─────────────────────────── Hub Menu Item ─────────────────── */
-/* ─────────────────────────── Hub Page ──────────────────────── */
-
-function hubRelTime(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-  if (diffMin < 2) return "just now"
-  if (diffMin < 60) return `${diffMin} minutes ago`
-  const diffH = Math.floor(diffMin / 60)
-  if (diffH < 24) return `${diffH} hour${diffH > 1 ? "s" : ""} ago`
-  const diffD = Math.floor(diffH / 24)
-  if (diffD < 30) return `${diffD} day${diffD > 1 ? "s" : ""} ago`
-  const diffMo = Math.floor(diffD / 30)
-  return `${diffMo} month${diffMo > 1 ? "s" : ""} ago`
-}
-
-function HubPage() {
-  const navigate = useNavigate()
-  const [displayName, setDisplayName] = useState("")
-  const [userId, setUserId] = useState<string | null>(null)
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [ready, setReady] = useState(false) // true once we know someone is signed in
-  // First visit right after sign-up says "Welcome", every later visit says "Welcome back"
-  const [isNewUser] = useState(() => authHandoff.isNewUser)
-  useEffect(() => { authHandoff.toHub = false; authHandoff.isNewUser = false }, [])
-
-  useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session?.user) { navigate("/", { replace: true }); return }
-      const uid = session.user.id
-      setUserId(uid)
-      setReady(true)
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("display_name, handle")
-        .eq("id", uid)
-        .maybeSingle()
-      const raw = (profile as any)?.display_name || (profile as any)?.handle || session.user.email?.split("@")[0] || ""
-      setDisplayName(stripHandleSuffix(raw, uid, session.user.email))
-    })
-  }, [])
-
-  // Opening a board: only while you're still on the hub
-  const onHubRef = useRef(true)
-  useEffect(() => {
-    onHubRef.current = true
-    boardHandoff.preload = null; boardHandoff.braindump = false; boardHandoff.drops = false // anything left over from earlier is out of date
-    return () => { onHubRef.current = false }
-  }, [])
-  const openBoard = async (board: BoardCardRow) => {
-    await waitForBoardSave(board.id) // its last save (say, from just before you pressed Back) lands first
-    const { data } = await supabase.from("boards").select("canvas_data, title, narrative, updated_at").eq("id", board.id).single()
-    if (!onHubRef.current) return
-    if (data) boardHandoff.preload = { canvas_data: (data as any).canvas_data, title: (data as any).title ?? null, id: board.id, narrative: (data as any).narrative ?? null, updated_at: (data as any).updated_at ?? null }
-    navigate("/")
-  }
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    navigate("/")
-  }
-
-  const START: { id: string; title: string; desc: string; run: () => void }[] = [
-    { id: "tactical", title: "New tactics board", desc: "A full pitch", run: () => navigate("/") },
-    { id: "drops", title: "Start from a drop", desc: `${DROPS.length} ready-made moves`, run: () => { boardHandoff.drops = true; navigate("/") } },
-    { id: "braindump", title: "Braindump", desc: "A blank page to think on", run: () => { boardHandoff.braindump = true; navigate("/") } },
-  ]
-
-  if (!ready) return <div style={{ width: "100vw", height: "100vh", background: SURFACE_BASE }} />
-
-  return (
-    <div style={{ minHeight: "100vh", background: SURFACE_BASE, fontFamily: "'Inter', sans-serif", color: TEXT_PRIMARY }}>
-      <style>{`
-        .hub-user-chip:hover { filter: brightness(1.1); }
-        .hub-start:hover { border-color: ${ACCENT_SOLID} !important; transform: translateY(-1px); }
-        @media (max-width: 639px) {
-          .hub-greeting { font-size: 24px !important; }
-          .hub-pad { padding-left: 20px !important; padding-right: 20px !important; }
-          .hub-start-row { grid-template-columns: 1fr !important; }
-        }
-      `}</style>
-
-      {/* Top bar */}
-      <div className="hub-pad" style={{
-        height: 56, display: "flex", alignItems: "center", justifyContent: "space-between",
-        borderBottom: `1px solid ${DS_BORDER}`, paddingLeft: 32, paddingRight: 32,
-      }}>
-        <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, letterSpacing: 1, color: TEXT_PRIMARY, userSelect: "none" }}>
-          PITCHSTUDIO
-        </span>
-        <div style={{ position: "relative" }}>
-          <button
-            className="hub-user-chip"
-            onClick={() => setUserMenuOpen(v => !v)} aria-expanded={userMenuOpen}
-            style={{
-              display: "flex", alignItems: "center", gap: 8,
-              background: SURFACE_2, borderRadius: 999, padding: "6px 12px",
-              border: "none", cursor: "pointer", transition: "filter 0.15s",
-            }}>
-            <div style={{ width: 24, height: 24, borderRadius: "50%", background: ACCENT_SOLID, color: ACCENT_INK, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>
-              {(displayName || "?").slice(0, 1).toUpperCase()}
-            </div>
-            <span style={{ fontSize: 13, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
-              {displayName || "…"}
-            </span>
-            <ChevronDown size={12} style={{ color: TEXT_MUTED }} />
-          </button>
-          {userMenuOpen && (
-            <>
-              <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setUserMenuOpen(false)} />
-              <div style={{
-                position: "absolute", top: "calc(100% + 8px)", right: 0,
-                background: SURFACE_1, border: `1px solid ${DS_BORDER}`, borderRadius: 8,
-                zIndex: 100, minWidth: 170, overflow: "hidden", padding: "4px 0",
-                boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-              }}>
-                <button onClick={() => navigate("/profile")}
-                  className="flex items-center gap-2 w-full text-left px-4 py-2.5 text-sm hover:bg-white/10" style={{ color: TEXT_PRIMARY }}>
-                  <Settings size={14} /> Creator profile
-                </button>
-                <button onClick={handleSignOut}
-                  className="flex items-center gap-2 w-full text-left px-4 py-2.5 text-sm hover:bg-red-500/10" style={{ color: DS_ERROR }}>
-                  <LogOut size={14} /> Sign out
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="hub-pad" style={{ maxWidth: 1180, margin: "0 auto", paddingLeft: 32, paddingRight: 32, paddingTop: 36, paddingBottom: 48 }}>
-        {/* Greeting */}
-        <h1 className="hub-greeting" style={{
-          margin: 0, fontSize: 32, fontWeight: 700, color: TEXT_PRIMARY,
-          letterSpacing: "-0.5px", whiteSpace: "nowrap", overflow: "hidden",
-          textOverflow: "ellipsis", maxWidth: "100%", fontFamily: "'Inter', sans-serif",
-        }}>
-          {isNewUser ? "Welcome" : "Welcome back"}{displayName ? `, ${displayName}` : ""}
-        </h1>
-        <p style={{ margin: "6px 0 0", fontSize: 15, color: TEXT_MUTED, fontFamily: "'Inter', sans-serif" }}>
-          What do you want to work on today?
-        </p>
-
-        {/* Start something */}
-        <div className="hub-start-row" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginTop: 24 }}>
-          {START.map((s, i) => (
-            <button key={s.id} className="hub-start" onClick={s.run}
-              style={{
-                textAlign: "left", background: SURFACE_1, borderRadius: 10, padding: "16px 18px", cursor: "pointer",
-                border: `1px solid ${i === 0 ? ACCENT_SOLID : DS_BORDER}`, transition: "transform 0.15s, border-color 0.15s", fontFamily: "'Inter', sans-serif",
-              }}>
-              <span style={{ display: "block", fontSize: 16, fontWeight: 600, color: TEXT_PRIMARY }}>{s.title}</span>
-              <span style={{ display: "block", marginTop: 4, fontSize: 13, color: TEXT_MUTED }}>{s.desc}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Your boards */}
-        <div style={{ marginTop: 32 }}>
-          {userId && <BoardGrid userId={userId} onOpen={openBoard} empty="No boards yet. Start one above: it's saved here when you press Save." />}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 /* ────────────────────────── Leave Confirm Modal ────────────── */
 function LeaveConfirmModal({ reason, onAnswer }: { reason: LeaveReason; onAnswer: (answer: "leave" | "stay" | "save") => void }) {
   const boxRef = useRef<HTMLDivElement>(null)
@@ -7426,7 +6992,7 @@ function LeaveConfirmModal({ reason, onAnswer }: { reason: LeaveReason; onAnswer
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => onAnswer("leave")}
-            className="px-2 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-white/5"
+            className="px-2 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-[var(--ps-hover)]"
             style={{ color: DS_ERROR }}>
             {copy.leave}
           </button>
@@ -7549,13 +7115,19 @@ class AppErrorBoundary extends Component<
 }
 
 /* ─────────────────────────── Home route ─────────────────────── */
-/** "/" shows the landing page to visitors and the Tactics Board to signed-in users.
- *  Right after signing in from the landing page it goes to the hub instead. This is decided
- *  each time the route renders, so later trips from the hub to the board open the board. */
+/** "/" shows the landing page to visitors and the Tactics Board to signed-in users. */
 function HomeRoute({ signedIn }: { signedIn: boolean }) {
+  const loc = useLocation()
   if (!signedIn) return <LandingPage />
-  if (authHandoff.toHub) return <Navigate to="/hub" replace />
-  return <TacticsBoard />
+  return <TacticsBoard key={loc.key} /> // a new visit to "/" (like New board) opens a fresh board
+}
+
+/** "/braindump" opens the board as Braindump (a blank page to think on) */
+function BraindumpRoute({ signedIn }: { signedIn: boolean }) {
+  const loc = useLocation()
+  if (!signedIn) return <Navigate to="/" replace />
+  boardHandoff.braindump = true
+  return <TacticsBoard key={loc.key} />
 }
 
 /* ─────────────────────────── Root (entry) ───────────────────── */
@@ -7599,7 +7171,9 @@ export default function Root() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<HomeRoute signedIn={!!authUser} />} />
-          <Route path="/hub" element={<HubPage />} />
+          <Route path="/braindump" element={<BraindumpRoute signedIn={!!authUser} />} />
+          <Route path="/signin" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signin" />} />
+          <Route path="/signup" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signup" />} />
           <Route path="/profile" element={authUser ? <ProfilePage /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
