@@ -48,11 +48,11 @@ body { background: var(--ps-base); }
 
 export type ThemeChoice = "auto" | "night" | "day"
 const KEY = "ps_theme"
-const read = (): ThemeChoice => { try { const v = localStorage.getItem(KEY); return v === "night" || v === "day" ? v : "auto" } catch { return "auto" } }
+const read = (): ThemeChoice => { try { const v = localStorage.getItem(KEY); return v === "night" || v === "day" || v === "auto" ? v : "night" } catch { return "night" } }
 const systemTheme = (): "night" | "day" => (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: light)").matches ? "day" : "night")
 export const resolveTheme = (c: ThemeChoice): "night" | "day" => (c === "auto" ? systemTheme() : c)
 
-let choice: ThemeChoice = "auto"
+let choice: ThemeChoice = "night"
 const listeners = new Set<() => void>()
 function apply() {
   if (typeof document === "undefined") return
@@ -68,7 +68,7 @@ if (typeof document !== "undefined") {
 
 export function setThemeChoice(c: ThemeChoice) {
   choice = c
-  try { if (c === "auto") localStorage.removeItem(KEY); else localStorage.setItem(KEY, c) } catch { /* private mode: still works this visit */ }
+  try { localStorage.setItem(KEY, c) } catch { /* private mode: still works this visit */ }
   apply()
 }
 

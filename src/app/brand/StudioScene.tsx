@@ -20,7 +20,7 @@ function Pitch({ x, y, s = 1.15 }: { x: number; y: number; s?: number }) {
   )
 }
 
-export function StudioScene({ skin = PS_VOLT, view = "full", style }: { skin?: string; view?: "full" | "banner"; style?: CSSProperties }) {
+export function StudioScene({ skin = PS_VOLT, hair = true, view = "full", style }: { skin?: string; hair?: boolean; view?: "full" | "banner"; style?: CSSProperties }) {
   const { theme } = useTheme()
   const c = theme === "night" ? NIGHT : DAY
   const vb = view === "banner" ? "180 190 600 340" : "0 0 880 820"
@@ -67,7 +67,7 @@ export function StudioScene({ skin = PS_VOLT, view = "full", style }: { skin?: s
       <path d="M380 500 Q430 520 470 540 L482 532 Q450 505 395 478 Z" fill={c.shirt} />
       <rect x="332" y="430" width="26" height="36" rx="8" fill={skin} />
       <circle cx="350" cy="404" r="40" fill={skin} />
-      <path d="M306 395 L299 357 L323 373 L328 340 L346 366 L358 336 L370 366 L394 343 L391 376 L403 362 L394 397 Q372 378 349 380 Q325 380 306 395Z" fill={c.hair} />
+      {hair && <path d="M306 395 L299 357 L323 373 L328 340 L346 366 L358 336 L370 366 L394 343 L391 376 L403 362 L394 397 Q372 378 349 380 Q325 380 306 395Z" fill={c.hair} />}
       <path d="M372 470 Q392 446 384 430" stroke={skin} strokeWidth="14" strokeLinecap="round" fill="none" />
       {/* the thought: a run being drawn */}
       <circle cx="410" cy="350" r="7" fill={c.bubble} opacity=".85" /><circle cx="434" cy="322" r="11" fill={c.bubble} opacity=".9" />

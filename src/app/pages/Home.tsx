@@ -6,6 +6,7 @@ import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
 import { Mark } from "../brand/Mark"
 import { StudioScene } from "../brand/StudioScene"
+import { readBrand, DEFAULT_BRAND, type Brand } from "../brand/brand"
 import { ThemeToggle, PS_VOLT, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, ACCENT_SOLID, ACCENT_INK } from "../theme"
 
 /* Home ("/" when you are signed in): a menu to everything in the studio. The board is one step away at "/board". */
@@ -18,6 +19,7 @@ export default function HomePage() {
   const [ready, setReady] = useState(false)
   const [first, setFirst] = useState("")
   const [handle, setHandle] = useState("")
+  const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
   const [isNew, setIsNew] = useState(false)
   const [last, setLast] = useState<LastBoard | null>(null)
   const [sel, setSel] = useState(0)
@@ -31,7 +33,7 @@ export default function HomePage() {
       if (!u) { navigate("/", { replace: true }); return }
       setIsNew(Date.now() - new Date(u.created_at).getTime() < 15 * 60 * 1000)
       const [{ data: prof }, { data: boards }] = await Promise.all([
-        supabase.from("profiles").select("display_name, handle").eq("id", u.id).maybeSingle(),
+        supabase.from("profiles").select("display_name, handle, brand").eq("id", u.id).maybeSingle(),
         supabase.from("boards").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
       ])
       if (off) return
@@ -40,6 +42,7 @@ export default function HomePage() {
       setFirst(name.trim().split(" ")[0] || "")
       const h = (prof as any)?.handle ? stripHandleSuffix((prof as any).handle, u.id, u.email) : ""
       setHandle(h)
+      setBrand(readBrand((prof as any)?.brand))
       const b = (boards as any[] | null)?.[0]
       setLast(b ? { id: b.id, title: b.title || "Untitled board", updated_at: b.updated_at } : null)
       setReady(true)
@@ -157,7 +160,7 @@ export default function HomePage() {
           </div>
         </div>
         <div className="hm-art">
-          <StudioScene />
+          <StudioScene skin={brand.skin} hair={brand.hair} />
           <div className="hm-learn"><div className="t">LEARN FOOTBALL · COMING SOON</div><div className="q">Hand-picked football threads from X, always credited to the people who wrote them.</div></div>
         </div>
       </div>

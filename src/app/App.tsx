@@ -27,6 +27,8 @@ import LandingPage from "./pages/Landing"
 import AuthPage from "./pages/Auth"
 import HomePage from "./pages/Home"
 import { Mark } from "./brand/Mark"
+import { CreatorSeal, SealDisc } from "./brand/Signature"
+import { DEFAULT_BRAND, readBrand, logoToDataUrl, type Brand } from "./brand/brand"
 import ProfilePage from "./pages/Profile"
 import Tour, { TOUR_KEY } from "./Tour"
 
@@ -1499,8 +1501,8 @@ function StepTag({ x, y, k, n, of, note, fade }: { x: number; y: number; k: numb
     </g>
   )
 }
-/** The end card on GIF and video exports: the PS seal stamps down, then the handle and PITCHSTUDIO come up, like a broadcaster's sting */
-function EndCard({ frame, k, t, handle, bg, ink, edition }: { frame: { x: number; y: number; w: number; h: number }; k: number; t: number; handle: string; bg: string; ink: string; edition: string | null }) {
+/** The end card on GIF and video exports: your crest or logo stamps down, then the handle and PITCHSTUDIO come up, like a broadcaster's sting */
+function EndCard({ frame, k, t, handle, brand, logo, bg, ink, edition }: { frame: { x: number; y: number; w: number; h: number }; k: number; t: number; handle: string; brand: Brand; logo: string | null; bg: string; ink: string; edition: string | null }) {
   const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2 - 34 * k, R = 66 * k
   const back = (x: number) => { const y = x - 1; return 1 + y * y * (2.7 * y + 1.7) } // a stamp that lands with a little bounce
   const p = c01((t - 0.25) / 0.45), ring = c01((t - 0.62) / 0.55)
@@ -1513,14 +1515,13 @@ function EndCard({ frame, k, t, handle, bg, ink, edition }: { frame: { x: number
       {p > 0 && (
         <g transform={`translate(${cx},${cy}) rotate(${-14 * (1 - easeOut(p))}) scale(${2.4 - 1.4 * back(p)})`} opacity={c01(p * 3)}>
           <circle r={R + 12 * k} fill="none" stroke={ink} strokeOpacity={0.25} strokeWidth={1.5 * k} strokeDasharray={`${3 * k},${5 * k}`} />
-          <circle r={R} fill={PS_VOLT} />
-          <text y={2 * k} textAnchor="middle" dominantBaseline="central" fontSize={60 * k} fontWeight={800} fill="#0a0c0f" style={{ ...font, letterSpacing: "0.02em" }}>PS</text>
+          <SealDisc cx={0} cy={0} r={R} brand={brand} logo={logo} clipId="psendlogo" />
         </g>
       )}
       {handle && (
         <text x={cx} y={cy + R + 66 * k + 16 * k * (1 - easeOut(h))} textAnchor="middle" fill={ink} opacity={h} fontSize={44 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.04em" }}>@{handle}</text>
       )}
-      <text x={cx} y={cy + R + (handle ? 108 : 70) * k + 12 * k * (1 - easeOut(w))} textAnchor="middle" fill={ink} fillOpacity={0.88} opacity={w} fontSize={(handle ? 21 : 30) * k} fontWeight={700} style={{ ...font, letterSpacing: "0.42em" }}>PITCHSTUDIO</text>
+      {brand.madeWith && <text x={cx} y={cy + R + (handle ? 108 : 70) * k + 12 * k * (1 - easeOut(w))} textAnchor="middle" fill={ink} fillOpacity={0.88} opacity={w} fontSize={(handle ? 21 : 30) * k} fontWeight={700} style={{ ...font, letterSpacing: "0.42em" }}>PITCHSTUDIO</text>}
       {edition && <text x={cx} y={frame.y + frame.h - 40 * k} textAnchor="middle" fill={ink} fillOpacity={0.6} opacity={ed} fontSize={15 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.16em" }}>{edition}</text>}
     </g>
   )
@@ -2363,16 +2364,25 @@ function TacticsBoard() {
   // Name shown on the account button: display name, else handle (never the email)
   const [accountName, setAccountName] = useState("")
   const [creatorHandle, setCreatorHandle] = useState("") // shown in the watermark, once you've chosen a handle yourself
+  const [creatorBrand, setCreatorBrand] = useState<Brand>(DEFAULT_BRAND) // your Creator Card: the crest and look that sign your exports
+  const [creatorLogo, setCreatorLogo] = useState<string | null>(null) // your logo as a data address, so exports never wait on the network
   useEffect(() => {
-    if (!authUser) { setAccountName(""); setCreatorHandle(""); return }
+    let off = false
+    setCreatorLogo(null)
+    if (creatorBrand.logo) logoToDataUrl(creatorBrand.logo).then(d => { if (!off) setCreatorLogo(d) })
+    return () => { off = true }
+  }, [creatorBrand.logo])
+  useEffect(() => {
+    if (!authUser) { setAccountName(""); setCreatorHandle(""); setCreatorBrand(DEFAULT_BRAND); return }
     let cancelled = false
-    supabase.from("profiles").select("display_name, handle").eq("id", authUser.id).maybeSingle()
+    supabase.from("profiles").select("display_name, handle, brand").eq("id", authUser.id).maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
         const raw = (data as any)?.display_name || (data as any)?.handle || ""
         setAccountName(stripHandleSuffix(raw, authUser.id, authUser.email))
         const handle: string = (data as any)?.handle || ""
         setCreatorHandle(handle && stripHandleSuffix(handle, authUser.id, authUser.email) === handle ? handle : "")
+        setCreatorBrand(readBrand((data as any)?.brand))
       })
     return () => { cancelled = true }
   }, [authUser?.id])
@@ -4223,16 +4233,6 @@ function TacticsBoard() {
       setPlay(null); setMaking(null); setSelection(keepSelection)
     }
   }
-  // The watermark's background fits its text (a handle can be any length)
-  const wmTextRef = useRef<SVGTextElement>(null)
-  const [wmWidth, setWmWidth] = useState(92)
-  useLayoutEffect(() => {
-    // The width the handle and PITCHSTUDIO really take, letter spacing included, so the PS disc never touches them
-    const measure = () => { const el = wmTextRef.current; let w = 0; try { w = el ? Math.max(el.getComputedTextLength(), el.getBBox().width) : 0 } catch { /* not drawn yet */ } if (w) setWmWidth(Math.ceil(w)) }
-    measure()
-    document.fonts?.ready.then(measure)
-  }, [creatorHandle])
-
   /* ── Templates ── */
   const getCanvasState = (): CanvasState => ({
     players, arrows, texts, shapes, images, title, bgColor, showPitch,
@@ -5925,23 +5925,13 @@ function TacticsBoard() {
                     )
                   })()}
 
-                  {/* 13. Creator seal — always last, always visible: the PS seal, your handle (once you've chosen one) and PITCHSTUDIO */}
+                  {/* 13. Creator seal — always last, always visible: your crest or logo, your handle (once you've chosen one) and PITCHSTUDIO (if you keep it on) */}
                   <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x + frame.w - (editorial && cropMarks ? 10 * sealK : 0)},${frame.y + frame.h - (editorial && cropMarks ? 10 * sealK : 0)}) scale(${sealK})`}>
-                    <rect x={-14 - (wmWidth + 48)} y={-42} width={wmWidth + 48} height={28} rx={14} fill={inkOn(bgColor) === "#000000" ? "#1d1b16" : "rgba(0,0,0,0.62)"} />
-                    <circle cx={-14 - (wmWidth + 48) + 17} cy={-28} r={11} fill={PS_VOLT} />
-                    <text x={-14 - (wmWidth + 48) + 17} y={-27.5} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#0a0c0f"
-                      style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.02em" }}>
-                      PS
-                    </text>
-                    <text ref={wmTextRef} x={-26} y={-22} textAnchor="end" fontSize={17}
-                      style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
-                      {creatorHandle && <tspan fill="rgba(255,255,255,0.78)" fontWeight="600" style={{ letterSpacing: "0.04em" }}>@{creatorHandle}</tspan>}
-                      <tspan dx={creatorHandle ? 8 : 0} fill="rgba(255,255,255,0.95)" fontWeight="700" style={{ letterSpacing: "0.12em" }}>PITCHSTUDIO</tspan>
-                    </text>
+                    <CreatorSeal brand={creatorBrand} handle={creatorHandle} logo={creatorLogo} pill={inkOn(bgColor) === "#000000" ? "#1d1b16" : "rgba(0,0,0,0.62)"} />
                   </g>
                   {/* 14. The end card, at the end of a move */}
                   {view && view.end !== null && (
-                    <EndCard frame={frame} k={sealK} t={view.end} handle={creatorHandle} bg={bgColor} ink={inkOn(bgColor)} edition={editorial && showEdition ? editionStamp(editionNo) : null} />
+                    <EndCard frame={frame} k={sealK} t={view.end} handle={creatorHandle} brand={creatorBrand} logo={creatorLogo} bg={bgColor} ink={inkOn(bgColor)} edition={editorial && showEdition ? editionStamp(editionNo) : null} />
                   )}
                   </>)
                   })()}
