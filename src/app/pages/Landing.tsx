@@ -1,7 +1,8 @@
 import { useRef } from "react"
 import { useNavigate } from "react-router"
-import { Play, FileText, UserSquare } from "lucide-react"
+import { Play, FileText, BookOpen } from "lucide-react"
 import { BoardArt } from "./BoardArt"
+import { Mark } from "../brand/Mark"
 import { ThemeToggle, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT } from "../theme"
 
 /* The first page a visitor sees. Everything is drawn with code (no pictures to load), and every colour is a theme variable. */
@@ -42,8 +43,8 @@ const STEPS = [
 ]
 const SOON = [
   { t: "Live Game Analysis", p: "Annotate real match stills and screenshots.", ic: <Play size={18} /> },
-  { t: "Match Report", p: "Publish an editorial-style match breakdown.", ic: <FileText size={18} /> },
-  { t: "Player Report", p: "Profile a single player in depth.", ic: <UserSquare size={18} /> },
+  { t: "Match Report", p: "Build a match breakdown with your own tagline and logo.", ic: <FileText size={18} /> },
+  { t: "Learn Football", p: "The best football threads, picked and credited.", ic: <BookOpen size={18} /> },
 ]
 
 export default function LandingPage() {
@@ -97,7 +98,8 @@ export default function LandingPage() {
           .ls-wrap { padding: 0 20px; }
           .ls-nav { height: 60px; }
           .ls-nav-r { gap: 2px; }
-          .ls-logo { font-size: 15px !important; letter-spacing: .14em !important; }
+          .ls-logo { display: none; }
+          .ls-wrap { padding: 0 16px; }
           .ls-link { padding: 8px 8px; }
           .ls-hide { display: none; }
           .ls-hero { padding-top: 36px; }
@@ -118,12 +120,12 @@ export default function LandingPage() {
       `}</style>
       <div className="ls-wrap">
         <nav className="ls-nav" aria-label="Main">
-          <span className="ls-logo" style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", letterSpacing: "0.2em", fontSize: 19, fontWeight: 600 }}>PITCHSTUDIO</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}><Mark size={30} color={ACCENT_SOLID} /><span className="ls-logo" style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", letterSpacing: "0.2em", fontSize: 19, fontWeight: 600 }}>PITCHSTUDIO</span></span>
           <div className="ls-nav-r">
             <button className="ls-link ls-hide" onClick={() => document.getElementById("ls-how")?.scrollIntoView({ behavior: "smooth" })}>How it works</button>
             <button className="ls-link" onClick={signIn}>Sign in</button>
             <ThemeToggle />
-            <button className="ls-btn pri sm" onClick={start}>Start free</button>
+            <button className="ls-btn pri sm" onClick={start}>Start creating</button>
           </div>
         </nav>
 
@@ -133,10 +135,10 @@ export default function LandingPage() {
           <h1 className="ls-h1">Enable your <em>creativity.</em></h1>
           <p className="ls-sub">Where your genius comes to life. <b>Set a formation, draw the movements and export a clip people stop scrolling for.</b></p>
           <div className="ls-cta">
-            <button className="ls-btn pri" onClick={start}>Start free</button>
+            <button className="ls-btn pri" onClick={start}>Start creating</button>
             <button className="ls-btn sec" onClick={() => document.getElementById("ls-how")?.scrollIntoView({ behavior: "smooth" })}>See how it works</button>
           </div>
-          <div className="ls-fine">No card needed · takes 20 seconds</div>
+          <div className="ls-fine">Free for every creator.</div>
           <div className="ls-shot"><BoardArt /></div>
         </header>
 
@@ -170,11 +172,11 @@ export default function LandingPage() {
       <div className="ls-band">
         <div className="ls-wrap">
           <h2 className="ls-h2">Your next breakdown starts on a blank pitch.</h2>
-          <div className="ls-cta"><button className="ls-btn pri" onClick={start}>Start free</button></div>
+          <div className="ls-cta"><button className="ls-btn pri" onClick={start}>Start creating</button></div>
         </div>
       </div>
       <footer className="ls-foot">PitchStudio is not affiliated with any club, league or player.</footer>
-      <div className="ls-sticky"><button className="ls-btn pri" onClick={start}>Start free</button></div>
+      <div className="ls-sticky"><button className="ls-btn pri" onClick={start}>Start creating</button></div>
     </div>
   )
 }

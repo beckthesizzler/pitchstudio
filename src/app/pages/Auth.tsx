@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase"
 import { IDENTITY_OPTIONS, friendlyAuthError, normalizeHandle } from "../lib/account"
 import { ThemeToggle, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR, DS_ERROR_SOFT, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT } from "../theme"
 import { BoardArt } from "./BoardArt"
+import { Mark } from "../brand/Mark"
 
 /* Sign in and sign up, one full page each ("/signin" and "/signup"). Same steps and the same database calls as before:
    email + password, then a handle + who you are, then a "check your email" screen when confirmation is on. */
@@ -169,7 +170,7 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
       <div className="au-grid">
         <div className="au-left">
           <div className="au-top">
-            <button className="au-logo" onClick={() => navigate("/")} aria-label="PitchStudio home">PITCHSTUDIO</button>
+            <button className="au-logo" onClick={() => navigate("/")} aria-label="PitchStudio home" style={{ display: "inline-flex", alignItems: "center", gap: 11 }}><Mark size={28} color={ACCENT_SOLID} />PITCHSTUDIO</button>
             <ThemeToggle />
           </div>
           <div className="au-form">

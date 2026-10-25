@@ -25,6 +25,8 @@ import {
 } from "./theme"
 import LandingPage from "./pages/Landing"
 import AuthPage from "./pages/Auth"
+import HomePage from "./pages/Home"
+import { Mark } from "./brand/Mark"
 import ProfilePage from "./pages/Profile"
 import Tour, { TOUR_KEY } from "./Tour"
 
@@ -2700,6 +2702,21 @@ function TacticsBoard() {
       pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, steps, stepIdx,
       currentBoardId, authUser, saveTick])
 
+  // "/board?open=ID": Home's "Continue" opens that saved board
+  const openParam = new URLSearchParams(useLocation().search).get("open")
+  const openParamDone = useRef(false)
+  useEffect(() => {
+    if (!authUser || !openParam || openParamDone.current) return
+    openParamDone.current = true
+    entryRef.current = "opened"
+    waitForBoardSave(openParam).then(async () => {
+      const { data } = await supabase.from("boards").select("canvas_data, title, narrative, updated_at").eq("id", openParam).eq("user_id", authUser.id).maybeSingle()
+      if (data) openBoard((data as any).canvas_data, (data as any).title, openParam, (data as any).narrative ?? null, (data as any).updated_at ?? null)
+      window.history.replaceState(null, "", "/board") // the address goes back to plain /board (no remount)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id])
+
   // Opening a fresh board: bring back the unsaved board from last time, if there is one
   const restoreCheckedRef = useRef(false)
   useEffect(() => {
@@ -4286,12 +4303,11 @@ function TacticsBoard() {
       <header className="flex items-center gap-2 lg:gap-3 px-2 sm:px-3 py-2 border-b flex-shrink-0"
         style={{ borderColor: DS_BORDER, background: SURFACE_1, minHeight: 48 }}>
         {headerMenu && <div className="fixed inset-0 z-40" onClick={() => setHeaderMenu(null)} />}
-        {/* Logo (opens My Boards) + title */}
+        {/* Logo (goes Home) + title */}
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <div className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
-            title={authUser ? "My boards" : "PitchStudio"}
-            onClick={() => { if (authUser) setShowMyBoards(true) }}
-            style={{ background: ACCENT_SOLID, color: ACCENT_INK, fontFamily: "'Barlow Condensed', sans-serif", cursor: "pointer" }}>PS</div>
+          <button className="flex-shrink-0 rounded" aria-label="Home" title="Home"
+            onClick={async () => { if (await confirmLeave()) navigateBoard("/") }}
+            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex" }}><Mark size={28} color={ACCENT_SOLID} /></button>
           {editingTitle ? (
             <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)}
@@ -4428,7 +4444,7 @@ function TacticsBoard() {
                   { label: "Undo", icon: <RotateCcw size={13} />, run: undo, narrow: true },
                   { label: "Redo", icon: <RotateCw size={13} />, run: redo, narrow: true },
                   ...(authUser ? [
-                    { label: "New board", icon: <Plus size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/") } },
+                    { label: "New board", icon: <Plus size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/board") } },
                     { label: "Braindump", icon: <Pencil size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/braindump") } },
                     { label: "Creator profile", icon: <Settings size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/profile") } },
                   ] : []),
@@ -7115,11 +7131,16 @@ class AppErrorBoundary extends Component<
 }
 
 /* ─────────────────────────── Home route ─────────────────────── */
-/** "/" shows the landing page to visitors and the Tactics Board to signed-in users. */
+/** "/" shows the landing page to visitors and Home (the menu to the whole studio) to signed-in users. */
 function HomeRoute({ signedIn }: { signedIn: boolean }) {
+  return signedIn ? <HomePage /> : <LandingPage />
+}
+
+/** "/board" is the Tactics Board (sign-in only). A new visit opens a fresh board; "/board?open=ID" opens a saved one. */
+function BoardRoute({ signedIn }: { signedIn: boolean }) {
   const loc = useLocation()
-  if (!signedIn) return <LandingPage />
-  return <TacticsBoard key={loc.key} /> // a new visit to "/" (like New board) opens a fresh board
+  if (!signedIn) return <Navigate to="/" replace />
+  return <TacticsBoard key={loc.key} />
 }
 
 /** "/braindump" opens the board as Braindump (a blank page to think on) */
@@ -7171,6 +7192,7 @@ export default function Root() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<HomeRoute signedIn={!!authUser} />} />
+          <Route path="/board" element={<BoardRoute signedIn={!!authUser} />} />
           <Route path="/braindump" element={<BraindumpRoute signedIn={!!authUser} />} />
           <Route path="/signin" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signin" />} />
           <Route path="/signup" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signup" />} />

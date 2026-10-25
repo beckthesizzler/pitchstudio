@@ -4,6 +4,7 @@ import { ArrowLeft, LogOut } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { IDENTITY_OPTIONS, normalizeHandle } from "../lib/account"
 import { WORLD_COUNTRIES } from "../lib/countries"
+import { Mark } from "../brand/Mark"
 import { useTheme, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT, PS_VOLT } from "../theme"
 
 /* Creator Profile ("/profile"): who you are in the studio, how your exports are signed, and how the app looks. */
@@ -126,8 +127,9 @@ export default function ProfilePage() {
       `}</style>
 
       <div className="pf-top">
-        <button className="pf-back" onClick={() => navigate("/")}><ArrowLeft size={16} /> Back to board</button>
+        <button className="pf-back" onClick={() => navigate("/")}><ArrowLeft size={16} /> Home</button>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Mark size={26} color={ACCENT_SOLID} />
           <span style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 18, letterSpacing: "0.2em", fontWeight: 600 }}>PITCHSTUDIO</span>
         </div>
       </div>
