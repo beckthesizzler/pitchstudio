@@ -42,7 +42,7 @@ const STEPS = [
   { n: "03", t: "Export and post", p: "One click to a GIF, MP4 or PDF in 16:9, 4:5, 1:1 or 9:16, signed with your handle.", chips: ["GIF", "MP4", "PDF", "9:16"] },
 ]
 const SOON = [
-  { t: "Live Game Analysis", p: "Annotate real match stills and screenshots.", ic: <Play size={18} /> },
+  { t: "Live Game Analysis", p: "Tag players, light them up and draw zones on real match shots.", ic: <Play size={18} />, live: true },
   { t: "Match Report", p: "Build a match breakdown with your own tagline and logo.", ic: <FileText size={18} /> },
   { t: "Learn Football", p: "The best football threads, picked and credited.", ic: <BookOpen size={18} /> },
 ]
@@ -156,12 +156,12 @@ export default function LandingPage() {
         </section>
 
         <section className="ls-sec">
-          <div className="ls-eb2">COMING NEXT</div>
+          <div className="ls-eb2">NEW AND NEXT</div>
           <h2 className="ls-h2">More ways to explain the game.</h2>
           <div className="ls-grid">
             {SOON.map(s => (
-              <div className="ls-card soon" key={s.t}>
-                <div className="ls-top"><div className="ls-ico">{s.ic}</div><span className="ls-tag">SOON</span></div>
+              <div className={`ls-card${"live" in s ? "" : " soon"}`} key={s.t}>
+                <div className="ls-top"><div className="ls-ico">{s.ic}</div><span className="ls-tag">{"live" in s ? "NEW" : "SOON"}</span></div>
                 <h3>{s.t}</h3><p>{s.p}</p>
               </div>
             ))}

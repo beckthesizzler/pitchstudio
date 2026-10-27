@@ -22,6 +22,7 @@ export default function HomePage() {
   const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
   const [isNew, setIsNew] = useState(false)
   const [last, setLast] = useState<LastBoard | null>(null)
+  const [lastA, setLastA] = useState<LastBoard | null>(null) // the analysis you worked on last
   const [sel, setSel] = useState(0)
   const [toast, setToast] = useState("")
   const menuRef = useRef<HTMLDivElement>(null)
@@ -32,9 +33,10 @@ export default function HomePage() {
       const u = session?.user
       if (!u) { navigate("/", { replace: true }); return }
       setIsNew(Date.now() - new Date(u.created_at).getTime() < 15 * 60 * 1000)
-      const [{ data: prof }, { data: boards }] = await Promise.all([
+      const [{ data: prof }, { data: boards }, { data: analyses }] = await Promise.all([
         supabase.from("profiles").select("display_name, handle, brand").eq("id", u.id).maybeSingle(),
         supabase.from("boards").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
+        supabase.from("analyses").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
       ])
       if (off) return
       const raw = (prof as any)?.display_name || (prof as any)?.handle || u.email?.split("@")[0] || ""
@@ -45,6 +47,8 @@ export default function HomePage() {
       setBrand(readBrand((prof as any)?.brand))
       const b = (boards as any[] | null)?.[0]
       setLast(b ? { id: b.id, title: b.title || "Untitled board", updated_at: b.updated_at } : null)
+      const a = (analyses as any[] | null)?.[0]
+      setLastA(a ? { id: a.id, title: a.title || "Untitled analysis", updated_at: a.updated_at } : null)
       setReady(true)
     })
     return () => { off = true }
@@ -58,7 +62,10 @@ export default function HomePage() {
       desc: last ? `Continue: ${last.title} · ${relTime(last.updated_at)}` : "Draw a full match idea on the pitch",
       run: () => navigate(last ? `/board?open=${last.id}` : "/board"),
       extra: last ? { label: "New", run: () => navigate("/board") } : undefined },
-    { id: "live", name: "Live Game Analysis", desc: "Draw on up to 4 match shots", icon: <ImageIcon size={20} />, soon: true },
+    { id: "live", name: "Live Game Analysis", icon: <ImageIcon size={20} />,
+      desc: lastA ? `Continue: ${lastA.title} · ${relTime(lastA.updated_at)}` : "Draw on up to 4 match shots",
+      run: () => navigate(lastA ? `/analysis?open=${lastA.id}` : "/analysis"),
+      extra: lastA ? { label: "New", run: () => navigate("/analysis") } : undefined },
     { id: "report", name: "Match Report", desc: "Your template, your logo", icon: <FileText size={20} />, soon: true },
     { id: "braindump", name: "Brain Dump", desc: "A blank page to think on", icon: <StickyNote size={20} />, run: () => navigate("/braindump") },
     { id: "profile", name: "Creator Profile", desc: "Your handle, signature and look", icon: <User size={20} />, run: () => navigate("/profile") },

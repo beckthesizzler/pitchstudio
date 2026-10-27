@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Component } from "react"
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Component, lazy, Suspense } from "react"
 import type { ReactNode } from "react"
 import React from "react"
 import { toPng, toJpeg, toBlob, toCanvas as nodeToCanvas, getFontEmbedCSS } from "html-to-image"
@@ -30,6 +30,7 @@ import { Mark } from "./brand/Mark"
 import { CreatorSeal, SealDisc } from "./brand/Signature"
 import { DEFAULT_BRAND, readBrand, logoToDataUrl, type Brand } from "./brand/brand"
 import ProfilePage from "./pages/Profile"
+const AnalysisPage = lazy(() => import("./pages/Analysis")) // only downloaded when someone opens Live Game Analysis
 import Tour, { TOUR_KEY } from "./Tour"
 
 /* ─────────────────────────── Types ─────────────────────────── */
@@ -7133,6 +7134,13 @@ function BoardRoute({ signedIn }: { signedIn: boolean }) {
   return <TacticsBoard key={loc.key} />
 }
 
+/** "/analysis" is Live Game Analysis (sign-in only). A new visit starts a new analysis; "/analysis?open=ID" opens a saved one. */
+function AnalysisRoute({ signedIn }: { signedIn: boolean }) {
+  const loc = useLocation()
+  if (!signedIn) return <Navigate to="/" replace />
+  return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><AnalysisPage key={loc.key} /></Suspense>
+}
+
 /** "/braindump" opens the board as Braindump (a blank page to think on) */
 function BraindumpRoute({ signedIn }: { signedIn: boolean }) {
   const loc = useLocation()
@@ -7184,6 +7192,7 @@ export default function Root() {
           <Route path="/" element={<HomeRoute signedIn={!!authUser} />} />
           <Route path="/board" element={<BoardRoute signedIn={!!authUser} />} />
           <Route path="/braindump" element={<BraindumpRoute signedIn={!!authUser} />} />
+          <Route path="/analysis" element={<AnalysisRoute signedIn={!!authUser} />} />
           <Route path="/signin" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signin" />} />
           <Route path="/signup" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signup" />} />
           <Route path="/profile" element={authUser ? <ProfilePage /> : <Navigate to="/" replace />} />
