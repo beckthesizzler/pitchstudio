@@ -22,28 +22,67 @@ function useWidth(deps: unknown[]) {
   return [ref, w] as const
 }
 
+/* A player tag in one of three styles:
+   sig    the PitchStudio signature. A dark plate with its top left corner cut at 45 degrees (the Pitch Block's corner),
+          a block of the tag colour down its left edge that follows the same cut, the name in spaced capitals,
+          and a thin echo ring around the ground ring.
+   plain  a rounded plate in the tag colour.
+   bare   just the name, outlined so it reads on grass.
+   The ring is solid, a glow (a soft halo with a bright disc), or off. */
 function TagMark({ m, U }: { m: Tag; U: number }) {
   const u = U * m.size
-  const fs = 25 * u, ph = 36 * u, pad = 12 * u
-  const [ref, tw] = useWidth([m.label, fs])
+  const style = m.style ?? "sig", sig = style === "sig", bare = style === "bare"
+  const text = sig ? m.label.toUpperCase() : m.label
+  const fs = (sig ? 23 : bare ? 30 : 25) * u, ph = (sig ? 34 : 36) * u, pad = 12 * u
+  const bw = 6 * u, gap = 9 * u, cut = 9 * u // signature: block width, space after it, the cut corner
+  const [ref, tw] = useWidth([text, fs, style])
   const lx = m.x + m.dx, ly = m.y + m.dy
-  const pw = (tw || m.label.length * fs * 0.5) + 2 * pad
-  const ring = { rx: 30 * u, ry: 10 * u }
-  const showLabel = m.label.trim().length > 0
-  // the leader runs from the label down to just above the ring, when there is room for it
+  const textW = tw || text.length * fs * 0.5
+  const pw = sig ? bw + gap + textW + 11 * u : textW + 2 * pad
+  const ring = { rx: 24 * u, ry: 8 * u }
+  const showLabel = text.trim().length > 0
+  // the leader runs from the label down to just above the ring, when the label is above the player
   const top = m.y - ring.ry - 3 * u
-  const leader = showLabel && Math.hypot(lx - m.x, ly - top) > 8 * u
+  const leader = showLabel && ly < top - 8 * u
+  const x0 = lx - pw / 2, y0 = ly - ph, gid = "tg" + safeId(m.id)
   return (
     <g data-id={m.id}>
-      {m.ring && <ellipse cx={m.x} cy={m.y} rx={ring.rx} ry={ring.ry} fill={m.color} fillOpacity={0.2} stroke={m.color} strokeWidth={3.5 * u} />}
-      {leader && <line x1={lx} y1={ly} x2={m.x} y2={top} stroke={m.color} strokeWidth={2.5 * u} strokeOpacity={0.9} />}
+      {m.ring && m.glow && <>
+        <defs>
+          <radialGradient id={gid}>
+            <stop offset="0" stopColor={m.color} stopOpacity={0.85} />
+            <stop offset="0.5" stopColor={m.color} stopOpacity={0.42} />
+            <stop offset="1" stopColor={m.color} stopOpacity={0} />
+          </radialGradient>
+        </defs>
+        <ellipse cx={m.x} cy={m.y} rx={48 * u} ry={16 * u} fill={`url(#${gid})`} />
+        <ellipse cx={m.x} cy={m.y} rx={22 * u} ry={7.5 * u} fill={m.color} fillOpacity={0.8} />
+      </>}
+      {m.ring && !m.glow && <>
+        {sig && <ellipse cx={m.x} cy={m.y} rx={34 * u} ry={11.5 * u} fill="none" stroke={m.color} strokeOpacity={0.5} strokeWidth={1.5 * u} />}
+        <ellipse cx={m.x} cy={m.y} rx={ring.rx} ry={ring.ry} fill={m.color} fillOpacity={0.2} stroke={m.color} strokeWidth={3.5 * u} />
+      </>}
+      {leader && <line x1={lx} y1={ly} x2={m.x} y2={top} stroke={m.color} strokeWidth={(sig ? 2 : 2.5) * u} strokeOpacity={0.9} />}
       {!m.ring && !showLabel && <circle cx={m.x} cy={m.y} r={7 * u} fill={m.color} />}
-      {showLabel && (
+      {showLabel && sig && (
         <g>
-          <rect x={lx - pw / 2} y={ly - ph} width={pw} height={ph} rx={7 * u} fill={m.color} />
-          <text ref={ref} x={lx} y={ly - ph / 2} textAnchor="middle" dominantBaseline="central" fill={inkFor(m.color)} fontSize={fs} fontWeight={700}
-            style={{ fontFamily: CONDENSED, letterSpacing: "0.02em" }}>{m.label}</text>
+          <polygon points={`${x0 + cut},${y0} ${x0 + pw},${y0} ${x0 + pw},${ly} ${x0},${ly} ${x0},${y0 + cut}`} fill="rgba(12,14,18,0.86)" stroke="rgba(255,255,255,0.1)" strokeWidth={u} strokeLinejoin="miter" />
+          <polygon points={`${x0},${y0 + cut} ${x0 + bw},${y0 + cut - bw} ${x0 + bw},${ly} ${x0},${ly}`} fill={m.color} />
+          <text ref={ref} x={x0 + bw + gap} y={ly - ph / 2} dominantBaseline="central" fill="#ffffff" fontSize={fs} fontWeight={700}
+            style={{ fontFamily: CONDENSED, letterSpacing: "0.06em" }}>{text}</text>
         </g>
+      )}
+      {showLabel && style === "plain" && (
+        <g>
+          <rect x={x0} y={y0} width={pw} height={ph} rx={7 * u} fill={m.color} />
+          <text ref={ref} x={lx} y={ly - ph / 2} textAnchor="middle" dominantBaseline="central" fill={inkFor(m.color)} fontSize={fs} fontWeight={700}
+            style={{ fontFamily: CONDENSED, letterSpacing: "0.02em" }}>{text}</text>
+        </g>
+      )}
+      {showLabel && bare && (
+        <text ref={ref} x={lx} y={ly - ph / 2} textAnchor="middle" dominantBaseline="central" fill={m.color} fontSize={fs} fontWeight={800}
+          stroke="rgba(0,0,0,0.75)" strokeWidth={6 * u} paintOrder="stroke" strokeLinejoin="round"
+          style={{ fontFamily: CONDENSED, letterSpacing: "0.01em" }}>{text}</text>
       )}
     </g>
   )
@@ -51,8 +90,8 @@ function TagMark({ m, U }: { m: Tag; U: number }) {
 
 function SpotMark({ m, U, h }: { m: Spot; U: number; h: number }) {
   const u = U * m.size
-  const top = Math.max(0, m.y - 560 * u), id = "sp" + safeId(m.id)
-  const half = (t: number) => (14 + (46 - 14) * t) * u // the beam widens as it comes down
+  const top = Math.max(0, m.y - 380 * u), id = "sp" + safeId(m.id)
+  const half = (t: number) => (12 + (34 - 12) * t) * u // the beam widens as it comes down
   const fy = Math.min(h, m.y)
   return (
     <g data-id={m.id}>
@@ -68,21 +107,47 @@ function SpotMark({ m, U, h }: { m: Spot; U: number; h: number }) {
         </radialGradient>
       </defs>
       <polygon points={`${m.x - half(0)},${top} ${m.x + half(0)},${top} ${m.x + half(1)},${fy} ${m.x - half(1)},${fy}`} fill={`url(#${id}b)`} />
-      <ellipse cx={m.x} cy={fy} rx={58 * u} ry={18 * u} fill={`url(#${id}g)`} />
+      <ellipse cx={m.x} cy={fy} rx={46 * u} ry={14 * u} fill={`url(#${id}g)`} />
     </g>
   )
+}
+
+/* An outline zone or oval can be picked anywhere inside it, not only on its edge (pointerEvents visible). */
+
+/** An oval that fits inside the zone's 4 corners, in perspective: tilt the corners and it lies flat on the pitch.
+    The corners map a square onto the shot, and the circle inside that square is drawn through the same mapping. */
+export function ovalPath(pts: Pt[]) {
+  if (pts.length !== 4) return null
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = pts
+  const sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3
+  const dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2
+  const den = dx1 * dy2 - dx2 * dy1
+  const g = den ? (sx * dy2 - dx2 * sy) / den : 0, k = den ? (dx1 * sy - sx * dy1) / den : 0
+  const a = x1 - x0 + g * x1, b = x3 - x0 + k * x3, d = y1 - y0 + g * y1, e = y3 - y0 + k * y3
+  const out: string[] = []
+  for (let i = 0; i < 72; i++) {
+    const t = (i / 72) * 2 * Math.PI, uu = 0.5 + 0.5 * Math.cos(t), vv = 0.5 + 0.5 * Math.sin(t)
+    const q = g * uu + k * vv + 1
+    if (!(q > 0.05)) return null // the corners are twisted: no oval fits, so the zone shape is drawn instead
+    out.push(`${((a * uu + b * vv + x0) / q).toFixed(1)},${((d * uu + e * vv + y0) / q).toFixed(1)}`)
+  }
+  return "M" + out.join(" L") + " Z"
 }
 
 function ZoneMark({ m, U }: { m: Zone; U: number }) {
   const u = U * m.size
   const [cx, cy] = centroid(m.pts)
   const pts = m.pts.map(p => p.join(",")).join(" ")
+  const oval = m.round ? ovalPath(m.pts) : null
   return (
     <g data-id={m.id}>
-      <polygon points={pts} fill={m.outline ? "none" : m.color} fillOpacity={m.opacity} stroke={m.color} strokeOpacity={0.9} strokeWidth={3 * U}
-        strokeDasharray={m.outline ? `${16 * U} ${10 * U}` : undefined} strokeLinejoin="round" />
+      {oval
+        ? <path d={oval} fill={m.outline ? "none" : m.color} fillOpacity={m.opacity} stroke={m.color} strokeOpacity={m.outline ? 0.95 : 0.55}
+          strokeWidth={(m.outline ? 4 : 2) * U} strokeLinejoin="round" pointerEvents="visible" />
+        : <polygon points={pts} fill={m.outline ? "none" : m.color} fillOpacity={m.opacity} stroke={m.color} strokeOpacity={0.9} strokeWidth={3 * U}
+          strokeDasharray={m.outline ? `${16 * U} ${10 * U}` : undefined} strokeLinejoin="round" pointerEvents="visible" />}
       {m.label.trim() && (
-        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill={m.color} fontSize={64 * u} fontWeight={800}
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill={m.color} fontSize={48 * u} fontWeight={800}
           stroke="rgba(0,0,0,0.55)" strokeWidth={6 * u} paintOrder="stroke" strokeLinejoin="round"
           style={{ fontFamily: CONDENSED, letterSpacing: "0.01em" }}>{m.label}</text>
       )}

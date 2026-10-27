@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ChevronLeft, ChevronRight, Copy, Download, FolderOpen, ImagePlus, Loader2, Maximize, MousePointer2, MoveUpRight, Pentagon, Plus, Redo2, Slash, Tag as TagIcon, Trash2, Type, Undo2, X, Flashlight, ZoomIn, ZoomOut } from "lucide-react"
+import { ChevronLeft, ChevronRight, Circle, Copy, Download, FolderOpen, ImagePlus, Loader2, Maximize, MousePointer2, MoveUpRight, Pentagon, Plus, Redo2, Slash, Tag as TagIcon, Trash2, Type, Undo2, X, Flashlight, ZoomIn, ZoomOut } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
@@ -9,7 +9,7 @@ import { CreatorSeal } from "../brand/Signature"
 import { DEFAULT_BRAND, logoToDataUrl, readBrand, type Brand } from "../brand/brand"
 import { Stage, START_DEFAULTS, type Defaults, type Tool } from "../analysis/Stage"
 import { Inspector } from "../analysis/Inspector"
-import { MAX_MARKS, MAX_SHOTS, downloadShot, exportFontCSS, moveMark, newId, prepareShot, readAnalysis, removeShots, unit, uploadShot, type Mark, type Shot } from "../analysis/model"
+import { MAX_MARKS, MAX_SHOTS, combineShots, downloadShot, exportFontCSS, moveMark, newId, prepareShot, readAnalysis, removeShots, unit, uploadShot, type Mark, type Shot } from "../analysis/model"
 import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT, SCRIM } from "../theme"
 
 /* Live Game Analysis ("/analysis"): draw on up to 4 match shots (tags, spotlights, perspective zones, arrows, lines, text),
@@ -20,6 +20,7 @@ const TOOLS: { id: Tool; name: string; key: string; icon: ReactNode }[] = [
   { id: "tag", name: "Tag", key: "T", icon: <TagIcon size={18} /> },
   { id: "spot", name: "Spotlight", key: "S", icon: <Flashlight size={18} /> },
   { id: "zone", name: "Zone", key: "Z", icon: <Pentagon size={18} /> },
+  { id: "oval", name: "Oval", key: "O", icon: <Circle size={18} /> },
   { id: "arrow", name: "Arrow", key: "A", icon: <MoveUpRight size={18} /> },
   { id: "line", name: "Line", key: "L", icon: <Slash size={18} /> },
   { id: "text", name: "Text", key: "X", icon: <Type size={18} /> },
@@ -29,11 +30,15 @@ const HINTS: Record<Tool, string> = {
   tag: "Click a player's feet to tag them, then type the name.",
   spot: "Click a player's feet to put them in the spotlight.",
   zone: "Drag a box, then pull its corners onto the pitch lines. Or click 4 corners.",
+  oval: "Drag over a player or an area to circle it.",
   arrow: "Drag from where the move starts to where it ends. Pull the diamond to curve it.",
   line: "Drag from one player to another to link them.",
   text: "Click where your note should go, then type it.",
 }
-const BY_KEY: Record<string, Tool> = { v: "select", t: "tag", s: "spot", z: "zone", a: "arrow", l: "line", x: "text" }
+// on a phone or tablet the hints say tap instead of click
+const TOUCH = typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(pointer: coarse)").matches
+const hintFor = (t: Tool) => TOUCH ? HINTS[t].split("Click").join("Tap").split("click").join("tap") : HINTS[t]
+const BY_KEY: Record<string, Tool> = { v: "select", t: "tag", s: "spot", z: "zone", o: "oval", a: "arrow", l: "line", x: "text" }
 type Row = { id: string; title: string; updated_at: string; data: unknown }
 
 export default function AnalysisPage() {
@@ -175,7 +180,7 @@ export default function AnalysisPage() {
     if (shot.items.length >= MAX_MARKS) { say(`A shot holds ${MAX_MARKS} marks.`); return }
     begin(); applyItems(items => [...items, m]); end(); setSel(m.id)
   }
-  const kindKey = (m: Mark): keyof Defaults => (m.kind === "arrow" ? (m.head === "none" ? "line" : "arrow") : m.kind)
+  const kindKey = (m: Mark): keyof Defaults => (m.kind === "arrow" ? (m.head === "none" ? "line" : "arrow") : m.kind === "zone" && m.round ? "oval" : m.kind)
   const setMark = (patch: Partial<Mark>, live?: boolean) => {
     if (!selMark) return
     if (!live) begin()
@@ -317,11 +322,12 @@ export default function AnalysisPage() {
 
   /* ── export: the shot at its full size, with your seal ── */
   const fileBase = (title.trim() || "Analysis").replace(/[^A-Za-z0-9 _.()-]+/g, "").trim().slice(0, 60) || "Analysis"
-  const renderShot = async (type: "image/png" | "image/jpeg"): Promise<Blob> => {
+  const renderCanvas = async (type: "image/png" | "image/jpeg", seal = true): Promise<HTMLCanvasElement> => {
     const svg = stageRef.current, s = shotsRef.current[curRef.current]
     if (!svg || !s) throw new Error("no shot")
     const css = await exportFontCSS()
     const clone = svg.cloneNode(true) as SVGSVGElement
+    if (!seal) clone.querySelector("[data-seal]")?.remove()
     clone.setAttribute("xmlns", "http://www.w3.org/2000/svg")
     clone.setAttribute("width", String(s.w)); clone.setAttribute("height", String(s.h)); clone.removeAttribute("style")
     if (css) { const st = document.createElementNS("http://www.w3.org/2000/svg", "style"); st.textContent = css; clone.insertBefore(st, clone.firstChild) }
@@ -332,10 +338,14 @@ export default function AnalysisPage() {
       const ctx = cv.getContext("2d")!
       if (type === "image/jpeg") { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, s.w, s.h) }
       ctx.drawImage(img, 0, 0, s.w, s.h)
-      const blob = await new Promise<Blob | null>(ok => cv.toBlob(ok, type, 0.92))
-      if (!blob) throw new Error("draw")
-      return blob
+      return cv
     } finally { URL.revokeObjectURL(url) }
+  }
+  const renderShot = async (type: "image/png" | "image/jpeg"): Promise<Blob> => {
+    const cv = await renderCanvas(type)
+    const blob = await new Promise<Blob | null>(ok => cv.toBlob(ok, type, 0.92))
+    if (!blob) throw new Error("draw")
+    return blob
   }
   const curRef = useRef(cur)
   curRef.current = cur
@@ -345,7 +355,7 @@ export default function AnalysisPage() {
     const a = document.createElement("a"); a.href = url; a.download = name; a.click()
     setTimeout(() => URL.revokeObjectURL(url), 60000)
   }
-  const doExport = async (what: "png" | "jpg" | "all" | "copy") => {
+  const doExport = async (what: "png" | "jpg" | "all" | "grid" | "copy") => {
     setExportOpen(false)
     if (!shot || busy) return
     const keep = cur, keepSel = sel
@@ -359,6 +369,16 @@ export default function AnalysisPage() {
           save1(await renderShot("image/png"), `${fileBase} ${i + 1}.png`)
         }
         setCur(keep)
+      } else if (what === "grid") {
+        // one picture: every shot drawn in turn, then put together (only the last one keeps the seal, bottom right)
+        const n = shotsRef.current.length, cvs: HTMLCanvasElement[] = []
+        for (let i = 0; i < n; i++) {
+          setBusy(`Combining ${i + 1} of ${n}…`); setCur(i); await frames(); await document.fonts?.ready
+          if (!srcs[shotsRef.current[i].id]) { say(`Shot ${i + 1} isn't loaded yet. Try again in a moment.`); setCur(keep); return }
+          cvs.push(await renderCanvas("image/png", i === n - 1))
+        }
+        setCur(keep)
+        save1(await combineShots(cvs), `${fileBase} combined.png`)
       } else {
         if (!srcs[shot.id]) { say("This shot isn't loaded yet."); return }
         setBusy("Exporting…"); await frames()
@@ -391,7 +411,7 @@ export default function AnalysisPage() {
 
   const U = shot ? unit(shot.w) : 1
   const sealNode = shot ? (
-    <g transform={`translate(${shot.w - 8 * U},${shot.h - 8 * U}) scale(${1.25 * U})`} style={{ pointerEvents: "none" }}>
+    <g data-seal="1" transform={`translate(${shot.w - 8 * U},${shot.h - 8 * U}) scale(${1.25 * U})`} style={{ pointerEvents: "none" }}>
       <CreatorSeal brand={brand} handle={handle} logo={logo} pill="rgba(0,0,0,0.62)" />
     </g>
   ) : null
@@ -486,7 +506,9 @@ export default function AnalysisPage() {
         @media (max-width: 860px) {
           .an-page { height: auto; min-height: 100vh; overflow: visible; grid-template-rows: auto auto auto; }
           .an-top { flex-wrap: wrap; padding: 8px 12px; row-gap: 8px; }
-          .an-title { flex: 1 1 160px; }
+          .an-title { flex: 1 1 0; min-width: 0; }
+          .an-sp { flex: 0 0 100%; height: 0; }
+          .an-top [data-export] { margin-left: auto; }
           .an-hide-sm { display: none; }
           .an-body { grid-template-columns: 1fr; }
           .an-rail { flex-direction: row; border-right: none; border-bottom: 1px solid ${DS_BORDER}; overflow-x: auto; padding: 6px 8px; }
@@ -497,6 +519,7 @@ export default function AnalysisPage() {
           .an-hint { font-size: 11px; top: 6px; padding: 5px 10px; white-space: normal; text-align: center; width: max-content; max-width: 92%; }
           .an-keysbox { display: none; }
         }
+        @media (pointer: coarse) { .an-tool kbd, .an-keysbox { display: none; } }
       `}</style>
 
       <header className="an-top">
@@ -519,6 +542,7 @@ export default function AnalysisPage() {
               <button role="menuitem" onClick={() => doExport("png")}>PNG<small>this shot, full size</small></button>
               <button role="menuitem" onClick={() => doExport("jpg")}>JPG<small>smaller file</small></button>
               {shots.length > 1 && <button role="menuitem" onClick={() => doExport("all")}>All {shots.length} shots<small>PNG, ready for one post</small></button>}
+              {shots.length > 1 && <button role="menuitem" onClick={() => doExport("grid")}>Combine into one<small>{shots.length === 2 ? "side by side" : "2 by 2 grid"}, PNG</small></button>}
               <button role="menuitem" onClick={() => doExport("copy")}><Copy size={14} /> Copy image</button>
             </div>
           )}
@@ -550,7 +574,7 @@ export default function AnalysisPage() {
             {shot ? (
               <Stage shot={shot} src={srcs[shot.id] || undefined} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
                 onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={sealNode} stageRef={stageRef}
-                hint={srcs[shot.id] === "" ? "This shot couldn't be loaded. Check your connection and reopen." : srcs[shot.id] ? HINTS[tool] : "Loading the shot…"} />
+                hint={srcs[shot.id] === "" ? "This shot couldn't be loaded. Check your connection and reopen." : srcs[shot.id] ? hintFor(tool) : "Loading the shot…"} />
             ) : (
               <div className={`an-empty${dragOver ? " over" : ""}`} data-empty="drop">
                 <ImagePlus size={34} color="#d7ff3c" style={{ margin: "0 auto", display: "block" }} />

@@ -1,23 +1,25 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import { Marks, arrowPath } from "./Marks"
-import { dist, mid, moveMark, newId, unit, type Arrow, type Mark, type Pt, type Shot, type Zone } from "./model"
+import { dist, mid, moveMark, newId, unit, type Arrow, type Mark, type Pt, type Shot, type TagStyle, type Zone } from "./model"
 
 /* The shot you draw on. The picture and the marks are one svg (that is what gets exported);
    handles, the selection outline and half-drawn marks sit on a second svg on top, so they never end up in an export. */
 
-export type Tool = "select" | "tag" | "spot" | "zone" | "arrow" | "line" | "text"
+export type Tool = "select" | "tag" | "spot" | "zone" | "oval" | "arrow" | "line" | "text"
 export type Defaults = {
-  tag: { color: string; ring: boolean }
+  tag: { color: string; ring: boolean; glow: boolean; style: TagStyle }
   spot: { color: string }
   zone: { color: string; opacity: number; outline: boolean }
+  oval: { color: string; opacity: number; outline: boolean }
   arrow: { color: string; dash: Arrow["dash"]; head: Arrow["head"] }
   line: { color: string; dash: Arrow["dash"] }
   text: { color: string; box: boolean }
 }
 export const START_DEFAULTS: Defaults = {
-  tag: { color: "#ffffff", ring: true },
+  tag: { color: "#ffffff", ring: true, glow: false, style: "sig" },
   spot: { color: "#d7ff3c" },
   zone: { color: "#d7ff3c", opacity: 0.28, outline: false },
+  oval: { color: "#ffffff", opacity: 0.25, outline: false },
   arrow: { color: "#ffffff", dash: "solid", head: "end" },
   line: { color: "#ffffff", dash: "solid" },
   text: { color: "#ffffff", box: true },
@@ -27,7 +29,7 @@ type Drag =
   | { type: "move"; id: string; start: Pt; orig: Mark; moved: boolean }
   | { type: "handle"; id: string; which: string; orig: Mark }
   | { type: "arrow"; tool: "arrow" | "line"; a: Pt; b: Pt }
-  | { type: "box"; start: Pt; cur: Pt }
+  | { type: "box"; start: Pt; cur: Pt; round: boolean }
   | { type: "pan"; x: number; y: number; sl: number; st: number }
 
 export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect, onCreate, apply, begin, end, onFocusText, seal, stageRef, hint }: {
@@ -120,9 +122,9 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
     return best ?? p
   }
 
-  const finishZone = (pts: Pt[]) => {
-    const d = defaults.zone
-    const z: Zone = { id: newId(), kind: "zone", color: d.color, pts, opacity: d.opacity, label: "", outline: d.outline, size: 1 }
+  const finishZone = (pts: Pt[], round = false) => {
+    const d = round ? defaults.oval : defaults.zone
+    const z: Zone = { id: newId(), kind: "zone", color: d.color, pts, opacity: d.opacity, label: "", outline: d.outline, size: 1, ...(round ? { round: true } : {}) }
     setPoly([]); onCreate(z)
   }
 
@@ -169,7 +171,7 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
     }
     if (tool === "tag") {
       const d = defaults.tag
-      onCreate({ id: newId(), kind: "tag", color: d.color, x: p[0], y: p[1], dx: 0, dy: -110 * U, label: "", ring: d.ring, size: 1 })
+      onCreate({ id: newId(), kind: "tag", color: d.color, x: p[0], y: p[1], dx: 0, dy: 52 * U, label: "", ring: d.ring, glow: d.glow, style: d.style, size: 1 })
       onFocusText(); return
     }
     if (tool === "spot") { onCreate({ id: newId(), kind: "spot", color: defaults.spot.color, x: p[0], y: p[1], size: 1 }); return }
@@ -190,8 +192,9 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
         if (next.length === 4) finishZone(next); else setPoly(next)
         return
       }
-      setD({ type: "box", start: p, cur: p }); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      setD({ type: "box", start: p, cur: p, round: false }); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     }
+    if (tool === "oval") { setD({ type: "box", start: p, cur: p, round: true }); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) }
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -243,7 +246,11 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
       const c = toImg(e)
       if (Math.abs(c[0] - d.start[0]) * scale > 10 && Math.abs(c[1] - d.start[1]) * scale > 10) {
         const [x0, x1] = [Math.min(d.start[0], c[0]), Math.max(d.start[0], c[0])], [y0, y1] = [Math.min(d.start[1], c[1]), Math.max(d.start[1], c[1])]
-        finishZone([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+        finishZone([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], d.round)
+      } else if (d.round) {
+        // a click: an oval of a usual size around that spot
+        const [x, y] = d.start, rx = 70 * U, ry = 34 * U
+        finishZone([[x - rx, y - ry], [x + rx, y - ry], [x + rx, y + ry], [x - rx, y + ry]], true)
       } else { setPoly([d.start]); setHover(d.start) }
     }
   }
@@ -296,7 +303,7 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
             {selBox && <rect x={selBox.x - 6 * U} y={selBox.y - 6 * U} width={selBox.width + 12 * U} height={selBox.height + 12 * U} fill="none" stroke="#d7ff3c" strokeWidth={sw} strokeDasharray={`${5 / scale} ${4 / scale}`} />}
             {selMark?.kind === "tag" && selMark.label.trim() && H("label", [selMark.x + selMark.dx, selMark.y + selMark.dy], "s", "Move the label")}
             {selMark?.kind === "zone" && <>
-              <polygon points={selMark.pts.map(p => p.join(",")).join(" ")} fill="none" stroke="#d7ff3c" strokeWidth={sw} />
+              <polygon points={selMark.pts.map(p => p.join(",")).join(" ")} fill="none" stroke="#d7ff3c" strokeWidth={sw} strokeDasharray={selMark.round ? `${5 / scale} ${4 / scale}` : undefined} />
               {selMark.pts.map((p, i) => H("p" + i, p, "s", `Corner ${i + 1}`))}
             </>}
             {selMark?.kind === "arrow" && <>
@@ -304,7 +311,8 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
               {H("c", selMark.c ?? mid(selMark.a, selMark.b), "d", "Curve")}
             </>}
             {ar && <path d={arrowPath(ar.a, ar.b, null)} stroke="#d7ff3c" strokeWidth={4 * U} strokeDasharray={ar.tool === "line" ? undefined : `${12 * U} ${8 * U}`} fill="none" />}
-            {bx && <rect x={Math.min(bx.start[0], bx.cur[0])} y={Math.min(bx.start[1], bx.cur[1])} width={Math.abs(bx.cur[0] - bx.start[0])} height={Math.abs(bx.cur[1] - bx.start[1])} fill="rgba(215,255,60,0.18)" stroke="#d7ff3c" strokeWidth={sw} />}
+            {bx?.round && <ellipse cx={(bx.start[0] + bx.cur[0]) / 2} cy={(bx.start[1] + bx.cur[1]) / 2} rx={Math.abs(bx.cur[0] - bx.start[0]) / 2} ry={Math.abs(bx.cur[1] - bx.start[1]) / 2} fill="rgba(215,255,60,0.18)" stroke="#d7ff3c" strokeWidth={sw} />}
+            {bx && !bx.round && <rect x={Math.min(bx.start[0], bx.cur[0])} y={Math.min(bx.start[1], bx.cur[1])} width={Math.abs(bx.cur[0] - bx.start[0])} height={Math.abs(bx.cur[1] - bx.start[1])} fill="rgba(215,255,60,0.18)" stroke="#d7ff3c" strokeWidth={sw} />}
             {poly.length > 0 && <>
               <polyline points={[...poly, ...(hover ? [hover] : [])].map(p => p.join(",")).join(" ")} fill="rgba(215,255,60,0.15)" stroke="#d7ff3c" strokeWidth={2 * sw} />
               {poly.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={r} fill={i === 0 ? "#d7ff3c" : "#fff"} stroke="#111" strokeWidth={sw} />)}

@@ -6,7 +6,7 @@ import { MARK_COLOURS, type Mark, type Shot } from "./model"
    Typing and sliders count as one change each for Undo: begin() when you start, end() when you finish. */
 
 const NAMES: Record<Mark["kind"], string> = { tag: "Player tag", spot: "Spotlight", zone: "Zone", arrow: "Arrow", text: "Text" }
-const KEYS: [string, string][] = [["V", "Select"], ["T", "Tag"], ["S", "Spotlight"], ["Z", "Zone"], ["A", "Arrow"], ["L", "Line"], ["X", "Text"],
+const KEYS: [string, string][] = [["V", "Select"], ["T", "Tag"], ["S", "Spotlight"], ["Z", "Zone"], ["O", "Oval"], ["A", "Arrow"], ["L", "Line"], ["X", "Text"],
   ["Delete", "Remove"], ["Ctrl Z", "Undo"], ["Ctrl D", "Duplicate"], ["Arrows", "Nudge"], ["+ / −", "Zoom"], ["Ctrl wheel", "Zoom"], ["Space drag", "Pan"], ["1 to 4", "Shots"]]
 
 function Seg<T extends string | boolean>({ label, value, options, set }: { label: string; value: T; options: [T, string][]; set: (v: T) => void }) {
@@ -56,7 +56,7 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
   const m = mark
   return (
     <div className="an-insp" aria-label={NAMES[m.kind]}>
-      <p className="an-cap">{m.kind === "arrow" && m.head === "none" ? "LINE" : NAMES[m.kind].toUpperCase()}</p>
+      <p className="an-cap">{m.kind === "arrow" && m.head === "none" ? "LINE" : m.kind === "zone" && m.round ? "OVAL" : NAMES[m.kind].toUpperCase()}</p>
 
       {m.kind === "tag" && row("Name", <input ref={textRef} id="an-label" className="an-inp" value={m.label} maxLength={40} placeholder="e.g. LCM Enzo" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
       {m.kind === "zone" && row("Label", <input ref={textRef} id="an-label" className="an-inp" value={m.label} maxLength={24} placeholder="e.g. 3v2" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
@@ -68,15 +68,18 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
       </div>)}
 
       {m.kind === "tag" && <>
-        {row("Ring under the player", <Seg label="Ring" value={m.ring} options={[[true, "On"], [false, "Off"]]} set={v => set({ ring: v })} />)}
+        {row("Style", <Seg label="Tag style" value={m.style ?? "sig"} options={[["sig", "Signature"], ["plain", "Plain"], ["bare", "No box"]]} set={v => set({ style: v })} />)}
+        {row("Ring under the player", <Seg label="Ring" value={!m.ring ? "off" : m.glow ? "glow" : "solid"} options={[["solid", "Solid"], ["glow", "Glow"], ["off", "Off"]]}
+          set={v => set(v === "off" ? { ring: false } : { ring: true, glow: v === "glow" })} />)}
         {slider("Size", m.size, 0.5, 2.5, 0.05, v => set({ size: v }, true))}
       </>}
       {m.kind === "spot" && slider("Beam width", m.size, 0.4, 2.5, 0.05, v => set({ size: v }, true))}
       {m.kind === "zone" && <>
+        {m.pts.length === 4 && row("Shape", <Seg label="Zone shape" value={!!m.round} options={[[false, "Area"], [true, "Oval"]]} set={v => set({ round: v })} />)}
         {row("Style", <Seg label="Zone style" value={m.outline} options={[[false, "Filled"], [true, "Outline"]]} set={v => set({ outline: v })} />)}
         {!m.outline && slider("Fill", m.opacity, 0.05, 0.7, 0.01, v => set({ opacity: v }, true))}
         {slider("Label size", m.size, 0.4, 2.5, 0.05, v => set({ size: v }, true))}
-        <p className="an-note">Drag the corners onto the pitch lines to match the camera angle.</p>
+        <p className="an-note">{m.round ? "Drag the corners to shape the oval. Tilt them and it lies flat on the pitch." : "Drag the corners onto the pitch lines to match the camera angle."}</p>
       </>}
       {m.kind === "arrow" && <>
         {row("Line", <Seg label="Line style" value={m.dash} options={[["solid", "Solid"], ["dash", "Dashed"], ["dot", "Dotted"]]} set={v => set({ dash: v })} />)}
