@@ -43,7 +43,7 @@ const STEPS = [
 ]
 const SOON = [
   { t: "Live Game Analysis", p: "Tag players, light them up and draw zones on real match shots.", ic: <Play size={18} />, live: true },
-  { t: "Match Report", p: "Build a match breakdown with your own tagline and logo.", ic: <FileText size={18} /> },
+  { t: "Match Report", p: "Tell the story of a match on one page, in your colour, signed with your seal.", ic: <FileText size={18} />, live: true },
   { t: "Learn Football", p: "The best football threads, picked and credited.", ic: <BookOpen size={18} /> },
 ]
 
