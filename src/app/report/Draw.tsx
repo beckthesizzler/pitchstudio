@@ -4,7 +4,7 @@ import { CreatorSeal } from "../brand/Signature"
 import { cardColours, inkFor, lum, shade, type Brand } from "../brand/brand"
 import {
   MODES, SIZES, ctrlFor, markUnit, pitchBox, projector, type Block, type Mark, type Pass, type PhotoBlock, type PitchBlock, type Player,
-  type Pt, type Report, type StatsBlock, type StoryBlock, type TextBlock, type Zone,
+  type KitPat, type Pt, type Report, type StatsBlock, type StoryBlock, type TextBlock, type Zone,
 } from "./model"
 
 /* How a report is drawn: one svg, the same in the editor, in the export and in the list of reports.
@@ -62,7 +62,29 @@ export type Pal = (typeof MODES)["night"] & { story: string; storyInk: string; c
 export function palette(r: Report, brand: Brand): Pal {
   const m = MODES[r.mode], story = r.story ?? cardColours(brand).disc
   // a pale story colour (like studio lime) on the bright page keeps its colour, with an ink edge so it never fades into the paper
-  return { ...m, story, storyInk: inkFor(story), cased: r.mode === "bright" && lum(story) > 0.45, bright: r.mode === "bright" }
+  // a page colour that fights its mode (a dark paper in Bright, say) is ignored, so the words always read
+  const bg = r.paper && (r.mode === "bright" ? lum(r.paper) > 0.6 : lum(r.paper) < 0.2) ? r.paper : m.bg
+  return { ...m, bg, story, storyInk: inkFor(story), cased: r.mode === "bright" && lum(story) > 0.45, bright: r.mode === "bright" }
+}
+/** A kit as a circle at (x, y): the main colour, with the second laid over it in the kit's pattern */
+export function KitFill({ id, x = 0, y = 0, r, pat, c1, c2 }: { id: string; x?: number; y?: number; r: number; pat: KitPat; c1: string; c2: string }) {
+  const w = (2 * r) / 5
+  return (
+    <g transform={`translate(${x} ${y})`}>
+      <clipPath id={id}><circle r={r} /></clipPath>
+      <circle r={r} fill={c1} />
+      {pat !== "solid" && (
+        <g clipPath={`url(#${id})`} fill={c2}>
+          {pat === "stripes" && <><rect x={-r + w} y={-r} width={w} height={2 * r} /><rect x={-r + 3 * w} y={-r} width={w} height={2 * r} /></>}
+          {pat === "hoops" && <><rect x={-r} y={-r + w} width={2 * r} height={w} /><rect x={-r} y={-r + 3 * w} width={2 * r} height={w} /></>}
+          {pat === "halves" && <rect x={0} y={-r} width={r} height={2 * r} />}
+          {pat === "sash" && <rect x={-1.5 * r} y={-r * 0.3} width={3 * r} height={r * 0.6} transform="rotate(45)" />}
+          {pat === "band" && <rect x={-r} y={-r * 0.3} width={2 * r} height={r * 0.6} />}
+          {pat === "sleeves" && <><rect x={-r} y={-r} width={r * 0.42} height={2 * r} /><rect x={r * 0.58} y={-r} width={r * 0.42} height={2 * r} /></>}
+        </g>
+      )}
+    </g>
+  )
 }
 const colourOf = (c: string, p: Pal) => (c === "ink" ? p.ink : c === "story" ? p.story : c === "muted" ? p.muted : c)
 
@@ -80,17 +102,26 @@ export const textHeight = (t: TextBlock) => Math.max(1, textLines(t).length) * t
 function TextView({ t, p }: { t: TextBlock; p: Pal }) {
   const st = TEXT_STYLES[t.style], lines = textLines(t), lh = t.size * st.lh, font = `${st.weight} ${t.size}px "${st.family}"`
   const ax = t.align === "center" ? t.x + t.w / 2 : t.align === "right" ? t.x + t.w : t.x
-  const fill = colourOf(t.color, p)
+  // a plate: a bar of colour hugging each line. Words too dark for a dark plate turn white.
+  const plate = t.plate ? (t.plate === "dark" ? p.plate : t.plate === "story" ? p.story : t.plate) : null
+  let fill = colourOf(t.color, p)
+  if (plate && lum(fill) < 0.18 && lum(plate) < 0.18) fill = "#ffffff"
   // the story colour on the bright page: the words in ink on a band of the colour, like a highlighter
-  const marker = t.color === "story" && p.cased
-  const h = textHeight(t), cx = t.x + t.w / 2, cy = t.y + h / 2
+  const marker = !plate && t.color === "story" && p.cased
+  const h = textHeight(t), cx = t.x + t.w / 2, cy = t.y + h / 2, title = t.style === "title"
+  const spans = (o: { top: number; bottom: number; padX: number }, col: string, tag: string) => lines.map((l, i) => {
+    if (!l.trim()) return null
+    const lw = textWidth(l, font, t.size * st.sp), x0 = t.align === "center" ? ax - lw / 2 : t.align === "right" ? ax - lw : ax, base = t.y + t.size * 0.88 + i * lh
+    return <rect key={tag + i} x={x0 - o.padX} y={base - o.top} width={lw + 2 * o.padX} height={o.top + o.bottom} fill={col} />
+  })
   return (
     <g data-bid={t.id} transform={t.rot ? `rotate(${t.rot} ${cx} ${cy})` : undefined}>
       {marker && lines.map((l, i) => {
         const lw = textWidth(l, font, t.size * st.sp), x0 = t.align === "center" ? ax - lw / 2 : t.align === "right" ? ax - lw : ax
         const base = t.y + t.size * 0.88 + i * lh
-        return <rect key={"m" + i} x={x0 - t.size * 0.08} y={base - t.size * (t.style === "title" ? 0.42 : 0.5)} width={lw + t.size * 0.16} height={t.size * (t.style === "title" ? 0.5 : 0.62)} fill={p.story} />
+        return <rect key={"m" + i} x={x0 - t.size * 0.08} y={base - t.size * (title ? 0.42 : 0.5)} width={lw + t.size * 0.16} height={t.size * (title ? 0.5 : 0.62)} fill={p.story} />
       })}
+      {plate && spans(title ? { top: t.size * 0.84, bottom: t.size * 0.12, padX: t.size * 0.18 } : { top: t.size * 0.95, bottom: t.size * 0.25, padX: t.size * 0.3 }, plate, "p")}
       <text x={ax} y={t.y} textAnchor={t.align === "center" ? "middle" : t.align === "right" ? "end" : "start"} fill={marker ? p.ink : fill} fontSize={t.size} fontWeight={st.weight}
         style={{ fontFamily: st.css, letterSpacing: t.size * st.sp }}>
         {lines.map((l, i) => <tspan key={i} x={ax} dy={i === 0 ? t.size * 0.88 : lh}>{l || " "}</tspan>)}
@@ -217,6 +248,7 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
     // a pale colour as a quiet outline on the bright page would vanish: it is drawn deeper there
     const col = !m.hi && p.bright && lum(teamCol(m)) > 0.45 ? shade(teamCol(m), -0.5) : teamCol(m)
     const fs = (m.hi ? 18 : 15.5) * u
+    const T = b.teams[m.team], kitted = T.pat !== "solid", kc = "k" + gid + clean(m.id)
     if (std) {
       const head = 15 * u, hy = y - 44 * u
       const fill = m.hi ? col : m.team === 0 ? "#0b0d10" : "#f2f2ee", ink = m.hi ? inkFor(col) : m.team === 0 ? col : "#0b0d10"
@@ -224,26 +256,42 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
         <g key={m.id} data-mid={m.id}>
           <ellipse cx={x} cy={y} rx={17 * u} ry={5.5 * u} fill="#000" fillOpacity={0.4} />
           <line x1={x} y1={y} x2={x} y2={hy} stroke={m.hi ? col : "rgba(255,255,255,0.75)"} strokeWidth={3 * u} strokeLinecap="round" />
-          <circle cx={x} cy={hy} r={head} fill={fill} stroke={m.hi ? "#ffffff" : m.team === 0 ? col : "#0b0d10"} strokeWidth={2.6 * u} />
-          {m.num && <text x={x} y={hy + 0.5} textAnchor="middle" dominantBaseline="central" fill={ink} fontSize={15 * u} fontWeight={700} style={{ fontFamily: COND }}>{m.num}</text>}
-          {m.name && <text x={x} y={hy - head - 10 * u} textAnchor="middle" fill="#ffffff" fontSize={(m.hi ? 20 : 16) * u} fontWeight={m.hi ? 800 : 600}
-            stroke="rgba(0,0,0,0.6)" strokeWidth={5 * u} paintOrder="stroke" strokeLinejoin="round" style={{ fontFamily: m.hi ? COND : SANS, letterSpacing: m.hi ? 1 * u : 0 }}>{m.hi ? m.name.toUpperCase() : m.name}</text>}
+          {kitted ? <KitFill id={kc} x={x} y={hy} r={head} pat={T.pat} c1={col} c2={T.c2} /> : <circle cx={x} cy={hy} r={head} fill={fill} />}
+          <circle cx={x} cy={hy} r={head} fill="none" stroke={m.hi ? "#ffffff" : m.team === 0 ? col : "#0b0d10"} strokeWidth={2.6 * u} />
+          {m.num && <text x={x} y={hy + 0.5} textAnchor="middle" dominantBaseline="central" fill={kitted ? T.num ?? inkFor(col) : ink} fontSize={15 * u} fontWeight={700}
+            stroke={kitted ? (lum(T.num ?? inkFor(col)) > 0.5 ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.75)") : undefined} strokeWidth={kitted ? 3 * u : undefined} paintOrder="stroke" style={{ fontFamily: COND }}>{m.num}</text>}
           <rect x={x - 18 * u} y={hy - head - 4 * u} width={36 * u} height={y - hy + head + 10 * u} fill="transparent" />
         </g>
       )
     }
-    const off = r + 6 * u
+    const off = r + (kitted && m.hi ? 10 : 6) * u
     const pos = m.side === "below" ? [x, y + off + fs * 0.8, "middle"] : m.side === "above" ? [x, y - off, "middle"] : m.side === "left" ? [x - off, y + fs * 0.35, "end"] : [x + off, y + fs * 0.35, "start"]
     const edge = p.bright ? (lum(col) > 0.45 ? p.ink : p.bg) : p.bg
     return (
       <g key={m.id} data-mid={m.id}>
-        {m.hi ? <circle cx={x} cy={y} r={r} fill={col} stroke={edge} strokeWidth={(p.bright && lum(col) > 0.45 ? 2 : 3) * u} />
-          : <circle cx={x} cy={y} r={r - 1.6 * u} fill={p.bg} stroke={col} strokeOpacity={m.team === 0 ? 0.6 : 1} strokeWidth={3.2 * u} />}
-        {m.num && <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fill={m.hi ? inkFor(col) : col} fillOpacity={m.hi || m.team === 1 ? 1 : 0.8} fontSize={15 * u} fontWeight={700} style={{ fontFamily: COND }}>{m.num}</text>}
+        {kitted ? <>
+          {m.hi && <circle cx={x} cy={y} r={r + 5 * u} fill="none" stroke={p.cased ? p.ink : p.story} strokeWidth={3.4 * u} />}
+          <circle cx={x} cy={y} r={r + 1.6 * u} fill={p.bright ? "#ffffff" : p.bg} />
+          <KitFill id={kc} x={x} y={y} r={r} pat={T.pat} c1={col} c2={T.c2} />
+          <circle cx={x} cy={y} r={r} fill="none" stroke={p.bright ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.3)"} strokeWidth={1.4 * u} />
+          {m.num && <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fill={T.num ?? inkFor(col)} fontSize={15 * u} fontWeight={800}
+            stroke={lum(T.num ?? inkFor(col)) > 0.5 ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.8)"} strokeWidth={3 * u} paintOrder="stroke" strokeLinejoin="round" style={{ fontFamily: COND }}>{m.num}</text>}
+        </> : <>
+          {m.hi ? <circle cx={x} cy={y} r={r} fill={col} stroke={edge} strokeWidth={(p.bright && lum(col) > 0.45 ? 2 : 3) * u} />
+            : <circle cx={x} cy={y} r={r - 1.6 * u} fill={p.bg} stroke={col} strokeOpacity={m.team === 0 ? 0.6 : 1} strokeWidth={3.2 * u} />}
+          {m.num && <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fill={m.hi ? inkFor(col) : col} fillOpacity={m.hi || m.team === 1 ? 1 : 0.8} fontSize={15 * u} fontWeight={700} style={{ fontFamily: COND }}>{m.num}</text>}
+        </>}
         {m.name && <text x={pos[0] as number} y={pos[1] as number} textAnchor={pos[2] as "middle"} fill={m.hi ? p.ink : p.muted} fontSize={fs} fontWeight={m.hi ? 700 : 600}
           stroke={halo} strokeWidth={5 * u} paintOrder="stroke" strokeLinejoin="round" style={{ fontFamily: SANS }}>{m.name}</text>}
       </g>
     )
+  }
+  // from the stand the names go on top of everything (heads behind, balls in the air), so no name is cut by a head or a pass
+  const tag = (m: Player) => {
+    if (!m.name) return null
+    const [x, y, s] = P(m.p), u = sz(s), hy = y - 44 * u
+    return <g key={"n" + m.id} data-mid={m.id}><text x={x} y={hy - 25 * u} textAnchor="middle" fill="#ffffff" fontSize={(m.hi ? 20 : 16) * u} fontWeight={m.hi ? 800 : 600}
+      stroke="rgba(0,0,0,0.6)" strokeWidth={5 * u} paintOrder="stroke" strokeLinejoin="round" style={{ fontFamily: m.hi ? COND : SANS, letterSpacing: m.hi ? 1 * u : 0 }}>{m.hi ? m.name.toUpperCase() : m.name}</text></g>
   }
   const pin = (m: { id: string; p: Pt; n: string }) => {
     const [x, y, s] = P(m.p), r = 19 * sz(s)
@@ -257,6 +305,25 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
     {std && <ellipse cx={x} cy={y + r * 0.6} rx={r} ry={r * 0.35} fill="#000" fillOpacity={0.4} />}
     <circle cx={x} cy={std ? y - r * 0.4 : y} r={r} fill="#ffffff" stroke="#111" strokeWidth={1.6 * k} /><circle cx={x} cy={std ? y - r * 0.4 : y} r={r * 0.38} fill="#111" /></g> }
 
+  // the teams, named under the pitch: each with its kit
+  const legend = (() => {
+    if (!b.legend || std) return null
+    const q = (b.dir === "right" ? box.h : box.w) / 1000, fs = 26 * q, r = 12 * q, rows: ReactNode[] = []
+    let x = b.x + r
+    ;([0, 1] as const).forEach(i => {
+      const T = b.teams[i], name = T.name.trim().toUpperCase()
+      if (!name) return
+      const c1 = T.color ?? (i === 0 ? p.story : p.ring), font = `700 ${fs}px "Barlow Condensed"`, tw = textWidth(name, font, fs * 0.08), y = b.y + box.h + 46 * q
+      rows.push(<g key={i} data-legend="1">
+        <circle cx={x} cy={y} r={r + 1.6 * q} fill={p.bright ? "#ffffff" : p.bg} />
+        <KitFill id={gid + "lg" + i} x={x} y={y} r={r} pat={T.pat} c1={c1} c2={T.c2} />
+        <circle cx={x} cy={y} r={r} fill="none" stroke={p.bright ? "rgba(20,22,26,0.35)" : "rgba(255,255,255,0.3)"} strokeWidth={1.4 * q} />
+        <text x={x + r + 12 * q} y={y} dominantBaseline="central" fill={p.ink} fontSize={fs} fontWeight={700} style={{ fontFamily: COND, letterSpacing: fs * 0.08 }}>{name}</text>
+      </g>)
+      x += r * 2 + 12 * q + tw + 44 * q
+    })
+    return rows.length ? <g>{rows}</g> : null
+  })()
   const of = <T extends Mark["kind"]>(kind: T) => b.marks.filter(m => m.kind === kind) as Extract<Mark, { kind: T }>[]
   const people = std ? of("player").slice().sort((a, c) => a.p[1] - c.p[1]) : of("player")
   const clipM = Math.max(70 * pu, 0.06 * Math.min(box.w, box.h))
@@ -278,8 +345,10 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
         {of("ball").map(ball)}
         {of("pass").filter(m => std && m.air).map(pass)}
         {of("pin").map(pin)}
+        {std && people.map(tag)}
       </g>
       {fade}
+      {legend}
     </g>
   )
 }

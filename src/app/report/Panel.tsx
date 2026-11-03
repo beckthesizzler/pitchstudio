@@ -1,7 +1,10 @@
-import type { ReactNode, RefObject } from "react"
-import { AlignCenterHorizontal, AlignCenterVertical, ArrowDownToLine, ArrowUpToLine, CopyPlus, Crop, FlipHorizontal2, ImagePlus, Trash2, Users } from "lucide-react"
-import { FORMATIONS, FORMATS, MAX_POINTS, MAX_ROWS, type Block, type Mark, type Report } from "./model"
+import { useEffect, useState, type RefObject } from "react"
+import { AlignCenterHorizontal, AlignCenterVertical, ArrowDownToLine, ArrowUpToLine, CopyPlus, Crop, FlipHorizontal2, ImagePlus, Trash2 } from "lucide-react"
+import { FORMATS, MAX_POINTS, MAX_ROWS, PAPERS, type Block, type Mark, type Report } from "./model"
+import { lum } from "../brand/brand"
 import type { Mode, PitchTool } from "./Canvas"
+import { Teams, type TeamsProps } from "./Teams"
+import { Row, Seg, Toggle } from "./ui"
 
 /* The panel on the right: everything about what is selected (or the page, when nothing is).
    Typing and sliders count as one change each for Undo: begin() when you start, end() when you finish. */
@@ -21,25 +24,20 @@ export const PITCH_HINTS: Record<PitchTool, string> = {
   ball: "Click where the ball is.",
 }
 
-function Seg<T extends string | number | boolean>({ label, value, options, set }: { label: string; value: T; options: [T, string][]; set: (v: T) => void }) {
-  return <div className="rp-seg" role="group" aria-label={label}>{options.map(([v, t]) => <button key={String(v)} className={value === v ? "on" : ""} aria-pressed={value === v} onClick={() => set(v)}>{t}</button>)}</div>
-}
-const Row = ({ label, children }: { label: string; children: ReactNode }) => <div className="rp-row"><span className="rp-lab">{label}</span>{children}</div>
-function Toggle({ label, on, set }: { label: string; on: boolean; set: (v: boolean) => void }) {
-  return <button className={`rp-toggle${on ? " on" : ""}`} role="switch" aria-checked={on} onClick={() => set(!on)}><span>{label}</span><i /></button>
-}
-
 export type PanelProps = {
   report: Report; block: Block | null; mark: Mark | null; mode: Mode; tool: PitchTool
   setReport: (patch: Partial<Report>) => void; setBlock: (patch: Partial<Block>, live?: boolean) => void; setMark: (patch: Partial<Mark>, live?: boolean) => void
   begin: () => void; end: () => void; textRef: RefObject<HTMLTextAreaElement | null>; nameRef: RefObject<HTMLInputElement | null>
   act: (what: "dup" | "del" | "front" | "back" | "centre" | "middle" | "pitch" | "crop" | "done" | "photo" | "fitphoto" | "delmark" | "view" | "look" | "dir", arg?: string) => void
-  placeTeam: (formation: string, team: 0 | 1) => void; reformat: (f: Report["format"]) => void; formation: string; setFormation: (f: string) => void
+  team: Pick<TeamsProps, "setTeam" | "place" | "moment" | "count" | "namesText" | "roster" | "lineup">; reformat: (f: Report["format"]) => void
   storyAuto: string
 }
 
 export function Panel(P: PanelProps) {
   const { report, block: b, mark: m, mode, begin, end } = P
+  // inside a pitch the panel has two tabs: the teams, and the selected mark. Choosing a mark opens its tab.
+  const [tab, setTab] = useState<"teams" | "marks">("teams")
+  useEffect(() => { setTab(m ? "marks" : "teams") }, [m?.id])
   const slider = (label: string, value: number, min: number, max: number, step: number, put: (v: number) => void, fmt: (v: number) => string) => (
     <Row label={label}>
       <div className="rp-slide">
@@ -71,48 +69,44 @@ export function Panel(P: PanelProps) {
     </div>
   )
 
-  /* ── inside a pitch ── */
+  /* ── inside a pitch: Teams (formations, kits, names) and Marks (the selected player, pass, pin or zone) ── */
   if (mode.kind === "pitch" && b?.kind === "pitch") {
     return (
       <div className="rp-insp" aria-label="Pitch">
         <div className="rp-head"><p className="rp-cap">EDITING THE PITCH</p><button className="rp-btn pri sm" onClick={() => P.act("done")}>Done</button></div>
-        <p className="rp-note">{PITCH_HINTS[P.tool]}</p>
-        {!m && <>
-          <Row label="Add a whole team">
-            <div className="rp-line">
-              <select className="rp-inp" aria-label="Formation" value={P.formation} onChange={e => P.setFormation(e.target.value)}>{Object.keys(FORMATIONS).map(f => <option key={f}>{f}</option>)}</select>
-              <button className="rp-btn sm" onClick={() => P.placeTeam(P.formation, 0)}><Users size={14} /> Yours</button>
-              <button className="rp-btn sm" onClick={() => P.placeTeam(P.formation, 1)}>Opponents</button>
-            </div>
-          </Row>
-          <p className="rp-note">Placing a team replaces that team's players. Undo brings them back.</p>
-        </>}
-        {m && <>
-          <p className="rp-cap" style={{ marginTop: 18 }}>{MARK_NAMES[m.kind].toUpperCase()}</p>
-          {m.kind === "player" && <>
-            <div className="rp-two">
-              {input("Number", m.num, v => P.setMark({ num: v.slice(0, 3) }, true), { max: 3, ph: "8" })}
-              {input("Name", m.name, v => P.setMark({ name: v }, true), { max: 32, ph: "Pedri", ref: P.nameRef, id: "rp-name" })}
-            </div>
-            <Row label="Team"><Seg label="Team" value={m.team} options={[[0, "Yours"], [1, "Opponents"]]} set={v => P.setMark({ team: v, hi: v === 0 ? m.hi : false })} /></Row>
-            <Toggle label="In the story (your colour)" on={m.hi} set={v => P.setMark({ hi: v })} />
-            <Row label="Name sits"><Seg label="Name sits" value={m.side} options={[["below", "Below"], ["above", "Above"], ["left", "Left"], ["right", "Right"]]} set={v => P.setMark({ side: v })} /></Row>
+        <div className="tm-tabs" role="tablist" aria-label="Pitch panel">
+          <button role="tab" aria-selected={tab === "teams"} className={tab === "teams" ? "on" : ""} onClick={() => setTab("teams")}>Teams</button>
+          <button role="tab" aria-selected={tab === "marks"} className={tab === "marks" ? "on" : ""} onClick={() => setTab("marks")}>{m ? MARK_NAMES[m.kind] : "Marks"}</button>
+        </div>
+        {tab === "teams" ? <Teams b={b} storyAuto={P.storyAuto} begin={begin} end={end} setBlock={P.setBlock} {...P.team} /> : <>
+          <p className="rp-note">{PITCH_HINTS[P.tool]}</p>
+          {!m && <p className="rp-note">Click a player, pass, pin or zone to change it. The tools on the left add more.</p>}
+          {m && <>
+            {m.kind === "player" && <>
+              <div className="rp-two">
+                {input("Number", m.num, v => P.setMark({ num: v.slice(0, 3) }, true), { max: 3, ph: "8" })}
+                {input("Name", m.name, v => P.setMark({ name: v }, true), { max: 32, ph: "Pedri", ref: P.nameRef, id: "rp-name" })}
+              </div>
+              <Row label="Team"><Seg label="Team" value={m.team} options={[[0, "Yours"], [1, "Opponents"]]} set={v => P.setMark({ team: v, hi: v === 0 ? m.hi : false })} /></Row>
+              <Toggle label="In the story (your colour)" on={m.hi} set={v => P.setMark({ hi: v })} />
+              <Row label="Name sits"><Seg label="Name sits" value={m.side} options={[["below", "Below"], ["above", "Above"], ["left", "Left"], ["right", "Right"]]} set={v => P.setMark({ side: v })} /></Row>
+            </>}
+            {m.kind === "pass" && <>
+              <Row label="Kind"><Seg label="Kind" value={m.run} options={[[false, "Pass"], [true, "Run"]]} set={v => P.setMark({ run: v })} /></Row>
+              <Toggle label="In the story (your colour)" on={m.hi} set={v => P.setMark({ hi: v })} />
+              <Row label="Weight"><Seg label="Weight" value={m.weight} options={[[1, "Light"], [2, "Medium"], [3, "Heavy"]]} set={v => P.setMark({ weight: v })} /></Row>
+              <Row label="Arrow"><Seg label="Arrow" value={m.head} options={[["end", "End"], ["both", "Both"], ["none", "None"]]} set={v => P.setMark({ head: v })} /></Row>
+              <Toggle label="In the air (stadium view)" on={m.air} set={v => P.setMark({ air: v })} />
+              {m.c ? <button className="rp-btn sm" onClick={() => P.setMark({ c: null })}>Straighten</button> : <p className="rp-note">Drag the diamond in the middle to curve it.</p>}
+            </>}
+            {m.kind === "pin" && input("Number", m.n, v => P.setMark({ n: v.slice(0, 2) }, true), { max: 2 })}
+            {m.kind === "zone" && <>
+              <Row label="Shape"><Seg label="Shape" value={m.oval} options={[[false, "Box"], [true, "Oval"]]} set={v => P.setMark({ oval: v })} /></Row>
+              <Toggle label="In the story (your colour)" on={m.hi} set={v => P.setMark({ hi: v })} />
+              {input("Label", m.label, v => P.setMark({ label: v }, true), { max: 40, ph: "e.g. the pocket", ref: P.nameRef, id: "rp-name" })}
+            </>}
+            <div className="rp-acts"><span className="rp-sp" /><button className="rp-icon bad" onClick={() => P.act("delmark")} aria-label="Delete" title="Delete (Del)"><Trash2 size={16} /></button></div>
           </>}
-          {m.kind === "pass" && <>
-            <Row label="Kind"><Seg label="Kind" value={m.run} options={[[false, "Pass"], [true, "Run"]]} set={v => P.setMark({ run: v })} /></Row>
-            <Toggle label="In the story (your colour)" on={m.hi} set={v => P.setMark({ hi: v })} />
-            <Row label="Weight"><Seg label="Weight" value={m.weight} options={[[1, "Light"], [2, "Medium"], [3, "Heavy"]]} set={v => P.setMark({ weight: v })} /></Row>
-            <Row label="Arrow"><Seg label="Arrow" value={m.head} options={[["end", "End"], ["both", "Both"], ["none", "None"]]} set={v => P.setMark({ head: v })} /></Row>
-            <Toggle label="In the air (stadium view)" on={m.air} set={v => P.setMark({ air: v })} />
-            {m.c ? <button className="rp-btn sm" onClick={() => P.setMark({ c: null })}>Straighten</button> : <p className="rp-note">Drag the diamond in the middle to curve it.</p>}
-          </>}
-          {m.kind === "pin" && input("Number", m.n, v => P.setMark({ n: v.slice(0, 2) }, true), { max: 2 })}
-          {m.kind === "zone" && <>
-            <Row label="Shape"><Seg label="Shape" value={m.oval} options={[[false, "Box"], [true, "Oval"]]} set={v => P.setMark({ oval: v })} /></Row>
-            <Toggle label="In the story (your colour)" on={m.hi} set={v => P.setMark({ hi: v })} />
-            {input("Label", m.label, v => P.setMark({ label: v }, true), { max: 40, ph: "e.g. the pocket", ref: P.nameRef, id: "rp-name" })}
-          </>}
-          <div className="rp-acts"><span className="rp-sp" /><button className="rp-icon bad" onClick={() => P.act("delmark")} aria-label="Delete" title="Delete (Del)"><Trash2 size={16} /></button></div>
         </>}
       </div>
     )
@@ -124,7 +118,16 @@ export function Panel(P: PanelProps) {
       <div className="rp-insp" aria-label="Page">
         <p className="rp-cap">PAGE</p>
         <Row label="Size"><Seg label="Size" value={report.format} options={FORMATS.map(f => [f.id, f.name] as [Report["format"], string])} set={v => P.reformat(v)} /></Row>
-        <Row label="Mode"><Seg label="Mode" value={report.mode} options={[["night", "Night"], ["bright", "Bright"]]} set={v => P.setReport({ mode: v })} /></Row>
+        <Row label="Mode"><Seg label="Mode" value={report.mode} options={[["night", "Night"], ["bright", "Bright"]]} set={v => P.setReport({ mode: v, paper: null })} /></Row>
+        <Row label="Page colour"><div className="rp-cols">
+          {PAPERS[report.mode].map(([c, name], i) => {
+            const on = (report.paper ?? PAPERS[report.mode][0][0]) === c
+            return <button key={c} className={`rp-sw rp-paper${on ? " on" : ""}`} aria-label={`Page colour: ${name}`} title={name} aria-pressed={on} style={{ background: c }} onClick={() => P.setReport({ paper: i === 0 ? null : c })} />
+          })}
+          <input type="color" className="rp-sw rp-any" aria-label="Any page colour" value={report.paper ?? PAPERS[report.mode][0][0]} onFocus={begin} onBlur={end}
+            onChange={e => { const c = e.target.value.toLowerCase(), light = lum(c) > 0.6, dark = lum(c) < 0.2; if (light || dark) P.setReport({ paper: c, mode: light ? "bright" : "night" }) }} />
+        </div></Row>
+        <p className="rp-note">Warm paper, not pure white: your colour looks richer on it.</p>
         <Row label="Story colour">{swatches(report.story, v => P.setReport({ story: v }), P.storyAuto, "Your colour (from your Creator Card)")}</Row>
         <Toggle label="Glow of your colour" on={report.glow} set={v => P.setReport({ glow: v })} />
         <Row label="Your seal"><Seg label="Seal corner" value={report.seal} options={[["tl", "↖"], ["tr", "↗"], ["bl", "↙"], ["br", "↘"]]} set={v => P.setReport({ seal: v })} /></Row>
@@ -149,16 +152,29 @@ export function Panel(P: PanelProps) {
           {TEXT_COLOURS.map(([c, t]) => <button key={c} className={`rp-chip${b.color === c ? " on" : ""}`} aria-pressed={b.color === c} onClick={() => P.setBlock({ color: c })}>{t}</button>)}
           <input type="color" className="rp-sw rp-any" aria-label="Any colour" value={b.color.startsWith("#") ? b.color : "#ffffff"} onFocus={begin} onBlur={end} onChange={e => P.setBlock({ color: e.target.value.toLowerCase() }, true)} />
         </div></Row>
+        <Row label="Look">
+          <div className="rp-cols">
+            {([["Marker", null, "story"], ["Lime block", "story", "#14161a"], ["Ink", null, "ink"], ["Lime on dark", "dark", "story"], ["White on dark", "dark", "#ffffff"]] as [string, string | null, string][]).map(([t, pl, col]) => {
+              const on = b.plate === pl && b.color === col
+              return <button key={t} className={`rp-chip${on ? " on" : ""}`} aria-pressed={on} onClick={() => P.setBlock({ plate: pl, color: col })}>{t}</button>
+            })}
+          </div>
+        </Row>
+        <Row label="Bar behind the words"><div className="rp-cols">
+          {([["None", null], ["Dark", "dark"], ["Story", "story"]] as [string, string | null][]).map(([t, v]) => <button key={t} className={`rp-chip${b.plate === v ? " on" : ""}`} aria-pressed={b.plate === v} onClick={() => P.setBlock({ plate: v })}>{t}</button>)}
+          <input type="color" className="rp-sw rp-any" aria-label="Any bar colour" value={b.plate && b.plate.startsWith("#") ? b.plate : "#14161a"} onFocus={begin} onBlur={end} onChange={e => P.setBlock({ plate: e.target.value.toLowerCase() }, true)} />
+        </div></Row>
         {b.rot !== 0 && <button className="rp-btn sm" onClick={() => P.setBlock({ rot: 0 })}>Straighten ({Math.round(b.rot)}°)</button>}
       </>}
       {b.kind === "pitch" && <>
         <button className="rp-btn pri wide" onClick={() => P.act("pitch")}>Edit players and passes</button>
         <p className="rp-note">Or double-click the pitch.</p>
+        <p className="rp-cap" style={{ marginTop: 16 }}>TEAMS</p>
+        <Teams b={b} storyAuto={P.storyAuto} begin={begin} end={end} setBlock={P.setBlock} {...P.team} />
+        <p className="rp-cap" style={{ marginTop: 20 }}>PITCH</p>
         <Row label="Pitch"><Seg label="Pitch" value={b.view} options={[["full", "Full"], ["half", "Half"]]} set={v => P.act("view", v)} /></Row>
         <Row label="View"><Seg label="View" value={b.look} options={[["flat", "Flat"], ["stadium", "Stadium"]]} set={v => P.act("look", v)} /></Row>
         {b.look === "flat" && <Row label="Attacking"><Seg label="Attacking" value={b.dir} options={[["up", "Up"], ["right", "Right"]]} set={v => P.act("dir", v)} /></Row>}
-        <Row label="Your team's colour">{swatches(b.teams[0].color, v => P.setBlock({ teams: [{ ...b.teams[0], color: v }, b.teams[1]] }), P.storyAuto, "Story colour")}</Row>
-        <Row label="Opponents' colour">{swatches(b.teams[1].color, v => P.setBlock({ teams: [b.teams[0], { ...b.teams[1], color: v }] }), "#8c929c", "Quiet grey")}</Row>
         {slider("Player size", b.ms, 0.5, 2.5, 0.05, v => P.setBlock({ ms: v }, true), v => `${Math.round(v * 100)}%`)}
         {b.look === "flat" && <Toggle label="Your crest, faded behind" on={b.crest} set={v => P.setBlock({ crest: v })} />}
       </>}

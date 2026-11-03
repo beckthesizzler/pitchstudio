@@ -10,7 +10,8 @@ import { Canvas, clampCrop, moveBlock, type Mode, type PitchTool, type Sel } fro
 import { Panel, PITCH_HINTS } from "../report/Panel"
 import { ReportView, blockBox } from "../report/Draw"
 import { TEMPLATES, makeTemplate, type TemplateId } from "../report/templates"
-import { MAX_BLOCKS, MAX_MARKS, SIZES, formationMarks, mediaOf, newId, pitchBox, projector, readReport, type Block, type Mark, type PhotoBlock, type PitchBlock, type Pt, type Report } from "../report/model"
+import { DEFAULT_TEAMS, MAX_BLOCKS, MAX_MARKS, SIZES, mediaOf, newId, pitchBox, projector, readReport, type Block, type Mark, type PhotoBlock, type PitchBlock, type Pt, type Report, type Shape, type Team } from "../report/model"
+import { applyLineup, formationOf, lineupOf, lineupText, placeFormation, type Squad } from "../report/team"
 import { downloadMedia, mediaLinks, preparePhoto, removeFolder, svgToCanvas, tidyFolder, uploadMedia } from "../report/media"
 import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT, SCRIM } from "../theme"
 
@@ -32,7 +33,7 @@ const TOOLS: { id: PitchTool; name: string; key: string; icon: ReactNode }[] = [
   { id: "zone", name: "Zone", key: "Z", icon: <Square size={18} /> }, { id: "ball", name: "Ball", key: "B", icon: <CircleIcon size={18} /> },
 ]
 const TOOL_KEYS: Record<string, PitchTool> = { v: "select", p: "player", o: "opp", a: "pass", r: "run", n: "pin", z: "zone", b: "ball" }
-const EMPTY: Report = { v: 2, format: "1:1", mode: "night", story: null, glow: false, seal: "br", blocks: [] }
+const EMPTY: Report = { v: 2, format: "1:1", mode: "night", paper: null, story: null, glow: false, seal: "br", blocks: [] }
 
 /** Every block made bigger or smaller by s and moved by (ox, oy): used when the page changes size */
 function scaleBlock(b: Block, s: number, ox: number, oy: number): Block {
@@ -72,7 +73,6 @@ export default function ReportPage() {
   const [confirmDel, setConfirmDel] = useState<string | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   const [busy, setBusy] = useState("")
-  const [formation, setFormation] = useState("4-3-3")
   const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
   const [handle, setHandle] = useState("")
   const [logo, setLogo] = useState<string | null>(null)
@@ -245,12 +245,12 @@ export default function ReportPage() {
   const add = (kind: AddKind) => {
     const k = W / 1600
     if (kind === "photo") { fileFor.current = null; fileRef.current?.click(); return }
-    if (kind === "title") return addBlock({ id: newId(), kind: "text", x: W * 0.1, y: H * 0.42, w: W * 0.8, rot: 0, text: "YOUR HEADLINE", style: "title", size: 110 * k, align: "center", color: "ink" }, true)
-    if (kind === "text") return addBlock({ id: newId(), kind: "text", x: W * 0.25, y: H * 0.46, w: W * 0.5, rot: 0, text: "Write what happened.", style: "text", size: 24 * k, align: "left", color: "ink" }, true)
+    if (kind === "title") return addBlock({ id: newId(), kind: "text", x: W * 0.1, y: H * 0.42, w: W * 0.8, rot: 0, text: "YOUR HEADLINE", style: "title", size: 110 * k, align: "center", color: report.mode === "bright" ? "story" : "ink", plate: null }, true)
+    if (kind === "text") return addBlock({ id: newId(), kind: "text", x: W * 0.25, y: H * 0.46, w: W * 0.5, rot: 0, text: "Write what happened.", style: "text", size: 24 * k, align: "left", color: "ink", plate: null }, true)
     if (kind === "stats") return addBlock({ id: newId(), kind: "stats", x: W * 0.15, y: H * 0.42, w: W * 0.7, s: k, type: "team", player: "", num: "", rows: [{ value: "", label: "Possession" }, { value: "", label: "xG" }, { value: "", label: "Shots" }] })
     if (kind === "story") return addBlock({ id: newId(), kind: "story", x: W * 0.3, y: H * 0.36, w: 420 * k, s: k, title: "The story", points: ["Your first point.", "Your second point."] }, true)
     const w = Math.min(W * 0.62, H * 0.62 * (68 / 52.5))
-    addBlock({ id: newId(), kind: "pitch", x: (W - w) / 2, y: (H - w * (52.5 / 68)) / 2, w, view: "half", dir: "up", look: "flat", teams: [{ name: "Your team", color: null }, { name: "Opponents", color: null }], marks: [], crest: true, ms: 1 })
+    addBlock({ id: newId(), kind: "pitch", x: (W - w) / 2, y: (H - w * (52.5 / 68)) / 2, w, view: "half", dir: "up", look: "flat", teams: DEFAULT_TEAMS(), marks: [], crest: true, ms: 1, legend: false })
   }
 
   /* ── photos: picked, pasted or dropped; into an empty slot, or as a new photo ── */
@@ -277,15 +277,9 @@ export default function ReportPage() {
       setUploads(x => ({ ...x, [path]: "up" }))
       const slot = into ? (repRef.current.blocks.find(b => b.id === into && b.kind === "photo") as PhotoBlock | undefined) : undefined
       if (slot) {
-        // a cut-out keeps all of itself and stands on the bottom of the slot; a photo fills the slot, centred
-        let next: PhotoBlock
-        if (prep.ext === "png") {
-          const f = Math.min(slot.w / prep.w, slot.h / prep.h), w = prep.w * f, h = prep.h * f
-          next = { ...slot, src: path, nw: prep.w, nh: prep.h, x: slot.x + (slot.w - w) / 2, y: slot.y + slot.h - h, w, h, ix: 0, iy: 0, iw: w }
-        } else {
-          const iw = Math.max(slot.w, slot.h * (prep.w / prep.h)), ih = iw * (prep.h / prep.w)
-          next = { ...slot, src: path, nw: prep.w, nh: prep.h, iw, ix: (slot.w - iw) / 2, iy: (slot.h - ih) / 2 }
-        }
+        // the slot is only a place to start: the picture keeps all of itself, in its own proportions, as large as fits there. A cut-out stands on the bottom of the slot, a photo sits in the middle. Nothing is cropped; size it however you like after.
+        const f = Math.min(slot.w / prep.w, slot.h / prep.h), w = prep.w * f, h = prep.h * f
+        const next: PhotoBlock = { ...slot, src: path, nw: prep.w, nh: prep.h, x: slot.x + (slot.w - w) / 2, y: prep.ext === "png" ? slot.y + slot.h - h : slot.y + (slot.h - h) / 2, w, h, ix: 0, iy: 0, iw: w }
         change(r => ({ ...r, blocks: r.blocks.map(b => (b.id === slot.id ? next : b)) }))
         setSel({ bid: slot.id, mid: null })
         into = null // a second picture becomes its own photo
@@ -335,11 +329,43 @@ export default function ReportPage() {
       change(r => ({ ...r, blocks: r.blocks.map(x => (x.id === b.id ? n : x)) }))
     }
   }
-  const placeTeam = (f: string, team: 0 | 1) => {
-    if (!pitch) return
-    const xi = formationMarks(f, team, pitch.view)
-    if (pitch.marks.filter(m => !(m.kind === "player" && m.team === team)).length + xi.length > MAX_MARKS) { say("This pitch is full."); return }
-    change(r => ({ ...r, blocks: r.blocks.map(b => (b.id === pitch.id && b.kind === "pitch" ? { ...b, marks: [...b.marks.filter(m => !(m.kind === "player" && m.team === team)), ...xi] } : b)) }))
+  /* ── teams on the pitch that is selected (or being edited): formation, kit, names ── */
+  const tp = pitch ?? (block?.kind === "pitch" ? block : null)
+  const patchPitch = (fn: (b: PitchBlock) => PitchBlock, live = false) => {
+    if (!tp) return
+    const run = (r: Report): Report => ({ ...r, blocks: r.blocks.map(x => (x.id === tp.id && x.kind === "pitch" ? fn(x) : x)) })
+    if (live) apply(run); else change(run)
+  }
+  const setTeam = (i: 0 | 1, patch: Partial<Team>, live = false) => patchPitch(x => ({ ...x, teams: (i === 0 ? [{ ...x.teams[0], ...patch }, x.teams[1]] : [x.teams[0], { ...x.teams[1], ...patch }]) as [Team, Team] }), live)
+  const placeTeam = (i: 0 | 1, formation: string, shape?: Shape) => {
+    if (!tp) return
+    const sh = shape ?? tp.teams[i].shape
+    const T = tp.teams[i], prev = T.formation && formationOf(T.formation) ? { name: T.formation, shape: T.shape } : null
+    const marks = placeFormation(tp.marks, i, formation, sh, tp.view, prev)
+    if (marks.length > MAX_MARKS) { say("This pitch is full."); return }
+    patchPitch(x => ({ ...x, marks, teams: (i === 0 ? [{ ...x.teams[0], formation, shape: sh }, x.teams[1]] : [x.teams[0], { ...x.teams[1], formation, shape: sh }]) as [Team, Team] }))
+  }
+  /** Who has the ball: both teams that have a formation move into their shape for that moment */
+  const setMoment = (m: "base" | "me" | "them") => {
+    if (!tp) return
+    const shapes: [Shape, Shape] = m === "me" ? ["in", "out"] : m === "them" ? ["out", "in"] : ["base", "base"]
+    let marks = tp.marks
+    for (const i of [0, 1] as const) {
+      const T = tp.teams[i]
+      if (T.formation && formationOf(T.formation)) marks = placeFormation(marks, i, T.formation, shapes[i], tp.view, { name: T.formation, shape: T.shape })
+    }
+    patchPitch(x => ({ ...x, marks, teams: x.teams.map((t, i) => (t.formation && formationOf(t.formation) ? { ...t, shape: shapes[i] } : t)) as [Team, Team] }))
+  }
+  const countTeam = (i: 0 | 1) => (tp ? tp.marks.filter(m => m.kind === "player" && m.team === i).length : 0)
+  const teamNames = (i: 0 | 1) => (tp ? lineupText(tp.marks, i, tp.teams[i].formation, tp.teams[i].shape, tp.view) : "")
+  const teamRoster = (i: 0 | 1) => (tp ? lineupOf(tp.marks, i, tp.teams[i].formation, tp.teams[i].shape, tp.view).map(({ m, pos, num }) => ({ name: m ? m.name : pos, num: m ? m.num : num })) : [])
+  const teamLineup = (i: 0 | 1, entries: { name: string; num?: string }[], squad?: Squad) => {
+    if (!tp || !entries.length) return
+    const T = tp.teams[i]
+    patchPitch(x => ({
+      ...x, marks: applyLineup(x.marks, i, entries, T.formation, T.shape, x.view),
+      teams: (squad ? x.teams.map((t, j) => (j === i ? { ...t, name: squad.teamName || t.name, color: squad.kit.c1, pat: squad.kit.pat, c2: squad.kit.c2, num: squad.kit.num } : t)) : x.teams) as [Team, Team],
+    }))
   }
   const reformat = (f: Report["format"]) => {
     if (f === report.format) return
@@ -411,8 +437,8 @@ export default function ReportPage() {
         // pasted words become a text block: a short line a headline, anything longer body text
         e.preventDefault()
         const k = W / 1600, short = text.length <= 42 && !text.includes(String.fromCharCode(10))
-        addBlock(short ? { id: newId(), kind: "text", x: W * 0.1, y: H * 0.42, w: W * 0.8, rot: 0, text: text.toUpperCase(), style: "title", size: 104 * k, align: "center", color: "ink" }
-          : { id: newId(), kind: "text", x: W * 0.25, y: H * 0.4, w: W * 0.5, rot: 0, text: text.slice(0, 600), style: "text", size: 24 * k, align: "left", color: "ink" })
+        addBlock(short ? { id: newId(), kind: "text", x: W * 0.1, y: H * 0.42, w: W * 0.8, rot: 0, text: text.toUpperCase(), style: "title", size: 104 * k, align: "center", color: "ink", plate: null }
+          : { id: newId(), kind: "text", x: W * 0.25, y: H * 0.4, w: W * 0.5, rot: 0, text: text.slice(0, 600), style: "text", size: 24 * k, align: "left", color: "ink", plate: null })
       }
     }
     window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("paste", paste)
@@ -528,6 +554,7 @@ export default function ReportPage() {
         .rp-num { width: 24px; height: 24px; flex: none; border-radius: 50%; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 800 12px 'Inter', sans-serif; display: grid; place-items: center; margin-top: 6px; }
         .rp-cols { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
         .rp-sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(128,128,128,.4); cursor: pointer; padding: 0; font: 800 11px 'Inter', sans-serif; color: #111; }
+        .rp-sw.rp-paper { border-radius: 7px; border: 1px solid rgba(128,128,128,.45); }
         .rp-sw.on { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
         .rp-any { background: none; overflow: hidden; }
         .rp-chip { border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; font: 600 12px 'Inter', sans-serif; padding: 6px 10px; border-radius: 999px; cursor: pointer; }
@@ -544,6 +571,31 @@ export default function ReportPage() {
         .rp-acts { display: flex; gap: 6px; margin-top: 18px; padding-top: 14px; border-top: 1px solid ${DS_BORDER}; }
         .rp-keys { display: grid; grid-template-columns: 1fr; gap: 6px; font-size: 12px; color: ${TEXT_MUTED}; }
         .rp-keys div { display: flex; align-items: center; gap: 8px; } .rp-keys kbd { font: 600 10.5px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 2px 6px; white-space: nowrap; min-width: 86px; text-align: center; }
+        .tm-tabs { display: flex; gap: 4px; background: ${SURFACE_2}; border-radius: 10px; padding: 3px; margin-bottom: 14px; }
+        .tm-tabs button { flex: 1; border: none; background: none; color: ${TEXT_MUTED}; font: 600 12.5px 'Inter', sans-serif; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+        .tm-tabs button.on { background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+        .tm-wrap { margin-bottom: 6px; }
+        .tm-lab { font-size: 12px; color: ${TEXT_MUTED}; margin: 14px 0 7px; }
+        .tm { border: 1px solid ${DS_BORDER}; border-radius: 14px; margin-bottom: 10px; background: ${SURFACE_BASE}; overflow: hidden; }
+        .tm.open { border-color: ${DS_BORDER_STRONG}; }
+        .tm-head { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: none; padding: 10px 12px; color: ${TEXT_PRIMARY}; cursor: pointer; text-align: left; font-family: 'Inter', sans-serif; }
+        .tm-name { flex: 1; min-width: 0; display: flex; flex-direction: column; } .tm-name b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tm-name small { font-size: 11.5px; color: ${TEXT_MUTED}; }
+        .tm-chev { color: ${TEXT_MUTED}; transition: transform .15s; flex: none; } .tm.open .tm-chev { transform: rotate(180deg); }
+        .tm-body { padding: 2px 12px 12px; }
+        .tm-forms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+        .tm-form { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 4px 6px; border-radius: 10px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; color: ${TEXT_MUTED}; font: 600 11.5px 'Inter', sans-serif; cursor: pointer; }
+        .tm-form:hover { color: ${TEXT_PRIMARY}; } .tm-form.on { border-color: ${ACCENT_SOLID}; color: ${TEXT_PRIMARY}; box-shadow: 0 0 0 2px ${ACCENT_SOFT}; }
+        .tm-kits { display: flex; flex-wrap: wrap; gap: 3px; }
+        .tm-kit { padding: 2px; border-radius: 50%; border: 2px solid transparent; background: none; cursor: pointer; } .tm-kit.on { border-color: ${ACCENT_SOLID}; } .tm-kit:hover { transform: scale(1.1); }
+        .tm-links { display: flex; align-items: center; gap: 7px; margin-top: 8px; color: ${TEXT_MUTED}; font-size: 12px; }
+        .tm-link { background: none; border: none; padding: 0; margin-top: 8px; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; } .tm-link:hover { color: ${TEXT_PRIMARY}; }
+        .tm-links .tm-link { margin-top: 0; }
+        .tm-own { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+        .tm-cols { display: flex; gap: 14px; } .tm-cols label { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; color: ${TEXT_MUTED}; }
+        .tm-cols input { width: 44px; height: 30px; padding: 0; border: 1px solid ${DS_BORDER}; border-radius: 8px; background: none; cursor: pointer; }
+        .tm-acts { display: flex; margin-top: 12px; }
+        .tm-names { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; align-items: flex-start; } .tm-names .rp-inp { font-size: 13px; }
+        .tm-squad { display: flex; gap: 6px; align-items: center; width: 100%; } .tm-squad select { flex: 1; }
         .rp-start { overflow-y: auto; padding: 40px 32px; }
         .rp-start h1 { font-size: 30px; letter-spacing: -.03em; margin: 0 0 6px; } .rp-start > p { color: ${TEXT_MUTED}; margin: 0 0 26px; }
         .rp-tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px; max-width: 1180px; }
@@ -663,7 +715,8 @@ export default function ReportPage() {
             </div>
           </div>
           <Panel report={report} block={pitch ?? block} mark={mark} mode={mode} tool={tool} setReport={patch => change(r => ({ ...r, ...patch }))} setBlock={setBlock} setMark={setMark}
-            begin={begin} end={end} textRef={textRef} nameRef={nameRef} act={act} placeTeam={placeTeam} reformat={reformat} formation={formation} setFormation={setFormation}
+            begin={begin} end={end} textRef={textRef} nameRef={nameRef} act={act} reformat={reformat}
+            team={{ setTeam, place: (i, f) => placeTeam(i, f), moment: setMoment, count: countTeam, namesText: teamNames, roster: teamRoster, lineup: teamLineup }}
             storyAuto={cardColours(brand).disc} />
         </div>
       )}

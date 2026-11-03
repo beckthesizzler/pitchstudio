@@ -20,13 +20,19 @@ export type Zone = { id: string; kind: "zone"; p: Pt; r: Pt; oval: boolean; hi: 
 export type Ball = { id: string; kind: "ball"; p: Pt }
 export type Mark = Player | Pass | Pin | Zone | Ball
 
-/** A team's colour of null means: your story colour for your team, a quiet grey for the opponents */
-export type Team = { name: string; color: string | null }
+/** How a kit's second colour is laid over its main colour */
+export const KIT_PATTERNS = ["solid", "stripes", "hoops", "halves", "sash", "band", "sleeves"] as const
+export type KitPat = (typeof KIT_PATTERNS)[number]
+export type Shape = "base" | "in" | "out"
+/** A team: its name, its kit and its formation. A colour of null means your story colour for your team, a quiet grey for the opponents.
+ *  formation "" means the players were placed by hand. shape: the lineup as written, in possession (pushed up) or out of it (a compact block). */
+export type Team = { name: string; color: string | null; pat: KitPat; c2: string; num: string | null; formation: string; shape: Shape }
 
 type Box = { id: string; x: number; y: number }
 export type TextStyle = "title" | "text" | "label"
-export type TextBlock = Box & { kind: "text"; w: number; rot: number; text: string; style: TextStyle; size: number; align: "left" | "center" | "right"; color: string }
-export type PitchBlock = Box & { kind: "pitch"; w: number; view: "full" | "half"; dir: "up" | "right"; look: "flat" | "stadium"; teams: [Team, Team]; marks: Mark[]; crest: boolean; ms: number }
+/** plate: a bar of colour behind each line of words ("dark", "story" or any colour; null for none) */
+export type TextBlock = Box & { kind: "text"; w: number; rot: number; text: string; style: TextStyle; size: number; align: "left" | "center" | "right"; color: string; plate: string | null }
+export type PitchBlock = Box & { kind: "pitch"; w: number; view: "full" | "half"; dir: "up" | "right"; look: "flat" | "stadium"; teams: [Team, Team]; marks: Mark[]; crest: boolean; ms: number; legend: boolean }
 export type StatsBlock = Box & { kind: "stats"; w: number; s: number; type: "team" | "player"; player: string; num: string; rows: { value: string; label: string }[] }
 export type StoryBlock = Box & { kind: "story"; w: number; s: number; title: string; points: string[] }
 /** A photo: the frame (x, y, w, h) shows part of the picture; the picture sits at (ix, iy) inside the frame, iw wide. */
@@ -35,7 +41,8 @@ export type PhotoBlock = Box & { kind: "photo"; w: number; h: number; rot: numbe
 export type Block = TextBlock | PitchBlock | StatsBlock | StoryBlock | PhotoBlock
 
 /** story: the colour the story is told in (null: the creator's own colour). glow: a soft light of that colour behind everything. */
-export type Report = { v: 2; format: RFormat; mode: RMode; story: string | null; glow: boolean; seal: Corner; blocks: Block[] }
+/** paper: the page colour (null: the mode's own). */
+export type Report = { v: 2; format: RFormat; mode: RMode; paper: string | null; story: string | null; glow: boolean; seal: Corner; blocks: Block[] }
 
 export const newId = () => {
   try { return crypto.randomUUID() } catch { return "id" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) }
@@ -44,7 +51,12 @@ export const newId = () => {
 /* ── colours of the two modes ── */
 export const MODES = {
   night: { bg: "#0f1114", ink: "#f2f2ee", muted: "#9298a3", lines: "rgba(255,255,255,0.26)", ctx: "rgba(255,255,255,0.34)", ring: "#8c929c", card: "#171a1f", plate: "#262b33" },
-  bright: { bg: "#f6f5f1", ink: "#14161a", muted: "#6b6f78", lines: "#c3c6cc", ctx: "#b7bbc2", ring: "#9aa0a8", card: "#ffffff", plate: "#14161a" },
+  bright: { bg: "#f4f1ea", ink: "#1a1916", muted: "#6e6a62", lines: "#c9c3b6", ctx: "#bdb7a9", ring: "#a29c90", card: "#fbf9f5", plate: "#1a1916" },
+}
+/** Page colours that suit each mode. Bright ones are warm papers (pure white glares and makes lime look thin); night ones are deep, never pure black. */
+export const PAPERS: Record<RMode, [string, string][]> = {
+  bright: [["#f4f1ea", "Paper"], ["#fbfaf7", "Chalk"], ["#ece5d6", "Sand"], ["#e7e8e4", "Stone"], ["#e6edf0", "Mist"]],
+  night: [["#0f1114", "Ink"], ["#0c1712", "Floodlight"], ["#0d1422", "Navy"], ["#1b1d21", "Graphite"], ["#1d1416", "Claret"]],
 }
 export type ModeColours = (typeof MODES)["night"]
 
@@ -81,30 +93,10 @@ export function projector(b: PitchBlock): Projector {
 export const ctrlFor = (a: Pt, b: Pt, c: Pt): Pt => [2 * c[0] - (a[0] + b[0]) / 2, 2 * c[1] - (a[1] + b[1]) / 2]
 export const mid = (a: Pt, b: Pt): Pt => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
 
-/* ── formations: where 11 players stand, for your team attacking up the full pitch ── */
-export const FORMATIONS: Record<string, [number, number, string][]> = {
-  "4-3-3": [[0.5, 0.95, "1"], [0.86, 0.75, "2"], [0.62, 0.82, "4"], [0.38, 0.82, "5"], [0.14, 0.75, "3"], [0.5, 0.64, "6"], [0.7, 0.54, "8"], [0.3, 0.54, "10"], [0.86, 0.3, "7"], [0.5, 0.24, "9"], [0.14, 0.3, "11"]],
-  "4-2-3-1": [[0.5, 0.95, "1"], [0.86, 0.75, "2"], [0.62, 0.82, "4"], [0.38, 0.82, "5"], [0.14, 0.75, "3"], [0.62, 0.62, "6"], [0.38, 0.62, "8"], [0.84, 0.42, "7"], [0.5, 0.42, "10"], [0.16, 0.42, "11"], [0.5, 0.24, "9"]],
-  "4-4-2": [[0.5, 0.95, "1"], [0.86, 0.75, "2"], [0.62, 0.82, "4"], [0.38, 0.82, "5"], [0.14, 0.75, "3"], [0.86, 0.52, "7"], [0.62, 0.58, "6"], [0.38, 0.58, "8"], [0.14, 0.52, "11"], [0.6, 0.27, "9"], [0.4, 0.27, "10"]],
-  "3-5-2": [[0.5, 0.95, "1"], [0.7, 0.8, "4"], [0.5, 0.83, "5"], [0.3, 0.8, "6"], [0.9, 0.55, "2"], [0.64, 0.6, "8"], [0.5, 0.66, "16"], [0.36, 0.6, "10"], [0.1, 0.55, "3"], [0.6, 0.27, "9"], [0.4, 0.27, "11"]],
-  "3-4-3": [[0.5, 0.95, "1"], [0.7, 0.8, "4"], [0.5, 0.83, "5"], [0.3, 0.8, "6"], [0.88, 0.56, "2"], [0.6, 0.6, "8"], [0.4, 0.6, "16"], [0.12, 0.56, "3"], [0.84, 0.3, "7"], [0.5, 0.24, "9"], [0.16, 0.3, "11"]],
-}
-/** The XI placed on a pitch. Your team attacks the top goal; the opponents defend it. On a half pitch only the half is used. */
-export function formationMarks(name: string, team: 0 | 1, view: "full" | "half"): Player[] {
-  const f = FORMATIONS[name] ?? FORMATIONS["4-3-3"]
-  const out: Player[] = []
-  for (const [u0, v0, num] of f) {
-    let u = u0, v = v0
-    if (team === 1) { u = 1 - u0; v = 1 - v0 }
-    if (view === "half") {
-      if (team === 0) { if (v0 > 0.9) continue; v = 0.12 + (v0 - 0.2) * 1.2 } // your outfield players, high up the pitch
-      else v = 0.04 + (1 - v0) * 1.2 // their shape, defending the box
-      v = Math.min(0.97, v)
-    }
-    out.push({ id: newId(), kind: "player", team, p: [u, v], num, name: "", side: "below", hi: team === 0 })
-  }
-  return out
-}
+export const DEFAULT_TEAMS = (a = "Your team", b = "Opponents"): [Team, Team] => [
+  { name: a, color: null, pat: "solid", c2: "#ffffff", num: null, formation: "", shape: "base" },
+  { name: b, color: null, pat: "solid", c2: "#ffffff", num: null, formation: "", shape: "base" },
+]
 
 /* ── reading saved data: never trust it ── */
 const HEX = /^#[0-9a-fA-F]{6}$/
@@ -133,13 +125,15 @@ function readBlock(b: any, userId: string, W: number, H: number): Block | null {
   const x = num(b.x, -2 * W, 3 * W, 0), y = num(b.y, -2 * H, 3 * H, 0), w = num(b.w, 20, 4 * W, 400)
   switch (b.kind) {
     case "text": return { id: id(b.id), kind: "text", x, y, w, rot: num(b.rot, -180, 180, 0), text: str(b.text, 600), style: one(b.style, ["title", "text", "label"] as const, "text"),
-      size: num(b.size, 8, 400, 24), align: one(b.align, ["left", "center", "right"] as const, "left"), color: ["ink", "story", "muted"].includes(b.color) ? b.color : hex(b.color) ?? "ink" }
+      size: num(b.size, 8, 400, 24), align: one(b.align, ["left", "center", "right"] as const, "left"), color: ["ink", "story", "muted"].includes(b.color) ? b.color : hex(b.color) ?? "ink",
+      plate: b.plate === "dark" || b.plate === "story" ? b.plate : hex(b.plate) }
     case "pitch": {
-      const team = (t: any, d: string): Team => ({ name: str(t?.name, 30) || d, color: hex(t?.color) })
+      const team = (t: any, d: string): Team => ({ name: str(t?.name, 30) || d, color: hex(t?.color), pat: one(t?.pat, KIT_PATTERNS, "solid"), c2: hex(t?.c2) ?? "#ffffff", num: hex(t?.num),
+        formation: str(t?.formation, 20), shape: one(t?.shape, ["base", "in", "out"] as const, "base") })
       const teams = Array.isArray(b.teams) ? b.teams : []
       return { id: id(b.id), kind: "pitch", x, y, w, view: b.view === "full" ? "full" : "half", dir: b.dir === "right" ? "right" : "up", look: b.look === "stadium" ? "stadium" : "flat",
         teams: [team(teams[0], "Your team"), team(teams[1], "Opponents")], marks: (Array.isArray(b.marks) ? b.marks.slice(0, MAX_MARKS) : []).map(readMark).filter(Boolean) as Mark[],
-        crest: b.crest !== false, ms: num(b.ms, 0.5, 2.5, 1) }
+        crest: b.crest !== false, ms: num(b.ms, 0.5, 2.5, 1), legend: b.legend === true }
     }
     case "stats": return { id: id(b.id), kind: "stats", x, y, w, s: num(b.s, 0.3, 4, 1), type: b.type === "player" ? "player" : "team", player: str(b.player, 32), num: str(b.num, 3),
       rows: (Array.isArray(b.rows) ? b.rows.slice(0, MAX_ROWS) : []).map((r: any) => ({ value: str(r?.value, 12), label: str(r?.label, 30) })) }
@@ -159,7 +153,7 @@ export function readReport(raw: unknown, userId: string): Report {
   const r = (raw && typeof raw === "object" ? raw : {}) as any
   const format = one(r.format, ["1:1", "4:5", "16:9", "9:16"] as const, "1:1")
   const [W, H] = SIZES[format]
-  return { v: 2, format, mode: r.mode === "bright" ? "bright" : "night", story: hex(r.story), glow: r.glow === true, seal: one(r.seal, ["br", "bl", "tr", "tl"] as const, "br"),
+  return { v: 2, format, mode: r.mode === "bright" ? "bright" : "night", paper: hex(r.paper), story: hex(r.story), glow: r.glow === true, seal: one(r.seal, ["br", "bl", "tr", "tl"] as const, "br"),
     blocks: (Array.isArray(r.blocks) ? r.blocks.slice(0, MAX_BLOCKS) : []).map((b: unknown) => readBlock(b, userId, W, H)).filter(Boolean) as Block[] }
 }
 /** Every photo a report uses (its storage paths) */
