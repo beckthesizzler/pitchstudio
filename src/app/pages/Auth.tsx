@@ -1,23 +1,36 @@
 import { useEffect, useRef, useState } from "react"
-import { useNavigate } from "react-router"
-import { AlertCircle, ArrowLeft, Check, Eye, EyeOff, Mail } from "lucide-react"
+import { useLocation, useNavigate } from "react-router"
+import { AlertCircle, ArrowLeft, Check, Eye, EyeOff, KeyRound, Mail } from "lucide-react"
 import { supabase } from "../lib/supabase"
+import { track, trackAuthError } from "../lib/telemetry"
 import { IDENTITY_OPTIONS, friendlyAuthError, normalizeHandle } from "../lib/account"
 import { ThemeToggle, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR, DS_ERROR_SOFT, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT } from "../theme"
 import { BoardArt } from "./BoardArt"
 import { Mark } from "../brand/Mark"
 
-/* Sign in and sign up, one full page each ("/signin" and "/signup"). Same steps and the same database calls as before:
-   email + password, then a handle + who you are, then a "check your email" screen when confirmation is on. */
+/* Sign in, sign up and reset password, one full page each ("/signin", "/signup", "/reset"). Same steps and the same database calls as before:
+   email + password, then a handle + who you are, then a "check your email" screen when confirmation is on.
+   "/reset" asks for your email and sends a link; the link brings you back to "/reset" signed in, to set a new password. */
+
+// The address the page was opened with, read before the sign-in library tidies it away:
+// a reset link carries "type=recovery", an expired or used link carries an error.
+const LANDING_HASH = typeof window !== "undefined" ? window.location.hash : ""
+/** Pending while this visit came from a password reset email and the reset page hasn't opened yet: the app sends you there to finish. */
+export const recovery = { pending: /type=recovery/.test(LANDING_HASH) }
+const LINK_FAILED = /error_code=|error=access_denied/.test(LANDING_HASH)
 
 /** Something@something.something with no spaces: the server does the real check. */
 const looksLikeEmail = (s: string) => { const at = s.indexOf("@"); return at > 0 && !s.includes(" ") && s.indexOf(".", at) > at + 1 && !s.endsWith(".") }
 
 type HandleState = "idle" | "short" | "checking" | "free" | "taken"
+/** Reset steps: checking for a session, ask for the email, link sent, set the new password, done */
+type ResetView = "checking" | "ask" | "sent" | "set" | "done"
 
-export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
+export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset" }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const signup = mode === "signup"
+  const reset = mode === "reset"
   const [step, setStep] = useState<1 | 2>(1)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -29,11 +42,35 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
   const [sentTo, setSentTo] = useState<string | null>(null)
   const [resent, setResent] = useState(false)
   const [hState, setHState] = useState<HandleState>("idle")
+  const [unconfirmed, setUnconfirmed] = useState(false) // sign-in said "confirm your email first"
+  const [rView, setRView] = useState<ResetView>("checking")
+  const [cooldown, setCooldown] = useState(0) // seconds until another reset email may be sent
   const stepRef = useRef(step)
   stepRef.current = step
 
-  // Starting over when you switch between sign in and sign up
-  useEffect(() => { setStep(1); setError(""); setSentTo(null); setResent(false) }, [mode])
+  // Starting over when you switch between sign in, sign up and reset
+  useEffect(() => {
+    setStep(1); setError(""); setSentTo(null); setResent(false); setUnconfirmed(false); setPassword("")
+    const carried = (location.state as { email?: string } | null)?.email
+    if (carried) setEmail(carried)
+    if (mode !== "reset") return
+    recovery.pending = false
+    // Signed in (from the email link, or already) means you can set a new password straight away
+    setRView("checking")
+    let live = true
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => { if (live) setRView(session ? "set" : "ask") })
+      .catch(() => { if (live) setRView("ask") })
+    if (LINK_FAILED) setError("That link has expired or was already used. Send yourself a new one.")
+    return () => { live = false }
+  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The wait before another reset email
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const t = window.setTimeout(() => setCooldown(c => c - 1), 1000)
+    return () => window.clearTimeout(t)
+  }, [cooldown])
 
   // Is the handle free? Checked a moment after you stop typing, so there are no surprises on the last button.
   useEffect(() => {
@@ -77,6 +114,7 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
         options: { data: { handle: h, identity }, emailRedirectTo: window.location.origin },
       })
       if (signUpErr) {
+        trackAuthError("sign_up", signUpErr)
         const code = signUpErr.code ?? ""
         if (code === "user_already_exists" || /already registered/i.test(signUpErr.message)) {
           setStep(1); setError("That email already has an account. Sign in instead."); setLoading(false); return
@@ -91,26 +129,124 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
       }
       ;(window as any).posthog?.capture("sign_up", { identity, $set: { handle: h, identity } })
       setLoading(false)
-      if (!data.session) { setSentTo(cleanEmail); return } // "Confirm email" is on: wait for the link
+      if (!data.session) { track("sign_up_email_sent"); setSentTo(cleanEmail); return } // "Confirm email" is on: wait for the link
       // Only if the database step hasn't been set up yet (the name check above failed): save the answers directly.
       if (freeErr && data.user) void supabase.from("profiles").update({ handle: h, identity }).eq("id", data.user.id).then(() => {})
       return // the app notices you're signed in and opens your board
     }
 
     setLoading(true)
+    setUnconfirmed(false)
     const { error: e } = await supabase.auth.signInWithPassword({ email: cleanEmail, password })
     setLoading(false)
-    if (e) setError(friendlyAuthError(e))
+    if (e) {
+      trackAuthError("sign_in", e)
+      setError(friendlyAuthError(e))
+      if (e.code === "email_not_confirmed" || /not confirmed/i.test(e.message)) setUnconfirmed(true)
+      return
+    }
+    track("sign_in", { method: "password" })
   }
 
-  const resend = async () => {
-    if (!sentTo) return
-    const { error: e } = await supabase.auth.resend({ type: "signup", email: sentTo })
-    if (e) setError(friendlyAuthError(e)); else { setResent(true); setError("") }
+  const resend = async (to = sentTo) => {
+    if (!to) return
+    const { error: e } = await supabase.auth.resend({ type: "signup", email: to })
+    if (e) { trackAuthError("resend", e); setError(friendlyAuthError(e)); return }
+    setSentTo(to); setResent(true); setError(""); setUnconfirmed(false)
   }
 
-  const onKey = (e: React.KeyboardEvent) => { if (e.key === "Enter") submit() }
+  // Reset, step 1: send the link (the answer is the same whether or not the email has an account)
+  const sendReset = async () => {
+    if (loading || cooldown > 0) return
+    const to = email.trim()
+    if (!looksLikeEmail(to)) { setError("Enter a valid email address."); return }
+    setError(""); setLoading(true)
+    const { error: e } = await supabase.auth.resetPasswordForEmail(to, { redirectTo: `${window.location.origin}/reset` })
+    setLoading(false)
+    if (e) { trackAuthError("reset_request", e); setError(friendlyAuthError(e)); return }
+    track("password_reset_requested")
+    setSentTo(to); setCooldown(60); setRView("sent")
+  }
+
+  // Reset, step 2: save the new password
+  const saveNewPassword = async () => {
+    if (loading) return
+    if (password.length < 6) { setError("Use at least 6 characters for your password."); return }
+    setError(""); setLoading(true)
+    const { error: e } = await supabase.auth.updateUser({ password })
+    setLoading(false)
+    if (e) { trackAuthError("reset_set", e); setError(friendlyAuthError(e)); return }
+    track("password_reset_done")
+    setPassword(""); setRView("done")
+  }
+
+  const forgot = () => navigate("/reset", { state: { email: email.trim() } })
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter") return
+    if (!reset) submit(); else if (rView === "ask") sendReset(); else if (rView === "set") saveNewPassword()
+  }
   const canGo = signup && step === 2 ? handle.length >= 3 && !!identity && hState !== "taken" : !!email && !!password
+
+  const pwField = (label: string, placeholder: string, auto: string, side?: React.ReactNode) => (
+    <div className="au-field">
+      <div className="au-lrow"><label className="au-label" htmlFor="au-pw">{label}</label>{side}</div>
+      <div className="au-inp">
+        <input id="au-pw" type={showPw ? "text" : "password"} placeholder={placeholder} autoComplete={auto}
+          value={password} onChange={e => setPassword(e.target.value)} onKeyDown={onKey} autoFocus={reset} />
+        <button className="au-eye" type="button" onClick={() => setShowPw(v => !v)} aria-label={showPw ? "Hide password" : "Show password"}>{showPw ? <EyeOff size={17} /> : <Eye size={17} />}</button>
+      </div>
+    </div>
+  )
+  const errBox = error && <div className="au-err" role="alert"><AlertCircle size={15} /> {error}</div>
+
+  // "/reset": forgot your password, or setting a new one from the email link
+  const resetBody = rView === "checking" ? null
+    : rView === "sent" ? (
+      <div style={{ textAlign: "center" }}>
+        <div className="au-mail" style={{ margin: "0 auto" }}><Mail size={28} /></div>
+        <h1 className="au-h1" style={{ marginTop: 22 }}>Check your email</h1>
+        <p className="au-p">If an account uses <b style={{ color: TEXT_PRIMARY, wordBreak: "break-all" }}>{sentTo}</b>, a link to set a new password is on its way. It can take a minute, and it may land in spam.</p>
+        {errBox}
+        <button className="au-btn sec" onClick={sendReset} disabled={loading || cooldown > 0}>{cooldown > 0 ? `Send again in ${cooldown}s` : "Send again"}</button>
+        <div className="au-swap">Wrong address? <button onClick={() => { setRView("ask"); setError("") }}>Change it</button></div>
+      </div>
+    ) : rView === "done" ? (
+      <div style={{ textAlign: "center" }}>
+        <div className="au-mail" style={{ margin: "0 auto" }}><Check size={28} /></div>
+        <h1 className="au-h1" style={{ marginTop: 22 }}>Password changed</h1>
+        <p className="au-p">You're signed in. Use your new password next time.</p>
+        <button className="au-btn pri" onClick={() => navigate("/", { replace: true })}>Open PitchStudio</button>
+      </div>
+    ) : rView === "set" ? (
+      <>
+        <div className="au-mail"><KeyRound size={26} /></div>
+        <div className="au-eyebrow" style={{ marginTop: 22 }}>RESET PASSWORD</div>
+        <h1 className="au-h1">Set a new password</h1>
+        <p className="au-p">You'll use it every time you sign in from now on.</p>
+        {pwField("New password", "At least 6 characters", "new-password")}
+        {errBox}
+        <button className="au-btn pri" onClick={saveNewPassword} disabled={loading || password.length < 6}>{loading ? "Saving…" : "Save new password"}</button>
+        <div className="au-swap">Not your account? <button onClick={async () => { await supabase.auth.signOut(); setRView("ask"); setError("") }}>Sign out</button></div>
+      </>
+    ) : (
+      <>
+        <button className="au-back" onClick={() => navigate("/signin")}><ArrowLeft size={15} /> Back to sign in</button>
+        <div className="au-eyebrow">RESET PASSWORD</div>
+        <h1 className="au-h1">Forgot your password?</h1>
+        <p className="au-p">Enter your email and we'll send you a link to set a new one.</p>
+        <div className="au-field">
+          <label className="au-label" htmlFor="au-email">Email</label>
+          <div className="au-inp">
+            <input id="au-email" type="email" placeholder="you@email.com" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={onKey}
+              autoFocus={typeof window !== "undefined" && !!window.matchMedia?.("(pointer: fine)").matches} />
+          </div>
+        </div>
+        {errBox}
+        <button className="au-btn pri" onClick={sendReset} disabled={loading || !email.trim()}>{loading ? "Sending…" : "Send reset link"}</button>
+        <div className="au-swap">Remembered it? <button onClick={() => navigate("/signin")}>Sign in</button></div>
+      </>
+    )
   const ctaText = loading ? (signup ? "Creating account…" : "Signing in…") : signup ? (step === 1 ? "Continue" : "Create account") : "Sign in"
 
   return (
@@ -153,6 +289,10 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
         .au-back { background: none; border: none; color: ${TEXT_MUTED}; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-family: inherit; padding: 4px 0; margin-bottom: 18px; }
         .au-swap { text-align: center; font-size: 14px; color: ${TEXT_MUTED}; margin-top: 26px; }
         .au-swap button { background: none; border: none; color: ${TEXT_PRIMARY}; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 14px; padding: 0; }
+        .au-lrow { display: flex; align-items: baseline; justify-content: space-between; }
+        .au-lrow .au-label { margin-bottom: 6px; }
+        .au-link { background: none; border: none; padding: 0; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; color: ${TEXT_MUTED}; }
+        .au-link:hover, .au-link:focus-visible { color: ${TEXT_PRIMARY}; text-decoration: underline; }
         .au-right { background: radial-gradient(900px 520px at 30% 18%, var(--ps-glow), transparent), ${SURFACE_1}; display: flex; flex-direction: column; justify-content: center; padding: 56px 0 56px 56px; gap: 28px; overflow: hidden; border-left: 1px solid ${DS_BORDER}; }
         .au-quote { font-size: clamp(26px, 2.6vw, 36px); letter-spacing: -.03em; line-height: 1.15; font-weight: 700; max-width: 520px; margin: 0; }
         .au-quote span { color: ${ACCENT_TEXT}; display: block; }
@@ -174,13 +314,13 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
             <ThemeToggle />
           </div>
           <div className="au-form">
-            {sentTo ? (
+            {reset ? resetBody : sentTo ? (
               <div style={{ textAlign: "center" }}>
                 <div className="au-mail" style={{ margin: "0 auto" }}><Mail size={28} /></div>
                 <h1 className="au-h1" style={{ marginTop: 22 }}>Check your email</h1>
                 <p className="au-p">We sent a link to <b style={{ color: TEXT_PRIMARY, wordBreak: "break-all" }}>{sentTo}</b>.<br />Open it to finish creating your account. It signs you in automatically.</p>
                 {error && <div className="au-err" role="alert"><AlertCircle size={15} /> {error}</div>}
-                <button className="au-btn sec" onClick={resend} disabled={resent}>{resent ? "Sent again" : "Resend email"}</button>
+                <button className="au-btn sec" onClick={() => resend()} disabled={resent}>{resent ? "Sent again" : "Resend email"}</button>
                 <div className="au-swap">Wrong address? <button onClick={() => { setSentTo(null); setStep(1); setResent(false) }}>Change it</button></div>
               </div>
             ) : (
@@ -202,14 +342,8 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
                           autoFocus={typeof window !== "undefined" && !!window.matchMedia?.("(pointer: fine)").matches} />
                       </div>
                     </div>
-                    <div className="au-field">
-                      <label className="au-label" htmlFor="au-pw">Password</label>
-                      <div className="au-inp">
-                        <input id="au-pw" type={showPw ? "text" : "password"} placeholder={signup ? "At least 6 characters" : "Your password"} autoComplete={signup ? "new-password" : "current-password"}
-                          value={password} onChange={e => setPassword(e.target.value)} onKeyDown={onKey} />
-                        <button className="au-eye" type="button" onClick={() => setShowPw(v => !v)} aria-label={showPw ? "Hide password" : "Show password"}>{showPw ? <EyeOff size={17} /> : <Eye size={17} />}</button>
-                      </div>
-                    </div>
+                    {pwField("Password", signup ? "At least 6 characters" : "Your password", signup ? "new-password" : "current-password",
+                      !signup && <button type="button" className="au-link" onClick={forgot}>Forgot password?</button>)}
                   </>
                 ) : (
                   <>
@@ -238,8 +372,9 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" }) {
                   </>
                 )}
 
-                {error && <div className="au-err" role="alert"><AlertCircle size={15} /> {error}</div>}
+                {errBox}
                 <button className="au-btn pri" onClick={submit} disabled={loading || !canGo}>{ctaText}</button>
+                {unconfirmed && <button className="au-btn sec" onClick={() => resend(email.trim())}>Send the confirmation link again</button>}
                 <div className="au-swap">
                   {signup ? <>Already have an account? <button onClick={() => navigate("/signin")}>Sign in</button></> : <>New here? <button onClick={() => navigate("/signup")}>Create a free account</button></>}
                 </div>

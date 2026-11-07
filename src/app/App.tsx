@@ -24,7 +24,8 @@ import {
   TEXT_PRIMARY, TEXT_MUTED, DS_ERROR, DS_ERROR_SOFT, DS_BORDER, DS_BORDER_STRONG, GLASS, SCRIM, useTheme,
 } from "./theme"
 import LandingPage from "./pages/Landing"
-import AuthPage from "./pages/Auth"
+import AuthPage, { recovery } from "./pages/Auth"
+import { reportError } from "./lib/telemetry" // also starts crash reporting
 import HomePage from "./pages/Home"
 import { Mark } from "./brand/Mark"
 import { CreatorSeal, SealDisc } from "./brand/Signature"
@@ -7085,7 +7086,8 @@ class AppErrorBoundary extends Component<
     return { hasError: true }
   }
 
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, info?: { componentStack?: string | null }) {
+    reportError(error, "screen", { stack: (info?.componentStack ?? "").slice(0, 600) })
     if (isChunkError(error)) {
       if (!sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
         sessionStorage.setItem(CHUNK_RELOAD_KEY, "1")
@@ -7197,13 +7199,14 @@ export default function Root() {
     <AppErrorBoundary>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<HomeRoute signedIn={!!authUser} />} />
+          <Route path="/" element={recovery.pending && authUser ? <Navigate to="/reset" replace /> : <HomeRoute signedIn={!!authUser} />} />
           <Route path="/board" element={<BoardRoute signedIn={!!authUser} />} />
           <Route path="/braindump" element={<BraindumpRoute signedIn={!!authUser} />} />
           <Route path="/analysis" element={<AnalysisRoute signedIn={!!authUser} />} />
           <Route path="/report" element={<ReportRoute signedIn={!!authUser} />} />
           <Route path="/signin" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signin" />} />
           <Route path="/signup" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signup" />} />
+          <Route path="/reset" element={<AuthPage mode="reset" />} />
           <Route path="/profile" element={authUser ? <ProfilePage /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
