@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router"
 import { AlertCircle, ArrowLeft, Check, Eye, EyeOff, KeyRound, Mail } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { track, trackAuthError } from "../lib/telemetry"
+import { projectId, publicAnonKey } from "../../../utils/supabase/info"
 import { IDENTITY_OPTIONS, friendlyAuthError, normalizeHandle } from "../lib/account"
 import { ThemeToggle, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR, DS_ERROR_SOFT, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT } from "../theme"
 import { BoardArt } from "./BoardArt"
@@ -18,6 +19,13 @@ const LANDING_HASH = typeof window !== "undefined" ? window.location.hash : ""
 /** Pending while this visit came from a password reset email and the reset page hasn't opened yet: the app sends you there to finish. */
 export const recovery = { pending: /type=recovery/.test(LANDING_HASH) }
 const LINK_FAILED = /error_code=|error=access_denied/.test(LANDING_HASH)
+
+// Which sign-in methods are switched on in Supabase, asked once per visit. "Continue with Google" shows only when Google is on.
+let providersAsked: Promise<{ google: boolean }> | null = null
+const signInMethods = () => providersAsked ??= fetch(`https://${projectId}.supabase.co/auth/v1/settings`, { headers: { apikey: publicAnonKey } })
+  .then(r => (r.ok ? r.json() : null))
+  .then(d => ({ google: d?.external?.google === true }))
+  .catch(() => ({ google: false }))
 
 /** Something@something.something with no spaces: the server does the real check. */
 const looksLikeEmail = (s: string) => { const at = s.indexOf("@"); return at > 0 && !s.includes(" ") && s.indexOf(".", at) > at + 1 && !s.endsWith(".") }
@@ -45,6 +53,13 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
   const [unconfirmed, setUnconfirmed] = useState(false) // sign-in said "confirm your email first"
   const [rView, setRView] = useState<ResetView>("checking")
   const [cooldown, setCooldown] = useState(0) // seconds until another reset email may be sent
+  const [google, setGoogle] = useState(false) // Google sign-in is switched on
+
+  useEffect(() => {
+    let live = true
+    signInMethods().then(m => { if (live) setGoogle(m.google) })
+    return () => { live = false }
+  }, [])
   const stepRef = useRef(step)
   stepRef.current = step
 
@@ -182,6 +197,15 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
 
   const forgot = () => navigate("/reset", { state: { email: email.trim() } })
 
+  // Google: off to Google, back to the home page signed in. A first visit makes the account (and a handle from the email).
+  const withGoogle = async () => {
+    if (loading) return
+    setError(""); setLoading(true)
+    track("sign_in_started", { method: "google", page: mode })
+    const { error: e } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } })
+    if (e) { trackAuthError("google", e); setError(friendlyAuthError(e)); setLoading(false) }
+  }
+
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key !== "Enter") return
     if (!reset) submit(); else if (rView === "ask") sendReset(); else if (rView === "set") saveNewPassword()
@@ -293,6 +317,8 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
         .au-lrow .au-label { margin-bottom: 6px; }
         .au-link { background: none; border: none; padding: 0; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; color: ${TEXT_MUTED}; }
         .au-link:hover, .au-link:focus-visible { color: ${TEXT_PRIMARY}; text-decoration: underline; }
+        .au-or { display: flex; align-items: center; gap: 12px; margin-top: 18px; font-size: 12px; color: ${TEXT_MUTED}; }
+        .au-or::before, .au-or::after { content: ""; flex: 1; height: 1px; background: ${DS_BORDER}; }
         .au-right { background: radial-gradient(900px 520px at 30% 18%, var(--ps-glow), transparent), ${SURFACE_1}; display: flex; flex-direction: column; justify-content: center; padding: 56px 0 56px 56px; gap: 28px; overflow: hidden; border-left: 1px solid ${DS_BORDER}; }
         .au-quote { font-size: clamp(26px, 2.6vw, 36px); letter-spacing: -.03em; line-height: 1.15; font-weight: 700; max-width: 520px; margin: 0; }
         .au-quote span { color: ${ACCENT_TEXT}; display: block; }
@@ -332,6 +358,10 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
                 <h1 className="au-h1">{!signup ? "Sign in" : step === 1 ? "Create your free account" : "Pick your name"}</h1>
                 <p className="au-p">{!signup ? "Pick up where you left off." : step === 1 ? "Save every board and sign your exports with your own name." : "It goes on every export, like a signature."}</p>
                 {signup && <div className="au-prog" aria-hidden="true"><i className="on" /><i className={step === 2 ? "on" : ""} /></div>}
+                {google && (!signup || step === 1) && <>
+                  <button type="button" className="au-btn sec" style={{ marginTop: 22 }} onClick={withGoogle} disabled={loading}>Continue with Google</button>
+                  <div className="au-or">or use your email</div>
+                </>}
 
                 {(!signup || step === 1) ? (
                   <>

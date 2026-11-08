@@ -5,6 +5,7 @@ import { getFontEmbedCSS, toPng } from "html-to-image"
 import { supabase } from "../lib/supabase"
 import { IDENTITY_OPTIONS, normalizeHandle, stripHandleSuffix } from "../lib/account"
 import { WORLD_COUNTRIES } from "../lib/countries"
+import { AccountData } from "./AccountData"
 import { Mark } from "../brand/Mark"
 import { CreatorCard } from "../brand/CardArt"
 import { CreatorSeal } from "../brand/Signature"
@@ -412,6 +413,8 @@ export default function ProfilePage() {
               return <button key={o.value} className={`pf-chip${active ? " on" : ""}`} aria-pressed={active} onClick={() => setIdentity(active ? "" : o.value)}>{o.label}</button>
             })}
           </div>
+
+          <AccountData userId={userId} email={email} />
         </main>
       </div>
 

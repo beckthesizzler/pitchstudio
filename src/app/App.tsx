@@ -26,11 +26,13 @@ import {
 import LandingPage from "./pages/Landing"
 import AuthPage, { recovery } from "./pages/Auth"
 import { reportError } from "./lib/telemetry" // also starts crash reporting
+import { shrinkForBoard, imageProblem } from "./lib/images"
 import HomePage from "./pages/Home"
 import { Mark } from "./brand/Mark"
 import { CreatorSeal, SealDisc } from "./brand/Signature"
 import { DEFAULT_BRAND, readBrand, logoToDataUrl, type Brand } from "./brand/brand"
 import ProfilePage from "./pages/Profile"
+import { GoodbyePage } from "./pages/AccountData"
 const AnalysisPage = lazy(() => import("./pages/Analysis")) // only downloaded when someone opens Live Game Analysis
 const ReportPage = lazy(() => import("./pages/Report")) // only downloaded when someone opens Match Report
 import Tour, { TOUR_KEY } from "./Tour"
@@ -2841,6 +2843,9 @@ function TacticsBoard() {
   const [lockHint, setLockHint] = useState(false)
   const lockHintTimer = useRef(0)
   const flashLockHint = () => { setLockHint(true); window.clearTimeout(lockHintTimer.current); lockHintTimer.current = window.setTimeout(() => setLockHint(false), 2500) }
+  const [imageHint, setImageHint] = useState("") // why a picture didn't go in
+  const imageHintTimer = useRef(0)
+  const flashImageHint = (text: string) => { setImageHint(text); window.clearTimeout(imageHintTimer.current); imageHintTimer.current = window.setTimeout(() => setImageHint(""), 5000) }
   /** Moves pieces by (dx, dy) from where they were in `base`. Zones live in pitch coordinates, so they move by the pitch's scale.
    *  Only uses setters and refs, so it's safe to call from any handler. */
   const moveBy = (base: MoveBase, dx: number, dy: number) => {
@@ -4000,32 +4005,24 @@ function TacticsBoard() {
   }
 
   /* ── Image upload ── */
+  // The picture is made small first (it is saved inside the board): long side 1600 at most, photos as JPEG
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = ev => {
-      const src = ev.target?.result as string
-      if (!src) return
-      const img = new Image()
-      img.onload = () => {
-        snapshot()
-        const aspect = img.naturalWidth / img.naturalHeight
-        const w = Math.min(400, img.naturalWidth)
-        const h = w / aspect
-        const newImg: UploadedImage = {
-          id: uid(), x: frame.x + frame.w / 2 - w / 2, y: frame.y + frame.h / 2 - h / 2,
-          width: w, height: h, src,
-          opacity: 1, layer: "overlay",
-          naturalW: img.naturalWidth, naturalH: img.naturalHeight
-        }
-        setImages(prev => [...prev, newImg])
-        setSel({ kind: "image", id: newImg.id })
-      }
-      img.src = src
-    }
-    reader.readAsDataURL(file)
     e.target.value = ""
+    if (!file) return
+    shrinkForBoard(file).then(({ src, w: nw, h: nh }) => {
+      snapshot()
+      const w = Math.min(400, nw)
+      const h = w * (nh / nw)
+      const newImg: UploadedImage = {
+        id: uid(), x: frame.x + frame.w / 2 - w / 2, y: frame.y + frame.h / 2 - h / 2,
+        width: w, height: h, src,
+        opacity: 1, layer: "overlay",
+        naturalW: nw, naturalH: nh
+      }
+      setImages(prev => [...prev, newImg])
+      setSel({ kind: "image", id: newImg.id })
+    }).catch(err => flashImageHint(imageProblem(err)))
   }
 
   /* ── Export ── */
@@ -5332,7 +5329,7 @@ function TacticsBoard() {
           </div>}
 
           <div style={{ padding: "9px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 11, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
-            {lockHint ? "That's locked. Right-click it to unlock." : <>
+            {imageHint ? <span role="status" style={{ color: TEXT_PRIMARY }}>{imageHint}</span> : lockHint ? "That's locked. Right-click it to unlock." : <>
             {tool === "select" && "Click or drag a box to select · Shift adds · Arrow keys nudge · Right-click for more"}
             {tool === "pan" && "Drag to move · Alt+drag or middle-click also pans · Scroll to zoom"}
             {tool === "homePlayer" && "Click the pitch to place a home player"}
@@ -7207,6 +7204,7 @@ export default function Root() {
           <Route path="/signin" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signin" />} />
           <Route path="/signup" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signup" />} />
           <Route path="/reset" element={<AuthPage mode="reset" />} />
+          <Route path="/goodbye" element={<GoodbyePage />} />
           <Route path="/profile" element={authUser ? <ProfilePage /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
