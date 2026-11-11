@@ -14,7 +14,7 @@ import {
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
-  Grid3x3, Rows3, Pencil, Waypoints, Eye, EyeOff, Play, Sun, Moon,
+  Grid3x3, Rows3, Pencil, Waypoints, Eye, EyeOff, Play, Sun, Moon, PanelBottom, SlidersHorizontal, TextCursorInput,
 } from "lucide-react"
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router"
 import { supabase } from "./lib/supabase"
@@ -25,6 +25,8 @@ import {
 } from "./theme"
 import LandingPage from "./pages/Landing"
 import AuthPage, { recovery } from "./pages/Auth"
+import { STAGE_CSS, Dock, DockButton, ViewControls, PresentBar, AreaPicker, AreaMap, readDock, saveDock, type DockPlace, type DockItem } from "./board/Stage"
+import { NameRun, TeamSheet, NAMES_CSS, splitNumber, type NameRunPlayer } from "./board/Names"
 import { reportError } from "./lib/telemetry" // also starts crash reporting
 import { shrinkForBoard, imageProblem } from "./lib/images"
 import HomePage from "./pages/Home"
@@ -146,12 +148,13 @@ interface BoardSettings {
   nameStyle: "halo" | "chip" // names on a dark outline, or on a small dark chip
   tokenStyle: "classic" | "minimal" // minimal = flat pieces: no drop shadow, a thin ring
   vertical: boolean // the pitch stands upright: home goal at the bottom
-  focus: "board" | "pitch" | "half" | "third" // the part of the board you see and export
+  focus: "board" | "pitch" | "half" | "third" | "area" // the part of the board you see and export ("area": the part of the pitch you zoomed into)
+  area: [number, number, number, number] | null // the zoomed area in pitch coordinates: x1, y1, x2, y2
   focusEnd: "attack" | "defend" // which end a half or a third shows
   frameRatio: "auto" | "16:9" | "4:5" | "1:1" | "9:16" // the shape of the export
   homeFormation: string; homeShape: "base" | "in" | "out" // the formation the home team was last set to ("" = none), and its shape: lineup, in or out of possession
   awayFormation: string; awayShape: "base" | "in" | "out"
-  pitchStyle: "classic" | "night" | "paper" // classic = green or white lines; night and paper are the editorial looks
+  pitchStyle: "classic" | "night" | "paper" | "cobalt" // classic = green or white lines; night and paper are the editorial looks; cobalt is blue turf with gold lines
   psMark: boolean // the PS mark mowed into the middle of the pitch
   editorial: boolean // the editorial frame: slate, score strip, caption, legend, crop marks and edition number
   kicker: string // the small line above the title
@@ -175,11 +178,18 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   showLanes: false, show18Zones: false, pitchVisible: true,
   homePat: "solid", homeC2: "#fbbf24", homeNum: "#000000", homeName: "",
   awayPat: "solid", awayC2: "#1d4ed8", awayNum: "#ffffff", awayName: "",
-  labelSize: "standard", nameStyle: "halo", tokenStyle: "classic",
-  vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto",
+  labelSize: "large", nameStyle: "halo", tokenStyle: "classic",
+  vertical: false, focus: "pitch", focusEnd: "attack", frameRatio: "auto", area: null,
   homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
   pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "",
   showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true,
+}
+/** A zoomed area from saved data: four numbers inside the pitch, at least 60 × 40, else none */
+const areaFrom = (a: unknown): [number, number, number, number] | null => {
+  if (!Array.isArray(a) || a.length !== 4 || !a.every(n => typeof n === "number" && Number.isFinite(n))) return null
+  const [x1, y1, x2, y2] = a as number[], c = (n: number, hi: number) => Math.min(hi, Math.max(0, n))
+  const r: [number, number, number, number] = [c(Math.min(x1, x2), PW), c(Math.min(y1, y2), PH), c(Math.max(x1, x2), PW), c(Math.max(y1, y2), PH)]
+  return r[2] - r[0] >= 60 && r[3] - r[1] >= 40 ? r : null
 }
 /** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
 function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
@@ -211,14 +221,15 @@ function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSet
     nameStyle: oneOf(v.nameStyle, ["halo", "chip"] as const, d.nameStyle),
     tokenStyle: oneOf(v.tokenStyle, ["classic", "minimal"] as const, d.tokenStyle),
     vertical: bool(v.vertical, d.vertical),
-    focus: oneOf(v.focus, ["board", "pitch", "half", "third"] as const, d.focus),
+    focus: (() => { const f = oneOf(v.focus, ["board", "pitch", "half", "third", "area"] as const, d.focus); return f === "area" && !areaFrom(v.area) ? "board" : f })(),
+    area: areaFrom(v.area),
     focusEnd: oneOf(v.focusEnd, ["attack", "defend"] as const, d.focusEnd),
     frameRatio: oneOf(v.frameRatio, ["auto", "16:9", "4:5", "1:1", "9:16"] as const, d.frameRatio),
     homeFormation: typeof v.homeFormation === "string" ? v.homeFormation.slice(0, 20) : d.homeFormation,
     homeShape: oneOf(v.homeShape, ["base", "in", "out"] as const, d.homeShape),
     awayFormation: typeof v.awayFormation === "string" ? v.awayFormation.slice(0, 20) : d.awayFormation,
     awayShape: oneOf(v.awayShape, ["base", "in", "out"] as const, d.awayShape),
-    pitchStyle: oneOf(v.pitchStyle, ["classic", "night", "paper"] as const, d.pitchStyle),
+    pitchStyle: oneOf(v.pitchStyle, ["classic", "night", "paper", "cobalt"] as const, d.pitchStyle),
     psMark: bool(v.psMark, d.psMark), editorial: bool(v.editorial, d.editorial),
     kicker: typeof v.kicker === "string" ? v.kicker.slice(0, 40) : d.kicker,
     homeScore: typeof v.homeScore === "string" ? v.homeScore.slice(0, 3) : d.homeScore,
@@ -341,9 +352,24 @@ const FRAME_SIZES: Record<BoardSettings["frameRatio"], [number, number] | null> 
   auto: null, "16:9": [1920, 1080], "4:5": [1080, 1350], "1:1": [1080, 1080], "9:16": [1080, 1920],
 }
 /** The part of the board you see and export: the whole board, or the pitch, a half or a third with room for names and the seal, widened to the export shape */
-const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"], ed?: { strip: boolean; lines: number; pitch?: boolean } | null) => {
+const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"], ed?: { strip: boolean; lines: number; pitch?: boolean } | null,
+  area: BoardSettings["area"] = null) => {
   let r = { x: 0, y: 0, w: CW, h: CH }
-  if (focus !== "board") {
+  if (focus === "area" && area) {
+    // room round the area so the pieces and names at its edge are whole, then widened to a screen's shape (a tall strip fills the screen too)
+    const p = pitchRect(g, area[0], area[1], area[2], area[3]), pad = Math.max(44, Math.min(p.w, p.h) * 0.06)
+    r = { x: p.x - pad, y: p.y - pad, w: p.w + 2 * pad, h: p.h + 2 * pad + 44 }
+    if (ratio === "auto") {
+      const a = r.w / r.h, lo = 1.5, hi = 2
+      if (a < lo) { const w = r.h * lo; r = { ...r, x: r.x - (w - r.w) / 2, w } }
+      else if (a > hi) { const h = r.w / hi; r = { ...r, y: r.y - (h - r.h) / 2, h } }
+      // the extra room comes from the pitch, not from beyond its edge
+      const pr = pitchRect(g, 0, 0, PW, PH)
+      const keep = (lo: number, size: number, plo: number, psize: number, pad0: number, pad1: number) =>
+        size >= psize + pad0 + pad1 ? plo - (size - psize) / 2 : Math.max(plo - pad0, Math.min(lo, plo + psize + pad1 - size))
+      r = { ...r, x: keep(r.x, r.w, pr.x, pr.w, 36, 36), y: keep(r.y, r.h, pr.y, pr.h, 36, 100) }
+    }
+  } else if (focus !== "board") {
     const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
     const [x1, x2] = end === "attack" ? [PW - part, PW] : [0, part]
     const p = pitchRect(g, x1, 0, x2, PH)
@@ -379,6 +405,48 @@ const AWAY_COLORS = { bg: "#1d4ed8", fg: "#ffffff", ring: "#60a5fa" }
 const MARKER_COLOR = "#f87171" // a new ✕ marker starts red, easy to see on any pitch
 /** Size of a piece at scale 1: a player's circle, a ✕ marker, the ball. */
 const pieceBase = (p: Player) => (p.kind === "ball" ? 12 : p.kind === "marker" ? 20 : 28)
+/** Where each name goes. Under its piece, unless that lands on another piece or name: then above it, or beside it. */
+const placeLabels = (list: Player[], labelScale: number, pitch: { x: number; y: number; w: number; h: number }): Map<string, { x: number; y: number }> => {
+  const out = new Map<string, { x: number; y: number }>()
+  const discs = list.map(p => ({ id: p.id, x: p.x, y: p.y, r: pieceBase(p) * (p.scale || 1) }))
+  const boxes: { x1: number; y1: number; x2: number; y2: number }[] = []
+  const hits = (a: { x1: number; y1: number; x2: number; y2: number }, id: string) => {
+    let n = 0
+    // a name that would run off the side of the pitch (or far past its top or bottom) is a clash too
+    if (a.x1 < pitch.x - 8 || a.x2 > pitch.x + pitch.w + 8 || a.y1 < pitch.y - 30 || a.y2 > pitch.y + pitch.h + 70) n += 2
+    for (const d of discs) {
+      if (d.id === id) continue
+      const nx = Math.max(a.x1, Math.min(d.x, a.x2)), ny = Math.max(a.y1, Math.min(d.y, a.y2))
+      if ((nx - d.x) ** 2 + (ny - d.y) ** 2 < (d.r + 2) ** 2) n += 3 // a name on top of a piece is the worst clash
+    }
+    for (const b of boxes) if (a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1) n += 2
+    return n
+  }
+  for (const p of list) {
+    if (p.name.trim() === "") continue
+    const s = p.scale || 1, r = pieceBase(p) * s, size = 13 * s * labelScale
+    const w = p.name.length * size * 0.56 + 6
+    const spots = [
+      { x: 0, y: r + 6 * s + size },
+      { x: 0, y: -(r + 6 * s + size * 0.25) },
+      { x: r + 8 * s + w / 2, y: size * 0.35 },
+      { x: -(r + 8 * s + w / 2), y: size * 0.35 },
+      { x: -w * 0.4, y: -(r + 6 * s + size * 0.25) },
+      { x: w * 0.4, y: -(r + 6 * s + size * 0.25) },
+      { x: -w * 0.4, y: r + 6 * s + size },
+      { x: w * 0.4, y: r + 6 * s + size },
+    ]
+    let best = spots[0], bestN = Infinity, bestBox = { x1: 0, y1: 0, x2: 0, y2: 0 }
+    for (const sp of spots) {
+      const box = { x1: p.x + sp.x - w / 2, x2: p.x + sp.x + w / 2, y1: p.y + sp.y - size * 0.85, y2: p.y + sp.y + size * 0.2 }
+      const n = hits(box, p.id)
+      if (n < bestN) { best = sp; bestN = n; bestBox = box }
+      if (n === 0) break
+    }
+    boxes.push(bestBox); out.set(p.id, best)
+  }
+  return out
+}
 /** A football: a centre patch, five patches cut off by the edge, and the seams between them. On the pitch it's white with black patches; as a tool icon it's drawn in the text colour. */
 function BallGlyph({ r, icon = false }: { r: number; icon?: boolean }) {
   const ink = icon ? "currentColor" : "#161616"
@@ -1006,6 +1074,7 @@ function DistTag({ x, y, m }: { x: number; y: number; m: number }) {
 const PITCH_LOOKS = {
   night: { a: "#10171f", b: "#0b1118", line: "rgba(255,255,255,0.4)", w: 2, box: "rgba(255,255,255,0.07)", spot: PS_VOLT, bg: "#06080b", mark: "#ffffff" },
   paper: { a: "#f3eee1", b: "#ece6d5", line: "rgba(34,30,22,0.62)", w: 2.2, box: "rgba(34,30,22,0.08)", spot: "#1d1b16", bg: "#ddd6c3", mark: "#1d1b16" },
+  cobalt: { a: "#185189", b: "#174d83", line: "#f4c44f", w: 2.4, box: "rgba(244,196,79,0.14)", spot: "#f4c44f", bg: "#0a1420", mark: "#ffffff" },
 } as const
 function PitchSVG({ pitchColor, look = "classic", mark = false, upright = false }: { pitchColor: "green" | "white"; look?: BoardSettings["pitchStyle"]; mark?: boolean; upright?: boolean }) {
   const lk = look === "classic" ? null : PITCH_LOOKS[look]
@@ -2281,12 +2350,18 @@ function TacticsBoard() {
   const [awayC2, setAwayC2] = useState("#1d4ed8")
   const [awayNum, setAwayNum] = useState("#ffffff")
   const [awayName, setAwayName] = useState("")
-  const [labelSize, setLabelSize] = useState<BoardSettings["labelSize"]>("standard")
+  const [labelSize, setLabelSize] = useState<BoardSettings["labelSize"]>("large")
   const [nameStyle, setNameStyle] = useState<BoardSettings["nameStyle"]>("halo")
   const [tokenStyle, setTokenStyle] = useState<BoardSettings["tokenStyle"]>("classic")
   const [vertical, setVertical] = useState(false)
-  const [focus, setFocus] = useState<BoardSettings["focus"]>("board")
+  const [focus, setFocus] = useState<BoardSettings["focus"]>("pitch")
   const [focusEnd, setFocusEnd] = useState<BoardSettings["focusEnd"]>("attack")
+  const [area, setArea] = useState<BoardSettings["area"]>(null) // the area zoomed into
+  const [dock, setDockPlace] = useState<DockPlace>(readDock) // the tools in a row under the board, or down the side
+  const [presenting, setPresenting] = useState(false) // Present: only the board, full screen
+  const [picking, setPicking] = useState(false) // choosing the area to zoom into
+  const stageRef = useRef({ dock: "bottom" as DockPlace, presenting: false, tilt: false })
+  stageRef.current = { dock, presenting, tilt: view3d }
   const [frameRatio, setFrameRatio] = useState<BoardSettings["frameRatio"]>("auto")
   const [pitchStyle, setPitchStyle] = useState<BoardSettings["pitchStyle"]>("classic")
   const [psMark, setPsMark] = useState(false)
@@ -2306,6 +2381,10 @@ function TacticsBoard() {
   const [making, setMaking] = useState<null | { fmt: "gif" | "mp4"; done: number }>(null) // a GIF or a video being made
   const [kitEditor, setKitEditor] = useState<Record<"home" | "away", "" | "more" | "own">>({ home: "", away: "" }) // a team's kits: the few, all of them, or your own
   const [namesFor, setNamesFor] = useState<"home" | "away" | null>(null) // the team whose names are open
+  const [naming, setNaming] = useState<{ ids: string[]; i: number } | null>(null) // naming players on the pitch, one after another
+  const [sheetHl, setSheetHl] = useState<string | null>(null) // the player whose team-sheet row you're in
+  const [pasteOpen, setPasteOpen] = useState(false) // the team sheet's "paste a list" box
+  const namingRef = useRef<(from?: string) => void>(() => {})
   const [kitMode, setKitMode] = useState<null | "gk" | "own">(null) // the kit choice open for the selected player
   useEffect(() => { setKitMode(null) }, [sel?.id])
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
@@ -2614,7 +2693,7 @@ function TacticsBoard() {
       view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible,
       homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
       vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
-      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard,
+      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, area,
     }),
     ...(stepList.length > 1 ? { steps: stepList, step: stepIdx } : {}),
   })
@@ -2633,7 +2712,7 @@ function TacticsBoard() {
     setHomePat(st.homePat); setHomeC2(st.homeC2); setHomeNum(st.homeNum); setHomeName(st.homeName)
     setAwayPat(st.awayPat); setAwayC2(st.awayC2); setAwayNum(st.awayNum); setAwayName(st.awayName)
     setLabelSize(st.labelSize); setNameStyle(st.nameStyle); setTokenStyle(st.tokenStyle)
-    setVertical(st.vertical); setFocus(st.focus); setFocusEnd(st.focusEnd); setFrameRatio(st.frameRatio)
+    setVertical(st.vertical); setFocus(st.focus); setFocusEnd(st.focusEnd); setFrameRatio(st.frameRatio); setArea(st.area)
     setHomeFormation(st.homeFormation); setHomeShape(st.homeShape); setAwayFormation(st.awayFormation); setAwayShape(st.awayShape)
     setPitchStyle(st.pitchStyle); setPsMark(st.psMark); setEditorial(st.editorial); setKicker(st.kicker)
     setHomeScore(st.homeScore); setAwayScore(st.awayScore); setScoreNote(st.scoreNote); setCaption(st.caption)
@@ -2714,7 +2793,7 @@ function TacticsBoard() {
       pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
       showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
       labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
-      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, steps, stepIdx,
+      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, steps, stepIdx, area,
       currentBoardId, authUser, saveTick])
 
   // "/board?open=ID": Home's "Continue" opens that saved board
@@ -3001,13 +3080,18 @@ function TacticsBoard() {
   const fitZoom = () => {
     const box = canvasRef.current?.getBoundingClientRect()
     if (!box || !box.width || !box.height) return 1
-    // the canvas is shown 980 × 630 at 100%; never zoom in past that, and keep a small gap around it
-    return Math.max(0.2, Math.min(1, (box.width - 24) / dispRef.current.w, (box.height - 24) / dispRef.current.h))
+    // the board fills the space it has (up to twice its 980-wide size), clear of the dock floating under it
+    // tilted in 3D the board stands lower and its near edge wider, so it can be shown bigger
+    const st = stageRef.current, below = st.presenting ? 24 : st.dock === "bottom" ? 138 : 24, gap = st.presenting ? 24 : 40
+    const w = dispRef.current.w * (st.tilt ? 1.1 : 1), h = dispRef.current.h * (st.tilt ? 0.8 : 1)
+    return Math.max(0.2, Math.min(2, (box.width - gap) / w, (box.height - below - 24) / h))
   }
+  /** Fitted, the board sits in the middle of the space above the dock */
+  const fitPanY = () => { const st = stageRef.current; return st.presenting ? 0 : st.dock === "bottom" ? -57 : 0 }
   useEffect(() => {
     const el = canvasRef.current
     if (!el || typeof ResizeObserver === "undefined") return
-    const fit = () => { if (!userViewRef.current) { setZoom(fitZoom()); setPanX(0); setPanY(0) } }
+    const fit = () => { if (!userViewRef.current) { setZoom(fitZoom()); setPanX(0); setPanY(fitPanY()) } }
     fit()
     const ro = new ResizeObserver(fit)
     ro.observe(el)
@@ -3031,7 +3115,7 @@ function TacticsBoard() {
     })
   }, [])
 
-  const fitToView = () => { userViewRef.current = false; setZoom(fitZoom()); setPanX(0); setPanY(0) }
+  const fitToView = () => { userViewRef.current = false; setZoom(fitZoom()); setPanX(0); setPanY(fitPanY()) }
 
   /* ── Mouse wheel zoom ── */
   useEffect(() => {
@@ -3261,6 +3345,8 @@ function TacticsBoard() {
         if (e.key === "p" || e.key === "P") sk.play()
         if (e.key === "[") sk.go(-1)
         if (e.key === "]") sk.go(1)
+        if (e.key === "f" || e.key === "F") setPresenting(true)
+        if (e.key === "n" || e.key === "N") { e.preventDefault(); namingRef.current() }
       }
     }
     window.addEventListener("keydown", handler)
@@ -3369,13 +3455,13 @@ function TacticsBoard() {
   const edBoard = title.trim() === "Untitled board" ? "" : title.trim() // an unnamed board has no headline
   const edStrip = editorial && (homeName.trim() !== "" || awayName.trim() !== "" || homeScore !== "" || awayScore !== "")
   const edLines = editorial ? wrapCaption(caption) : []
-  const frame = frameRect(geo, canvasMode === "blank" ? "board" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length, pitch: canvasMode !== "blank" } : null)
+  const frame = frameRect(geo, canvasMode === "blank" ? "board" : presenting && focus === "board" ? "pitch" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length, pitch: canvasMode !== "blank" } : null, area)
   const sealK = Math.min(1, Math.min(frame.w, frame.h) / CH) // the seal and the legend shrink with a small frame
   const dispW = Math.min(SVG_DISPLAY_W, (SVG_DISPLAY_W * CH / CW) * frame.w / frame.h)
   const dispRef = useRef({ w: dispW, h: dispW * frame.h / frame.w })
   dispRef.current = { w: dispW, h: dispW * frame.h / frame.w }
   // A new frame fits the screen again
-  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode, editorial, edStrip, edLines.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode, editorial, edStrip, edLines.length, area, presenting, dock, view3d]) // eslint-disable-line react-hooks/exhaustive-deps
   /** Turns the pitch upright (or back). Everything on it moves with it, so every piece keeps its place on the pitch. One undo step. */
   const setOrientation = (v: boolean) => {
     if (v === vertical) return
@@ -3501,6 +3587,7 @@ function TacticsBoard() {
 
   /** How much bigger the names and numbers on the pieces are drawn */
   const labelScale = labelSize === "xl" ? 1.7 : labelSize === "large" ? 1.35 : 1
+  const labelSpots = useMemo(() => placeLabels(players, labelScale, pitchRect(geo, 0, 0, PW, PH)), [players, labelScale, geo.v, geo.sc, geo.ox, geo.oy]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Team kits ── */
   const kitOf = (team: "home" | "away") =>
@@ -3597,7 +3684,17 @@ function TacticsBoard() {
         )}
         {namesFor === team && there && (
           <div className="flex flex-col gap-2 pt-1">
-            <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Names · {call}</p>
+            <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Team sheet · {call}</p>
+            <TeamSheet rows={sheetRows(team)} color={team === "home" ? { bg: homeColor, fg: homeNum } : { bg: awayColor, fg: awayNum }}
+              onPick={setSheetHl} onChange={sheetEdit} />
+            <button onClick={() => startNaming(sheetRows(team)[0]?.id)}
+              className="py-1.5 rounded text-xs font-semibold hover:brightness-110 flex items-center justify-center gap-1.5"
+              style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}><TextCursorInput size={13} /> Type them on the pitch (N)</button>
+            <button onClick={() => setPasteOpen(v => !v)} aria-expanded={pasteOpen}
+              className="text-xs font-semibold text-left hover:underline" style={{ color: TEXT_MUTED, background: "transparent", border: "none", padding: 0 }}>
+              {pasteOpen ? "Hide the paste box" : "Paste a list instead"}
+            </button>
+            {pasteOpen && <>
             <textarea value={lineupText} onChange={e => setLineupText(e.target.value)} rows={7} aria-label="Lineup names"
               placeholder={"One per line or with commas: goalkeeper first, then each line right to left. A shirt number next to a name is used too."}
               className="rounded px-2 py-1.5 text-xs outline-none resize-y"
@@ -3605,6 +3702,7 @@ function TacticsBoard() {
             <button disabled={!lineupText.trim()} onClick={() => applyLineup(team, parseLineup(lineupText))}
               className="py-1.5 rounded text-xs font-semibold hover:brightness-110"
               style={{ background: ACCENT_SOLID, color: ACCENT_INK, opacity: lineupText.trim() ? 1 : 0.4 }}>Name {call}</button>
+            </>}
             {squads.length > 0 && (
               <div className="flex gap-1.5">
                 <select value="" aria-label="Saved squad"
@@ -3778,6 +3876,40 @@ function TacticsBoard() {
   const deleteSquad = (id: string) => {
     const next = squads.filter(x => x.id !== id)
     setSquads(next); writeSquads(next); setSquadId("")
+  }
+  /** Players as the naming box and the team sheet see them: team-sheet order, home first */
+  const sheetRows = (team: "home" | "away"): NameRunPlayer[] => {
+    const { f, shape } = formationOf(team)
+    return lineupOf(players, team, f, shape).map(p => ({ id: p.id, name: p.name, num: p.num, team, pos: POS_CODES.has(p.name) ? p.name : undefined }))
+  }
+  /** Name the players on the pitch one after another, starting with the home goalkeeper (or the player given). One undo step. */
+  const startNaming = (from?: string) => {
+    const ids = [...sheetRows("home"), ...sheetRows("away")].map(p => p.id)
+    if (!ids.length) { setExportNote("Add a team first, then name its players"); return }
+    undoPoint(); setSelection([]); setTool("select"); setNamesFor(null)
+    setNaming({ ids, i: Math.max(0, from ? ids.indexOf(from) : 0) })
+  }
+  namingRef.current = startNaming
+  const nameOne = (id: string, text: string) => setPlayers(ps => ps.map(p => (p.id === id ? { ...p, name: text.slice(0, 30) } : p)))
+  /** Leaving a player: "10 Pedri" also sets the number, a blank name goes back to the position */
+  const settleName = (id: string) => setPlayers(ps => ps.map(p => {
+    if (p.id !== id) return p
+    const t = splitNumber(p.name)
+    return t.num ? { ...p, name: t.name.slice(0, 30), num: t.num } : { ...p, name: p.name.trim() }
+  }))
+  const moveNaming = (d: number) => {
+    if (!naming) return
+    settleName(naming.ids[naming.i])
+    const i = naming.i + d
+    if (i < 0) return
+    if (i >= naming.ids.length) { setNaming(null); setExportNote("Everyone's named"); return }
+    setNaming({ ...naming, i })
+  }
+  const endNaming = () => { if (naming) settleName(naming.ids[naming.i]); setNaming(null) }
+  /** The team sheet changes one player; typing in one row is one undo step */
+  const sheetEdit = (id: string, patch: { name?: string; num?: string }) => {
+    undoPoint("sheet:" + id + Object.keys(patch).join())
+    setPlayers(ps => ps.map(p => (p.id === id ? { ...p, ...(patch.name !== undefined ? { name: patch.name.slice(0, 30) } : {}), ...(patch.num !== undefined ? { num: patch.num } : {}) } : p)))
   }
   /** Opens a team's names, filled in with the team as it stands: number and name, goalkeeper first */
   const openNames = (team: "home" | "away") => {
@@ -4289,19 +4421,81 @@ function TacticsBoard() {
   const legendGhosts = (stepList.length > 1 ? stepList.flatMap(f => f.players) : players).some(p => p.ghost)
   /** The part of the pitch in view: all of it, a half or a third */
   const partRect = (() => {
+    if (focus === "area" && area) return pitchRect(geo, area[0], area[1], area[2], area[3])
     const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
     const [x1, x2] = focusEnd === "attack" ? [PW - part, PW] : [0, part]
     return pitchRect(geo, x1, 0, x2, PH)
   })()
 
+  /* ── The stage: the tools in the dock, zooming into an area, and Present ── */
+  const pickTool = (t: Tool) => { setTool(t); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }
+  const toolItem = (id: Tool, icon: React.ReactNode, label: string, key: string, tint?: string): DockItem =>
+    ({ id, icon, label, key, tint, pressed: tool === id, onClick: () => pickTool(id) })
+  const dockGroups: DockItem[][] = [
+    [toolItem("select", <MousePointer2 size={19} />, "Select", "V"), toolItem("pan", <Hand size={19} />, "Pan", "H")],
+    [toolItem("homePlayer", <UserPlus size={19} />, "Home player", "1", homeColor), toolItem("awayPlayer", <UserPlus size={19} />, "Away player", "2", awayColor),
+      toolItem("marker", <X size={19} strokeWidth={3} />, "✕ marker", "X", MARKER_COLOR),
+      toolItem("ball", <svg width={19} height={19} viewBox="-12 -12 24 24"><BallGlyph r={10} icon /></svg>, "Ball", "B"),
+      { id: "names", icon: <TextCursorInput size={19} />, label: "Name players", key: "N", pressed: !!naming, onClick: () => (naming ? endNaming() : startNaming()) }],
+    [toolItem("arrow", <ArrowUpRight size={19} />, "Arrow", "A"), toolItem("text", <Type size={19} />, "Text", "T"),
+      toolItem("shape", <Pentagon size={19} />, "Shapes", "S"), toolItem("zone", <Square size={19} />, "Zone", "Z"),
+      { id: "image", icon: <ImagePlus size={19} />, label: "Upload image", key: "I", onClick: () => fileInputRef.current?.click() }],
+    [{ id: "panel", icon: <SlidersHorizontal size={18} />, label: panelOpen ? "Hide the settings" : "Board settings", pressed: panelOpen, onClick: () => setPanelOpen(v => !v) },
+      { id: "side", icon: <PanelLeftOpen size={18} />, label: "Tools down the side", onClick: () => { setDockPlace("side"); saveDock("side") } },
+      { id: "help", icon: <HelpCircle size={18} />, label: "Keyboard shortcuts", onClick: () => setShowShortcuts(true) }],
+  ]
+  /** Zooms into the part of the pitch dragged over: at least a fifth of it each way (so pieces stay a sensible size), inside the pitch */
+  const pickArea = (r: { x1: number; y1: number; x2: number; y2: number }) => {
+    setPicking(false)
+    const svg = svgRef.current, ctm = svg?.getScreenCTM()
+    if (!svg || !ctm) return
+    const at = (x: number, y: number) => { const pt = svg.createSVGPoint(); pt.x = x; pt.y = y; const b = pt.matrixTransform(ctm.inverse()); return toPitch(geo, b.x, b.y) }
+    const a = at(r.x1, r.y1), b = at(r.x2, r.y2)
+    const fit = (lo: number, hi: number, min: number, max: number): [number, number] => {
+      let l = Math.max(0, Math.min(lo, hi)), h = Math.min(max, Math.max(lo, hi))
+      if (h - l < min) { const c = (l + h) / 2; l = c - min / 2; h = c + min / 2 }
+      if (l < 0) { h -= l; l = 0 }
+      if (h > max) { l -= h - max; h = max }
+      return [Math.max(0, l), Math.min(max, h)]
+    }
+    const [x1, x2] = fit(a.x, b.x, PW * 0.2, PW), [y1, y2] = fit(a.y, b.y, PH * 0.2, PH)
+    undoPoint(); setArea([Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2)]); setFocus("area")
+  }
+  const startPicking = () => { if (view3d) setView3d(false); setPresenting(false); setPicking(true) }
+  // Present: full screen, only the board; arrows step through the move, Space plays it, Esc ends
+  useEffect(() => {
+    if (!presenting) return
+    setPicking(false); setSelection([]); setArrowDraft(null); setPolyDraft(null)
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => { /* the board still fills the window */ })
+    const onKey = (e: KeyboardEvent) => {
+      const sk = stepKeysRef.current
+      if (e.key === "Escape") setPresenting(false)
+      else if (e.key === "ArrowRight" || e.key === "PageDown") sk.go(1)
+      else if (e.key === "ArrowLeft" || e.key === "PageUp") sk.go(-1)
+      else if (e.key === " " || e.key === "p" || e.key === "P") sk.play()
+      else return
+      e.preventDefault(); e.stopPropagation()
+    }
+    const onFs = () => { if (!document.fullscreenElement) setPresenting(false) }
+    window.addEventListener("keydown", onKey, true)
+    document.addEventListener("fullscreenchange", onFs)
+    return () => {
+      window.removeEventListener("keydown", onKey, true); document.removeEventListener("fullscreenchange", onFs)
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
+    }
+  }, [presenting]) // eslint-disable-line react-hooks/exhaustive-deps
+  const apron = pitchStyle === "classic" ? (pitchColor === "white" ? "#e3e6e0" : "#1a5a2d") : PITCH_LOOKS[pitchStyle].b
+
   /* ─────────── RENDER ─────────── */
   return (
     <div className="flex flex-col h-screen overflow-hidden select-none"
       style={{ fontFamily: "'Inter', sans-serif", background: SURFACE_BASE, color: TEXT_PRIMARY }}>
+      <style>{STAGE_CSS + NAMES_CSS}</style>
+      <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
 
       {/* ── Top Header ── (on narrower screens Templates, My Boards, undo and redo move into the ⋯ menu) */}
       <header className="flex items-center gap-2 lg:gap-3 px-2 sm:px-3 py-2 border-b flex-shrink-0"
-        style={{ borderColor: DS_BORDER, background: SURFACE_1, minHeight: 48 }}>
+        style={{ borderColor: DS_BORDER, background: SURFACE_1, minHeight: 52, display: presenting ? "none" : undefined }}>
         {headerMenu && <div className="fixed inset-0 z-40" onClick={() => setHeaderMenu(null)} />}
         {/* Logo (goes Home) + title */}
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -4326,7 +4520,13 @@ function TacticsBoard() {
         </div>
 
 
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        {workspaceMode !== "brainstorm" && canvasMode !== "blank" && (
+          <div className="hidden md:flex items-center flex-shrink-0">
+            <ViewControls view3d={view3d} onView3d={setView3d}
+              zoomed={focus === "area"} onZoomArea={startPicking} onPresent={() => setPresenting(true)} />
+          </div>
+        )}
+        <div className="flex flex-1 justify-end items-center gap-1.5 min-w-0">
           {/* Templates */}
           <button onClick={() => setShowTemplates(true)} title="Templates"
             className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
@@ -4468,7 +4668,8 @@ function TacticsBoard() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* ── Icon Rail ── */}
+        {/* ── Icon Rail ── (when the tools are down the side) */}
+        {dock === "side" && !presenting && (
         <div style={{ width: 52, flexShrink: 0, height: "100%", background: SURFACE_1, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 8, paddingBottom: 8 }}>
           <style>{`
             .rl-wrap { position: relative; width: 100%; display: flex; justify-content: center; margin-bottom: 2px; }
@@ -4545,7 +4746,6 @@ function TacticsBoard() {
             </button>
             <div className="rl-tip">Upload image <span style={{ opacity: 0.5 }}>I</span></div>
           </div>
-          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
 
           <div style={{ flex: 1 }} />
 
@@ -4572,15 +4772,28 @@ function TacticsBoard() {
             </button>
             <div className="rl-tip">Keyboard shortcuts</div>
           </div>
+          <div className="rl-wrap" style={{ marginBottom: 0, marginTop: 2 }}>
+            <button aria-label="Tools under the board" onClick={() => { setDockPlace("bottom"); saveDock("bottom") }}
+              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: TEXT_MUTED }}>
+              <PanelBottom size={17} />
+            </button>
+            <div className="rl-tip">Tools under the board</div>
+          </div>
         </div>
+        )}
 
-        {panelOpen && (
-        <aside style={{ width: 248, flexShrink: 0, height: "100%", background: SURFACE_BASE, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div style={{ display: "flex", borderBottom: `1px solid ${DS_BORDER}`, flexShrink: 0 }}>
+        {panelOpen && !presenting && (
+        <aside className={dock === "bottom" ? "st-glass st-panel" : undefined}
+          style={dock === "bottom"
+            ? { order: 2, width: 300, flexShrink: 0, margin: "12px 12px 12px 0", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden" }
+            : { width: 248, flexShrink: 0, height: "100%", background: SURFACE_BASE, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ display: "flex", gap: 2, padding: 3, margin: 10, borderRadius: 10, background: SURFACE_2, flexShrink: 0 }}>
             {(["board", "selected"] as const).map(t => (
-              <button key={t} onClick={() => setSideTab(t)}
-                style={{ flex: 1, height: 36, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", border: "none", cursor: "pointer", background: "transparent", color: sideTab === t ? TEXT_PRIMARY : TEXT_MUTED, borderBottom: sideTab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent", fontFamily: "'Inter', sans-serif", transition: "color 0.12s" }}>
-                {t === "selected" ? "EDIT" : "BOARD"}
+              <button key={t} onClick={() => setSideTab(t)} aria-pressed={sideTab === t}
+                style={{ flex: 1, height: 28, fontSize: 12.5, fontWeight: 600, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "'Inter', sans-serif", transition: "background .16s, color .16s",
+                  background: sideTab === t ? "var(--ps-raised, rgba(255,255,255,0.14))" : "transparent", color: sideTab === t ? TEXT_PRIMARY : TEXT_MUTED,
+                  boxShadow: sideTab === t ? "0 1px 3px rgba(0,0,0,0.28)" : "none" }}>
+                {t === "selected" ? "Edit" : "Board"}
               </button>
             ))}
           </div>
@@ -5095,7 +5308,7 @@ function TacticsBoard() {
 
             <button aria-expanded={boardGroups.frame}
               onClick={() => setBoardGroups(g => ({ ...g, frame: !g.frame }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
               style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
@@ -5110,8 +5323,11 @@ function TacticsBoard() {
                   <>
                     <Segmented label="Pitch" value={vertical ? "v" : "h"} onChange={v => setOrientation(v === "v")}
                       options={[["h", "Horizontal"], ["v", "Vertical"]]} />
-                    <Segmented label="Show" value={focus} onChange={v => { undoPoint(); setFocus(v) }}
-                      options={[["board", "Whole board"], ["pitch", "Pitch"], ["half", "Half"], ["third", "Third"]]} />
+                    <Segmented label="Show" value={focus} onChange={v => { if (v === "area" && !area) { startPicking(); return } undoPoint(); setFocus(v) }}
+                      options={[["board", "Whole board"], ["pitch", "Pitch"], ["half", "Half"], ["third", "Third"], ["area", "Area"]]} />
+                    {focus === "area" && (
+                      <button onClick={startPicking} className="self-start text-xs font-semibold" style={{ color: ACCENT_TEXT, background: "none", border: "none", cursor: "pointer", padding: 0 }}>Change the area</button>
+                    )}
                     {(focus === "half" || focus === "third") && (
                       <Segmented label="End" value={focusEnd} onChange={v => { undoPoint(); setFocusEnd(v) }}
                         options={[["attack", "Attacking"], ["defend", "Own"]]} />
@@ -5128,7 +5344,7 @@ function TacticsBoard() {
 
             <button data-tour="teams" aria-expanded={boardGroups.teams}
               onClick={() => setBoardGroups(g => ({ ...g, teams: !g.teams }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
               style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
@@ -5160,7 +5376,7 @@ function TacticsBoard() {
 
             <button aria-expanded={boardGroups.pitch}
               onClick={() => setBoardGroups(g => ({ ...g, pitch: !g.pitch }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
               style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
@@ -5174,7 +5390,7 @@ function TacticsBoard() {
                 {canvasMode !== "blank" && (
                   <Segmented label="Pitch style" value={pitchStyle}
                     onChange={v => { undoPoint(); setPitchStyle(v); setBgColor(v === "classic" ? DEFAULT_BOARD_SETTINGS.bgColor : PITCH_LOOKS[v].bg) }}
-                    options={[["classic", "Classic"], ["night", "Night"], ["paper", "Paper"]]} />
+                    options={[["classic", "Classic"], ["night", "Night"], ["paper", "Paper"], ["cobalt", "Cobalt"]]} />
                 )}
                 {canvasMode !== "blank" && pitchStyle === "classic" && (
                   <Segmented label="Pitch colour" value={pitchColor} onChange={v => { undoPoint(); setPitchColor(v) }}
@@ -5264,7 +5480,7 @@ function TacticsBoard() {
 
             <button aria-expanded={boardGroups.editorial}
               onClick={() => setBoardGroups(g => ({ ...g, editorial: !g.editorial }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
               style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
@@ -5309,7 +5525,7 @@ function TacticsBoard() {
 
             <button aria-expanded={boardGroups.animation}
               onClick={() => setBoardGroups(g => ({ ...g, animation: !g.animation }))}
-              className="w-full flex items-center gap-2 px-3 text-xs font-semibold uppercase transition-colors"
+              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
               style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
@@ -5513,7 +5729,7 @@ function TacticsBoard() {
                   )}
 
                   {/* Pitch handles — only on hover so they don't show in screenshots */}
-                  {canvasMode !== "blank" && tool === "select" && hoveredPitch && (() => {
+                  {canvasMode !== "blank" && tool === "select" && hoveredPitch && !presenting && (() => {
                     const pb = pitchRect(geo, 0, 0, PW, PH)
                     const ox = pb.x
                     const oy = pb.y
@@ -5758,8 +5974,11 @@ function TacticsBoard() {
                     const numFontSize = Math.max(10 * s, Math.min(18 * s * labelScale, r * (labelScale > 1 ? 0.9 : 0.8)) * Math.min(1, 3 / Math.max(3, numberText.length)))
                     const ringW = (tokenStyle === "minimal" ? 1.5 : 3) * s // minimal pieces are flat: a thin ring and no drop shadow
                     return (
-                      <g key={p.id} transform={`translate(${p.x},${p.y})`} opacity={p.ghost ? 0.45 * (fadeOf.get(p.id) ?? 1) : fadeOf.get(p.id)}
+                      <g key={p.id} data-pid={p.id} transform={`translate(${p.x},${p.y})`} opacity={p.ghost ? 0.45 * (fadeOf.get(p.id) ?? 1) : fadeOf.get(p.id)}
+                        onMouseDown={e => { if (naming) e.preventDefault() /* keep the name box focused */ }}
+                        onDoubleClick={e => { if (!p.locked && !p.kind && teamOf(p)) { e.stopPropagation(); startNaming(p.id) } }}
                         onPointerDown={e => {
+                          if (naming) { e.stopPropagation(); const i = naming.ids.indexOf(p.id); if (i >= 0) { settleName(naming.ids[naming.i]); setNaming({ ...naming, i }) } return }
                           if (p.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } // locked: the press goes through to the board
                           if (tool === "homePlayer" || tool === "awayPlayer") {
                             e.stopPropagation()
@@ -5821,6 +6040,9 @@ function TacticsBoard() {
                             )}
                           </>
                         )}
+                        {((naming && naming.ids[naming.i] === p.id) || (!naming && sheetHl === p.id)) && (
+                          <circle className="nr-ring" r={r + 8} fill="none" stroke="#d7ff3c" strokeWidth={3} />
+                        )}
                         {/* Selection ring + resize handle at bottom-right (on top, so the whole handle can be grabbed) */}
                         {isSelected && (
                           <>
@@ -5832,8 +6054,8 @@ function TacticsBoard() {
                         )}
                         {/* Name below circle — on a dark outline or a chip, never shrinks, free overflow */}
                         {showPlayerLabels && p.name.trim() !== "" && (
-                          <NameLabel text={p.name} y={r + 6 * s + 13 * s * labelScale} size={13 * s * labelScale}
-                            halo={3 * s * labelScale} pad={6 * s * labelScale} chip={nameStyle === "chip"} />
+                          <NameLabel text={p.name} x={labelSpots.get(p.id)?.x ?? 0} y={labelSpots.get(p.id)?.y ?? r + 6 * s + 13 * s * labelScale} size={13 * s * labelScale}
+                            halo={3 * s * labelScale} pad={6 * s * labelScale} chip={nameStyle === "chip"} bold />
                         )}
                       </g>
                     )
@@ -5941,8 +6163,8 @@ function TacticsBoard() {
           </div>
 
           {/* ── Zoom controls ── */}
-          <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-lg px-2 py-1.5 border"
-            style={{ background: SURFACE_1, borderColor: DS_BORDER_STRONG, zIndex: 10 }}>
+          <div className="absolute bottom-4 left-4 flex items-center gap-1 px-2 py-1.5 st-glass"
+            style={{ zIndex: 10, borderRadius: 12, display: presenting ? "none" : undefined }} onPointerDown={e => e.stopPropagation()}>
             <button onClick={() => applyZoom(0.87)} className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Minus size={13} /></button>
             <span className="text-xs font-mono w-12 text-center" style={{ color: TEXT_PRIMARY }}>
               {Math.round(zoom * 100)}%
@@ -5954,8 +6176,8 @@ function TacticsBoard() {
           </div>
           {/* ── Steps: build a move one step at a time, and play it ── */}
           {workspaceMode !== "brainstorm" && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-lg px-1.5 py-1 border"
-              style={{ background: SURFACE_1, borderColor: DS_BORDER_STRONG, zIndex: 31 }} onPointerDown={e => e.stopPropagation()}>
+            <div data-steps className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 py-1 st-glass"
+              style={{ zIndex: 31, borderRadius: 12, bottom: dock === "bottom" ? 84 : 16, display: presenting ? "none" : undefined }} onPointerDown={e => e.stopPropagation()}>
               {stepList.length > 1 && (
                 <>
                   <button onClick={() => (play ? stopPlay() : startPlay())} disabled={!!making} title={play ? "Stop (P)" : "Play the move (P)"}
@@ -5995,6 +6217,23 @@ function TacticsBoard() {
                 </>
               )}
             </div>
+          )}
+          {dock === "bottom" && !presenting && (
+            <div className="st-float" style={{ bottom: 16, zIndex: 32 }}><Dock groups={dockGroups} /></div>
+          )}
+          {picking && <AreaPicker onPick={pickArea} onPreset={a => { setPicking(false); undoPoint(); setArea(a); setFocus("area") }} onCancel={() => setPicking(false)} />}
+          {naming && !presenting && (
+            <NameRun players={[...sheetRows("home"), ...sheetRows("away")]} ids={naming.ids} index={naming.i}
+              teamLabel={t => (t === "home" ? homeName : awayName).trim() || (t === "home" ? "Home" : "Away")}
+              colors={t => (t === "home" ? { bg: homeColor, fg: homeNum } : { bg: awayColor, fg: awayNum })}
+              onName={nameOne} onMove={moveNaming} onDone={endNaming} hudTop={66} />
+          )}
+          {focus === "area" && area && !presenting && !picking && (
+            <AreaMap area={area} vertical={vertical} onRepick={startPicking} onExit={() => { undoPoint(); setFocus("pitch") }} />
+          )}
+          {presenting && (
+            <PresentBar step={view ? view.step : stepIdx} steps={stepList.length} playing={!!play}
+              onPrev={() => stepKeysRef.current.go(-1)} onNext={() => stepKeysRef.current.go(1)} onPlay={() => stepKeysRef.current.play()} onExit={() => setPresenting(false)} />
           )}
           {/* While the move plays, a click anywhere on the board stops it */}
           {play && !making && <div className="absolute inset-0" style={{ zIndex: 30, cursor: "pointer" }} onPointerDown={e => { e.stopPropagation(); stopPlay() }} />}
@@ -6068,7 +6307,7 @@ function TacticsBoard() {
         </main>
 
         {/* ── Narrative: the written story that goes under the pitch (not on Braindump boards) ── */}
-        {workspaceMode !== "brainstorm" && (
+        {workspaceMode !== "brainstorm" && !presenting && (
         <section aria-label="Narrative" className="flex-shrink-0 border-t" style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
           <style>{`.ps-narrative:focus { border-color: ${ACCENT_SOLID} !important; } input.accent-green-400, input.accent-orange-400 { accent-color: ${ACCENT_SOLID}; }`}</style>
           <button type="button" onClick={() => setNarrativeOpen(o => !o)} aria-expanded={narrativeOpen} aria-controls="ps-narrative-text"
@@ -6633,7 +6872,7 @@ function KitFill({ cid, r, pat, c1, c2 }: { cid: string; r: number; pat: KitPatt
 }
 
 /** A player's name under the piece: on a dark outline (halo) or on a small dark chip that fits the name */
-function NameLabel({ text, y, size, halo, pad, chip }: { text: string; y: number; size: number; halo: number; pad: number; chip: boolean }) {
+function NameLabel({ text, x = 0, y, size, halo, pad, chip, bold = false }: { text: string; x?: number; y: number; size: number; halo: number; pad: number; chip: boolean; bold?: boolean }) {
   const ref = useRef<SVGTextElement>(null)
   const [w, setW] = useState(0)
   useLayoutEffect(() => {
@@ -6645,11 +6884,11 @@ function NameLabel({ text, y, size, halo, pad, chip }: { text: string; y: number
   return (
     <>
       {chip && w > 0 && (
-        <rect x={-w / 2 - pad} y={y - size * 0.925} width={w + pad * 2} height={size * 1.15} rx={size * 0.3}
+        <rect x={x - w / 2 - pad} y={y - size * 0.925} width={w + pad * 2} height={size * 1.15} rx={size * 0.3}
           fill="rgba(10,12,15,0.86)" stroke="rgba(255,255,255,0.16)" strokeWidth={1} style={{ pointerEvents: "none" }} />
       )}
-      <text ref={ref} textAnchor="middle" x={0} y={y}
-        fill="#ffffff" fontSize={size} fontWeight={700}
+      <text ref={ref} textAnchor="middle" x={x} y={y}
+        fill="#ffffff" fontSize={size} fontWeight={bold ? 800 : 700}
         stroke={chip ? undefined : "rgba(0,0,0,0.9)"} strokeWidth={chip ? undefined : halo}
         paintOrder={chip ? undefined : "stroke"} strokeLinejoin="round"
         overflow="visible"
@@ -6665,11 +6904,13 @@ function Segmented<T extends string>({ label, value, options, onChange }: { labe
   return (
     <div>
       <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>{label}</p>
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap" style={{ gap: 2, padding: 2, borderRadius: 9, background: SURFACE_2 }}>
         {options.map(([v, text]) => (
           <button key={v} onClick={() => onChange(v)} aria-pressed={value === v}
-            className="px-2 py-1 rounded text-xs font-medium transition-colors"
-            style={{ background: value === v ? ACCENT_GRADIENT : SURFACE_2, color: value === v ? ACCENT_INK : TEXT_MUTED }}>
+            className="text-xs font-medium"
+            style={{ flex: "1 1 auto", padding: "5px 8px", borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+              background: value === v ? "var(--ps-raised, rgba(255,255,255,0.14))" : "transparent", color: value === v ? TEXT_PRIMARY : TEXT_MUTED,
+              boxShadow: value === v ? "0 1px 3px rgba(0,0,0,0.28), 0 0 0 0.5px rgba(255,255,255,0.06) inset" : "none", transition: "background .16s, color .16s" }}>
             {text}
           </button>
         ))}
