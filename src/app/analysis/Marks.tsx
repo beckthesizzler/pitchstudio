@@ -22,8 +22,9 @@ function useWidth(deps: unknown[]) {
   return [ref, w] as const
 }
 
-/* A player tag in one of three styles:
-   sig    the PitchStudio signature. A dark plate with its top left corner cut at 45 degrees (the Pitch Block's corner),
+/* A player tag in one of four styles:
+   cast   broadcast: a ring at the player's feet and the name in bold, in the tag colour with a dark outline, no box (the default).
+   sig    the PitchStudio plate. A dark plate with its top left corner cut at 45 degrees (the Pitch Block's corner),
           a block of the tag colour down its left edge that follows the same cut, the name in spaced capitals,
           and a thin echo ring around the ground ring.
    plain  a rounded plate in the tag colour.
@@ -31,14 +32,14 @@ function useWidth(deps: unknown[]) {
    The ring is solid, a glow (a soft halo with a bright disc), or off. */
 function TagMark({ m, U }: { m: Tag; U: number }) {
   const u = U * m.size
-  const style = m.style ?? "sig", sig = style === "sig", bare = style === "bare"
+  const style = m.style ?? "sig", sig = style === "sig", bare = style === "bare", cast = style === "cast"
   const text = sig ? m.label.toUpperCase() : m.label
-  const fs = (sig ? 23 : bare ? 30 : 25) * u, ph = (sig ? 34 : 36) * u, pad = 12 * u
+  const fs = (sig ? 23 : cast ? 31 : bare ? 30 : 25) * u, ph = (sig ? 34 : cast ? 40 : 36) * u, pad = 12 * u
   const bw = 6 * u, gap = 9 * u, cut = 9 * u // signature: block width, space after it, the cut corner
   const [ref, tw] = useWidth([text, fs, style])
   const lx = m.x + m.dx, ly = m.y + m.dy
   const textW = tw || text.length * fs * 0.5
-  const pw = sig ? bw + gap + textW + 11 * u : textW + 2 * pad
+  const pw = sig ? bw + gap + textW + 11 * u : cast ? textW : textW + 2 * pad
   const ring = { rx: 24 * u, ry: 8 * u }
   const showLabel = text.trim().length > 0
   // the leader runs from the label down to just above the ring, when the label is above the player
@@ -58,11 +59,16 @@ function TagMark({ m, U }: { m: Tag; U: number }) {
         <ellipse cx={m.x} cy={m.y} rx={48 * u} ry={16 * u} fill={`url(#${gid})`} />
         <ellipse cx={m.x} cy={m.y} rx={22 * u} ry={7.5 * u} fill={m.color} fillOpacity={0.8} />
       </>}
-      {m.ring && !m.glow && <>
+      {m.ring && !m.glow && cast && <>
+        <ellipse cx={m.x} cy={m.y} rx={27 * u} ry={9.5 * u} fill="none" stroke="rgba(0,0,0,0.55)" strokeWidth={7.5 * u} />
+        <ellipse cx={m.x} cy={m.y} rx={27 * u} ry={9.5 * u} fill={m.color} fillOpacity={0.14} stroke={m.color} strokeWidth={3.8 * u} />
+      </>}
+      {m.ring && !m.glow && !cast && <>
         {sig && <ellipse cx={m.x} cy={m.y} rx={34 * u} ry={11.5 * u} fill="none" stroke={m.color} strokeOpacity={0.5} strokeWidth={1.5 * u} />}
         <ellipse cx={m.x} cy={m.y} rx={ring.rx} ry={ring.ry} fill={m.color} fillOpacity={0.2} stroke={m.color} strokeWidth={3.5 * u} />
       </>}
-      {leader && <line x1={lx} y1={ly} x2={m.x} y2={top} stroke={m.color} strokeWidth={(sig ? 2 : 2.5) * u} strokeOpacity={0.9} />}
+      {leader && cast && <line x1={lx} y1={ly} x2={m.x} y2={top} stroke="rgba(0,0,0,0.55)" strokeWidth={6 * u} strokeLinecap="round" />}
+      {leader && <line x1={lx} y1={ly} x2={m.x} y2={top} stroke={m.color} strokeWidth={(sig ? 2 : 2.5) * u} strokeOpacity={0.9} strokeLinecap={cast ? "round" : undefined} />}
       {!m.ring && !showLabel && <circle cx={m.x} cy={m.y} r={7 * u} fill={m.color} />}
       {showLabel && sig && (
         <g>
@@ -78,6 +84,11 @@ function TagMark({ m, U }: { m: Tag; U: number }) {
           <text ref={ref} x={lx} y={ly - ph / 2} textAnchor="middle" dominantBaseline="central" fill={inkFor(m.color)} fontSize={fs} fontWeight={700}
             style={{ fontFamily: CONDENSED, letterSpacing: "0.02em" }}>{text}</text>
         </g>
+      )}
+      {showLabel && cast && (
+        <text ref={ref} x={lx} y={ly - ph / 2} textAnchor="middle" dominantBaseline="central" fill={m.color} fontSize={fs} fontWeight={700}
+          stroke="#0a0b0d" strokeWidth={7.5 * u} paintOrder="stroke" strokeLinejoin="round"
+          style={{ fontFamily: "'Inter', sans-serif", letterSpacing: "-0.015em" }}>{text}</text>
       )}
       {showLabel && bare && (
         <text ref={ref} x={lx} y={ly - ph / 2} textAnchor="middle" dominantBaseline="central" fill={m.color} fontSize={fs} fontWeight={800}

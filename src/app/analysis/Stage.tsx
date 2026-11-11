@@ -16,7 +16,7 @@ export type Defaults = {
   text: { color: string; box: boolean }
 }
 export const START_DEFAULTS: Defaults = {
-  tag: { color: "#ffffff", ring: true, glow: false, style: "sig" },
+  tag: { color: "#d7ff3c", ring: true, glow: false, style: "cast" },
   spot: { color: "#d7ff3c" },
   zone: { color: "#d7ff3c", opacity: 0.28, outline: false },
   oval: { color: "#ffffff", opacity: 0.25, outline: false },

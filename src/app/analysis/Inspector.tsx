@@ -7,7 +7,7 @@ import { MARK_COLOURS, type Mark, type Shot } from "./model"
 
 const NAMES: Record<Mark["kind"], string> = { tag: "Player tag", spot: "Spotlight", zone: "Zone", arrow: "Arrow", text: "Text" }
 const KEYS: [string, string][] = [["V", "Select"], ["T", "Tag"], ["S", "Spotlight"], ["Z", "Zone"], ["O", "Oval"], ["A", "Arrow"], ["L", "Line"], ["X", "Text"],
-  ["Delete", "Remove"], ["Ctrl Z", "Undo"], ["Ctrl D", "Duplicate"], ["Arrows", "Nudge"], ["+ / −", "Zoom"], ["Ctrl wheel", "Zoom"], ["Space drag", "Pan"], ["1 to 4", "Shots"]]
+  ["Delete", "Remove"], ["Ctrl Z", "Undo"], ["Ctrl D", "Duplicate"], ["Arrows", "Nudge"], ["+ / −", "Zoom"], ["Ctrl wheel", "Zoom"], ["Space drag", "Pan"], ["1 to 9", "Shots"]]
 
 function Seg<T extends string | boolean>({ label, value, options, set }: { label: string; value: T; options: [T, string][]; set: (v: T) => void }) {
   return (
@@ -17,9 +17,9 @@ function Seg<T extends string | boolean>({ label, value, options, set }: { label
   )
 }
 
-export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, onDelete, onFront, onBack, onDim }: {
+export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, onDelete, onFront, onBack, onDim, video }: {
   mark: Mark | null; shot: Shot | null; set: (patch: Partial<Mark>, live?: boolean) => void; begin: () => void; end: () => void
-  textRef: RefObject<(HTMLInputElement & HTMLTextAreaElement) | null>; onDuplicate: () => void; onDelete: () => void; onFront: () => void; onBack: () => void; onDim: (v: number, live?: boolean) => void
+  textRef: RefObject<(HTMLInputElement & HTMLTextAreaElement) | null>; onDuplicate: () => void; onDelete: () => void; onFront: () => void; onBack: () => void; onDim: (v: number, live?: boolean) => void; video?: boolean
 }) {
   const row = (label: string, body: ReactNode) => <div className="an-row"><span className="an-lab">{label}</span>{body}</div>
   const slider = (label: string, value: number, min: number, max: number, step: number, put: (v: number) => void, fmt?: (v: number) => string) => row(label,
@@ -33,7 +33,7 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
     <div className="an-insp">
       <p className="an-cap">START HERE</p>
       <ol className="an-steps">
-        <li>Add up to 4 match shots.</li>
+        <li>{video ? "Pick a moment in your clip and press Moment." : "Add up to 10 match shots."}</li>
         <li>Tag the players that matter.</li>
         <li>Show the idea: zones, arrows, spotlights.</li>
         <li>Export, ready to post.</li>
@@ -68,7 +68,7 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
       </div>)}
 
       {m.kind === "tag" && <>
-        {row("Style", <Seg label="Tag style" value={m.style ?? "sig"} options={[["sig", "Signature"], ["plain", "Plain"], ["bare", "No box"]]} set={v => set({ style: v })} />)}
+        {row("Style", <Seg label="Tag style" value={m.style ?? "sig"} options={[["cast", "Broadcast"], ["sig", "Plate"], ["plain", "Plain"], ["bare", "Outline"]]} set={v => set({ style: v })} />)}
         {row("Ring under the player", <Seg label="Ring" value={!m.ring ? "off" : m.glow ? "glow" : "solid"} options={[["solid", "Solid"], ["glow", "Glow"], ["off", "Off"]]}
           set={v => set(v === "off" ? { ring: false } : { ring: true, glow: v === "glow" })} />)}
         {slider("Size", m.size, 0.5, 2.5, 0.05, v => set({ size: v }, true))}

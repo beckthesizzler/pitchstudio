@@ -48,11 +48,13 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
     if (!userId || busy) return
     setBusy("download"); setMsg("")
     try {
-      const [p, b, a, r] = await Promise.all([
+      const [p, b, a, r, lf, ls] = await Promise.all([
         supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
         supabase.from("boards").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         supabase.from("analyses").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         supabase.from("reports").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
+        (supabase as any).from("library_folders").select("*").eq("user_id", userId),
+        (supabase as any).from("library_shots").select("*").eq("user_id", userId),
       ])
       const failed = [p, b, a, r].find(x => x.error)
       if (failed) throw failed.error
@@ -62,7 +64,8 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         about: "Everything you made in PitchStudio. Board pictures are inside each board; report and analysis photos are listed under files.",
         exported_at: new Date().toISOString(),
         account: { id: userId, email },
-        profile: p.data, boards: b.data ?? [], analyses: a.data ?? [], reports: r.data ?? [], files,
+        profile: p.data, boards: b.data ?? [], analyses: a.data ?? [], reports: r.data ?? [],
+        library: { folders: lf.error ? [] : lf.data ?? [], shots: ls.error ? [] : ls.data ?? [] }, files,
       }
       const url = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }))
       const link = document.createElement("a")
@@ -119,7 +122,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ minWidth: 220, flex: 1 }}>
             <div style={{ fontWeight: 600, fontSize: 14 }}>Download my data</div>
-            <div style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 3 }}>Your profile, Creator Card, boards, analyses and reports in one file.</div>
+            <div style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 3 }}>Your profile, Creator Card, boards, analyses, Library and reports in one file.</div>
           </div>
           <button className="pf-btn" onClick={download} disabled={!userId || !!busy}><Download size={15} /> {busy === "download" ? "Gathering…" : "Download"}</button>
         </div>

@@ -1,10 +1,10 @@
 import { supabase } from "../lib/supabase"
 
-/* Live Game Analysis: the data. An analysis is up to 4 match shots, each with the marks drawn on it.
+/* Live Game Analysis: the data. An analysis is up to 10 match shots, each with the marks drawn on it.
    Every position is in the shot's own pixels, so a mark sits on the same spot at any screen size and in the export. */
 
 export type Pt = [number, number]
-export type TagStyle = "sig" | "plain" | "bare"
+export type TagStyle = "cast" | "sig" | "plain" | "bare"
 export type Tag = { id: string; kind: "tag"; color: string; x: number; y: number; dx: number; dy: number; label: string; ring: boolean; size: number; style?: TagStyle; glow?: boolean }
 export type Spot = { id: string; kind: "spot"; color: string; x: number; y: number; size: number }
 export type Zone = { id: string; kind: "zone"; color: string; pts: Pt[]; opacity: number; label: string; outline: boolean; size: number; round?: boolean }
@@ -12,9 +12,14 @@ export type Arrow = { id: string; kind: "arrow"; color: string; a: Pt; b: Pt; c:
 export type Note = { id: string; kind: "text"; color: string; x: number; y: number; text: string; box: boolean; size: number }
 export type Mark = Tag | Spot | Zone | Arrow | Note
 export type Shot = { id: string; path: string | null; w: number; h: number; dim: number; items: Mark[] }
-export type AnalysisData = { v: 1; shots: Shot[] }
+/** A moment in the video: it freezes there for a few seconds with drawings on it */
+export type Moment = { id: string; t: number; hold: number; dim: number; items: Mark[] }
+/** The video an analysis is made from (the file itself stays on the device) and what's drawn on it */
+export type VideoProject = { name: string; key: string; size: number; dur: number; w: number; h: number; inT: number; outT: number; moments: Moment[] }
+export type AnalysisData = { v: 1; shots: Shot[]; video: VideoProject | null }
+export const MAX_MOMENTS = 40
 
-export const MAX_SHOTS = 4
+export const MAX_SHOTS = 10
 export const MAX_MARKS = 300
 export const SHOT_BUCKET = "analysis-shots"
 export const LONG_SIDE = 1920 // shots are stored at most this wide (or tall)
@@ -43,7 +48,7 @@ function readMark(m: any, w: number, h: number): Mark | null {
   const x = num(m.x, -w, 2 * w, w / 2), y = num(m.y, -h, 2 * h, h / 2)
   const size = num(m.size, 0.3, 4, 1)
   switch (m.kind) {
-    case "tag": return { id, kind: "tag", color: col(m.color, "#ffffff"), x, y, dx: num(m.dx, -2 * w, 2 * w, 0), dy: num(m.dy, -2 * h, 2 * h, -100), label: str(m.label, 40), ring: m.ring !== false, size, style: m.style === "plain" || m.style === "bare" ? m.style : "sig", glow: m.glow === true }
+    case "tag": return { id, kind: "tag", color: col(m.color, "#ffffff"), x, y, dx: num(m.dx, -2 * w, 2 * w, 0), dy: num(m.dy, -2 * h, 2 * h, -100), label: str(m.label, 40), ring: m.ring !== false, size, style: m.style === "plain" || m.style === "bare" || m.style === "cast" ? m.style : "sig", glow: m.glow === true }
     case "spot": return { id, kind: "spot", color: col(m.color, "#d7ff3c"), x, y, size }
     case "zone": {
       const pts = (Array.isArray(m.pts) ? m.pts : []).map((p: unknown) => pt(p, w, h)).filter(Boolean) as Pt[]
@@ -72,7 +77,19 @@ export function readAnalysis(raw: unknown, userId: string): AnalysisData {
     const items = (Array.isArray(s.items) ? s.items.slice(0, MAX_MARKS) : []).map((m: unknown) => readMark(m, w, h)).filter(Boolean) as Mark[]
     shots.push({ id: str(s.id, 60) || newId(), path, w, h, dim: num(s.dim, 0, 0.7, 0), items })
   }
-  return { v: 1, shots }
+  return { v: 1, shots, video: readVideo(r.video) }
+}
+function readVideo(v: any): VideoProject | null {
+  if (!v || typeof v !== "object") return null
+  const key = str(v.key, 140), size = num(v.size, 1, 1e12, 0), dur = num(v.dur, 0.1, 601, 0)
+  if (!key || !size || !dur) return null
+  const w = Math.round(num(v.w, 16, 8000, 1920)), h = Math.round(num(v.h, 16, 8000, 1080))
+  const inT = num(v.inT, 0, dur, 0), outT = num(v.outT, inT, dur, dur)
+  const moments: Moment[] = (Array.isArray(v.moments) ? v.moments.slice(0, MAX_MOMENTS) : []).filter((m: any) => m && typeof m === "object").map((m: any) => ({
+    id: str(m.id, 60) || newId(), t: num(m.t, 0, dur, 0), hold: num(m.hold, 0.5, 10, 3), dim: num(m.dim, 0, 0.7, 0),
+    items: (Array.isArray(m.items) ? m.items.slice(0, MAX_MARKS) : []).map((x: unknown) => readMark(x, w, h)).filter(Boolean) as Mark[],
+  })).sort((a: Moment, b: Moment) => a.t - b.t)
+  return { name: str(v.name, 200) || "Video", key, size, dur, w, h, inT, outT, moments }
 }
 
 /* ── geometry ── */
@@ -169,7 +186,7 @@ export async function removeShots(paths: string[]) {
 /* ── fonts for exports ──
    An export is drawn from an svg, which can only use fonts that travel inside it. So the fonts the marks use are fetched
    once (from Google Fonts, the same files the app already uses) and put inside every export. */
-const EXPORT_FONTS = "https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@500;600;700&display=swap"
+const EXPORT_FONTS = "https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@500;600;700&display=swap" // what marks are drawn in
 const NEED: Record<string, number[]> = { "Barlow Condensed": [600, 700, 800], Inter: [500, 600, 700] }
 let fontCache: Promise<string> | null = null
 const prop = (block: string, name: string) => {
@@ -179,19 +196,19 @@ const prop = (block: string, name: string) => {
   const stop = j < 0 ? k : k < 0 ? j : Math.min(j, k)
   return block.slice(i + name.length + 1, stop < 0 ? undefined : stop).trim()
 }
-/** Puts 2 to 4 exported shots into one picture: 2 side by side, 3 or 4 in a 2 by 2 grid (a third on its own sits in the middle
-    of the bottom row). Each shot keeps its own shape inside its cell and gets its number, top right, in the signature plate. */
+/** Puts 2 to 10 exported shots into one picture: 2 side by side, up to 4 in a 2 by 2 grid, up to 9 in rows of 3, 10 in rows of 4
+    (a short last row sits in the middle). Each shot keeps its own shape inside its cell and gets its number, top right, in the signature plate. */
 export function combineShots(cvs: HTMLCanvasElement[]): Promise<Blob> {
-  const n = cvs.length, rows = n > 2 ? 2 : 1, gap = 12, cw = 1280
+  const n = cvs.length, cols = n <= 4 ? 2 : n <= 9 ? 3 : 4, rows = Math.ceil(n / cols), gap = 12, cw = cols === 2 ? 1280 : 960
   const ch = Math.round(cw * Math.min(1.25, Math.max(0.4, cvs[0].height / cvs[0].width)))
-  const W = 2 * cw + 3 * gap, H = rows * ch + (rows + 1) * gap
+  const W = cols * cw + (cols + 1) * gap, H = rows * ch + (rows + 1) * gap
   const out = document.createElement("canvas"); out.width = W; out.height = H
   const ctx = out.getContext("2d")!
   ctx.fillStyle = "#0d0e10"; ctx.fillRect(0, 0, W, H)
   ctx.imageSmoothingQuality = "high"
   cvs.forEach((c, i) => {
-    const lone = n === 3 && i === 2
-    const x = lone ? (W - cw) / 2 : gap + (i % 2) * (cw + gap), y = gap + Math.floor(i / 2) * (ch + gap)
+    const row = Math.floor(i / cols), inRow = row === rows - 1 ? n - row * cols : cols, offset = (W - (inRow * cw + (inRow + 1) * gap)) / 2
+    const x = offset + gap + (i % cols) * (cw + gap), y = gap + row * (ch + gap)
     const s = Math.min(cw / c.width, ch / c.height), w = c.width * s, h = c.height * s
     ctx.drawImage(c, x + (cw - w) / 2, y + (ch - h) / 2, w, h)
     // the number: a small dark plate with its corner cut and a volt block, like a signature tag
