@@ -37,6 +37,7 @@ import ProfilePage from "./pages/Profile"
 import { GoodbyePage } from "./pages/AccountData"
 const AnalysisPage = lazy(() => import("./pages/Analysis")) // only downloaded when someone opens Live Game Analysis
 const ReportPage = lazy(() => import("./pages/Report")) // only downloaded when someone opens Match Report
+const BrainDumpPage = lazy(() => import("./pages/BrainDump")) // only downloaded when someone opens Brain Dump
 import Tour, { TOUR_KEY } from "./Tour"
 
 /* ─────────────────────────── Types ─────────────────────────── */
@@ -7389,12 +7390,10 @@ function ReportRoute({ signedIn }: { signedIn: boolean }) {
   return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><ReportPage key={loc.key} /></Suspense>
 }
 
-/** "/braindump" opens the board as Braindump (a blank page to think on) */
+/** "/braindump" is Brain Dump (sign-in only): the wall of notes */
 function BraindumpRoute({ signedIn }: { signedIn: boolean }) {
-  const loc = useLocation()
   if (!signedIn) return <Navigate to="/" replace />
-  boardHandoff.braindump = true
-  return <TacticsBoard key={loc.key} />
+  return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><BrainDumpPage /></Suspense>
 }
 
 /* ─────────────────────────── Root (entry) ───────────────────── */

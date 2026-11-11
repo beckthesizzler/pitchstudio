@@ -16,14 +16,53 @@ const pitch = (x: number, y: number, w: number, view: "full" | "half", marks: Ma
 const slot = (x: number, y: number, w: number, h: number): Block =>
   ({ id: newId(), kind: "photo", x, y, w, h, rot: 0, src: "", nw: w, nh: h, ix: 0, iy: 0, iw: w, shape: "rect", edge: "hard", border: "none", shadow: false, flip: false })
 
-export type TemplateId = "report" | "stadium" | "blank"
+export type TemplateId = "breakdown" | "report" | "stadium" | "blank"
 export const TEMPLATES: { id: TemplateId; name: string; note: string }[] = [
-  { id: "report", name: "Match Report", note: "Warm paper, your colour on the headline: one idea up close, the numbers and a photo" },
+  { id: "breakdown", name: "The Breakdown", note: "The match, one key idea in two small pitches side by side, and the story told underneath" },
+  { id: "report", name: "Match Report", note: "Warm paper: one idea up close, the numbers and a photo" },
   { id: "stadium", name: "Under the Lights", note: "The 3D one: your pitch from the stand, floodlit, passes in the air" },
   { id: "blank", name: "Design your own", note: "An empty page and a headline. Add a pitch, stats, photos, anything" },
 ]
 
+/** The editorial colour: a deep crimson that reads on paper (the story colour of The Breakdown) */
+export const EDITORIAL = "#b3123f"
+
 export function makeTemplate(id: TemplateId): Report {
+  if (id === "breakdown") {
+    const ball = (p: Pt): Mark => ({ id: newId(), kind: "ball", p })
+    const zone = (p: Pt, r: Pt, label: string, hi: boolean, oval = false): Mark => ({ id: newId(), kind: "zone", p, r, oval, hi, label })
+    // 1 Compact: three of his team reach the first man, and his post is already covered
+    const one: Mark[] = [
+      zone([0.17, 0.78], [0.1, 0.08], "His post", true), zone([0.63, 0.46], [0.22, 0.17], "", false, true),
+      pass([0.22, 0.7], [0.44, 0.38], 2, true, { run: true }),
+      pass([0.8, 0.28], [0.67, 0.41], 1, false, { run: true }), pass([0.52, 0.66], [0.6, 0.52], 1, false, { run: true }), pass([0.24, 0.6], [0.18, 0.74], 1, false, { run: true }),
+      pl(0, [0.44, 0.36], "95", "Bastoni", true, "above"), pl(0, [0.8, 0.26], "", "", false), pl(0, [0.52, 0.68], "", "", false), pl(0, [0.24, 0.58], "", "", false), pl(0, [0.08, 0.38], "", "", false),
+      pl(1, [0.63, 0.46], "", "First man", false, "below"), ball([0.66, 0.48]), pl(1, [0.3, 0.16], "", "", false), pl(1, [0.42, 0.62], "", "", false), pl(1, [0.88, 0.72], "", "", false),
+    ]
+    // 2 Spread out: he's alone, his post is open and the counter is on
+    const two: Mark[] = [
+      zone([0.17, 0.78], [0.1, 0.08], "His post", true), zone([0.63, 0.46], [0.22, 0.17], "", false, true),
+      pass([0.22, 0.7], [0.44, 0.38], 2, true, { run: true }),
+      pass([0.63, 0.46], [0.2, 0.76], 2, false, { c: [0.42, 0.7] }), pass([0.42, 0.62], [0.22, 0.8], 1, false, { run: true }),
+      pl(0, [0.44, 0.36], "95", "Bastoni", true, "above"), pl(0, [0.92, 0.12], "", "", false), pl(0, [0.08, 0.3], "", "", false), pl(0, [0.5, 0.86], "", "", false),
+      pl(1, [0.63, 0.46], "", "First man", false, "below"), ball([0.66, 0.48]), pl(1, [0.3, 0.16], "", "", false), pl(1, [0.42, 0.62], "", "", false), pl(1, [0.88, 0.72], "", "", false),
+    ]
+    const t0 = DEFAULT_TEAMS("Inter", "Napoli"), teams: typeof t0 = [{ ...t0[0], color: "#1f3a68" }, t0[1]]
+    return { v: 2, format: "1:1", mode: "bright", paper: null, story: EDITORIAL, glow: false, seal: "br", blocks: [
+      text(900, 74, 620, "Key 3 · Balance", "label", 19, "right", "story"),
+      text(80, 62, 1100, "Who covers his post?", "title", 100),
+      text(80, 186, 1100, "Inter 2–1 Napoli · Serie A · Matchday 12", "label", 17),
+      text(80, 268, 700, "1  Compact", "title", 50),
+      text(80, 330, 700, "Three reach the first man. His post is covered.", "text", 23, "left", "muted"),
+      pitch(80, 380, 700, "half", one, { teams, crest: false, legend: false, ms: 1.7 }),
+      text(820, 268, 700, "2  Spread out", "title", 50),
+      text(820, 330, 700, "He's alone, and his post is open.", "text", 23, "left", "muted"),
+      pitch(820, 380, 700, "half", two, { teams, crest: false, legend: true, ms: 1.7 }),
+      text(80, 1040, 1440, "Bastoni jumps into midfield and the ball is lost. Compact, and three of his team reach the first man while his post is already covered. Spread out, and he's alone: his post is open and the counter is on.", "text", 32),
+      { id: newId(), kind: "stats", x: 80, y: 1225, w: 1440, s: 1, type: "team", player: "", num: "", rows: [{ value: "3", label: "Reach the first man, compact" }, { value: "1", label: "Reaches him, spread out" }, { value: "4s", label: "Until the counter hits his post" }] },
+      text(80, 1490, 900, "Illustrative, not a match moment.", "label", 14),
+    ] }
+  }
   if (id === "stadium") {
     const marks: Mark[] = [
       pl(1, [0.5, 0.03], "", "", false), pl(1, [0.2, 0.2], "", "", false), pl(1, [0.42, 0.16], "", "", false), pl(1, [0.6, 0.17], "", "", false),
