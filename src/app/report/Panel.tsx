@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from "react"
 import { AlignCenterHorizontal, AlignCenterVertical, ArrowDownToLine, ArrowUpToLine, CopyPlus, Crop, FlipHorizontal2, ImagePlus, Trash2 } from "lucide-react"
 import { FORMATS, MAX_POINTS, MAX_ROWS, PAPERS, type Block, type Mark, type Report } from "./model"
 import { lum } from "../brand/brand"
+import { EDITORIAL } from "./templates"
 import type { Mode, PitchTool } from "./Canvas"
 import { Teams, type TeamsProps } from "./Teams"
 import { Row, Seg, Toggle } from "./ui"
@@ -50,10 +51,10 @@ export function Panel(P: PanelProps) {
   const input = (label: string, value: string, put: (v: string) => void, o: { max?: number; ph?: string; ref?: RefObject<HTMLInputElement | null>; id?: string } = {}) => (
     <Row label={label}><input ref={o.ref} id={o.id} aria-label={label} className="rp-inp" value={value} maxLength={o.max ?? 60} placeholder={o.ph} onFocus={begin} onBlur={end} onChange={e => put(e.target.value)} /></Row>
   )
-  const swatches = (value: string | null, put: (v: string | null) => void, auto: string, autoTitle: string) => (
+  const swatches = (value: string | null, put: (v: string | null) => void, auto: string, autoTitle: string, cols: string[] = STORY_COLOURS) => (
     <div className="rp-cols">
       <button className={`rp-sw rp-auto${value === null ? " on" : ""}`} aria-label={autoTitle} title={autoTitle} aria-pressed={value === null} style={{ background: auto }} onClick={() => put(null)}>A</button>
-      {STORY_COLOURS.map(c => <button key={c} className={`rp-sw${value === c ? " on" : ""}`} aria-label={`Colour ${c}`} aria-pressed={value === c} style={{ background: c }} onClick={() => put(c)} />)}
+      {cols.map(c => <button key={c} className={`rp-sw${value === c ? " on" : ""}`} aria-label={`Colour ${c}`} aria-pressed={value === c} style={{ background: c }} onClick={() => put(c)} />)}
       <input type="color" className="rp-sw rp-any" aria-label="Any colour" value={value ?? auto} onFocus={begin} onBlur={end} onChange={e => put(e.target.value.toLowerCase())} />
     </div>
   )
@@ -128,7 +129,10 @@ export function Panel(P: PanelProps) {
             onChange={e => { const c = e.target.value.toLowerCase(), light = lum(c) > 0.6, dark = lum(c) < 0.2; if (light || dark) P.setReport({ paper: c, mode: light ? "bright" : "night" }) }} />
         </div></Row>
         <p className="rp-note">Warm paper, not pure white: your colour looks richer on it.</p>
-        <Row label="Story colour">{swatches(report.story, v => P.setReport({ story: v }), P.storyAuto, "Your colour (from your Creator Card)")}</Row>
+        {/* on the bright page only colours that read on paper: a pale one would need a highlighter behind the words */}
+        <Row label="Story colour">{report.mode === "bright"
+          ? swatches(report.story, v => P.setReport({ story: v }), lum(P.storyAuto) > 0.45 ? EDITORIAL : P.storyAuto, "Your colour (crimson on paper when yours is pale)", [EDITORIAL, "#1f3a68", ...STORY_COLOURS.filter(c => lum(c) <= 0.45)])
+          : swatches(report.story, v => P.setReport({ story: v }), P.storyAuto, "Your colour (from your Creator Card)")}</Row>
         <Toggle label="Glow of your colour" on={report.glow} set={v => P.setReport({ glow: v })} />
         <Row label="Your seal"><Seg label="Seal corner" value={report.seal} options={[["tl", "↖"], ["tr", "↗"], ["bl", "↙"], ["br", "↘"]]} set={v => P.setReport({ seal: v })} /></Row>
         <p className="rp-cap" style={{ marginTop: 22 }}>KEYS</p>

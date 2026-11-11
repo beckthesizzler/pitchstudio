@@ -60,9 +60,9 @@ export function useFontsReady() {
 /* ── the palette: the mode's colours and the story colour ── */
 export type Pal = (typeof MODES)["night"] & { story: string; storyInk: string; cased: boolean; bright: boolean }
 export function palette(r: Report, brand: Brand): Pal {
-  // your own colour tells the story; on the bright page a pale one (like studio lime) gives way to the editorial crimson, which reads on paper
-  const own = cardColours(brand).disc, m = MODES[r.mode], story = r.story ?? (r.mode === "bright" && lum(own) > 0.45 ? "#b3123f" : own)
-  // a story colour you pick that's pale still gets an ink edge on the bright page, so it never fades into the paper
+  // your own colour tells the story; on the bright page a pale one (like studio lime), yours or picked, gives way to the editorial crimson,
+  // which reads on paper: no highlighter band behind the words, ever
+  const pick = r.story ?? cardColours(brand).disc, m = MODES[r.mode], story = r.mode === "bright" && lum(pick) > 0.45 ? "#b3123f" : pick
   // a page colour that fights its mode (a dark paper in Bright, say) is ignored, so the words always read
   const bg = r.paper && (r.mode === "bright" ? lum(r.paper) > 0.6 : lum(r.paper) < 0.2) ? r.paper : m.bg
   return { ...m, bg, story, storyInk: inkFor(story), cased: r.mode === "bright" && lum(story) > 0.45, bright: r.mode === "bright" }

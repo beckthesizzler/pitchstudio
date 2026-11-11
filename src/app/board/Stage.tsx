@@ -15,6 +15,13 @@ export function readDock(): DockPlace {
   try { return localStorage.getItem(DOCK_KEY) === "side" ? "side" : "bottom" } catch { return "bottom" }
 }
 export function saveDock(d: DockPlace) { try { localStorage.setItem(DOCK_KEY, d) } catch { /* the choice just isn't remembered */ } }
+/* the settings panel: on the left or the right of the board, your choice (remembered on this device) */
+export type PanelSide = "left" | "right"
+const PANEL_KEY = "ps_panel_side"
+export function readPanelSide(): PanelSide {
+  try { return localStorage.getItem(PANEL_KEY) === "left" ? "left" : "right" } catch { return "right" }
+}
+export function savePanelSide(s: PanelSide) { try { localStorage.setItem(PANEL_KEY, s) } catch { /* the choice just isn't remembered */ } }
 
 /** Shared look for the floating glass surfaces (dock, view controls, present bar, mini map) */
 export const STAGE_CSS = `

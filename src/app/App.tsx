@@ -5,7 +5,7 @@ import { toPng, toJpeg, toBlob, toCanvas as nodeToCanvas, getFontEmbedCSS } from
 import {
   MousePointer2, UserPlus, ArrowUpRight, Type, Pentagon,
   Trash2, Download, RotateCcw, RotateCw,
-  ChevronDown, FileImage, Move, Hand, PanelLeftClose, PanelLeftOpen,
+  ChevronDown, FileImage, Move, Hand, PanelLeftClose, PanelLeftOpen, ArrowLeftToLine, ArrowRightToLine,
   ImagePlus, Square, Circle, Minus, Plus, BookOpen,
   Lock, X, RefreshCw, ChevronRight,
   Save, FolderOpen, LogIn, LogOut, AlertCircle, Check, Clock, MoreHorizontal, Copy, BringToFront, SendToBack, Unlock,
@@ -25,7 +25,7 @@ import {
 } from "./theme"
 import LandingPage from "./pages/Landing"
 import AuthPage, { recovery } from "./pages/Auth"
-import { STAGE_CSS, Dock, DockButton, ViewControls, PresentBar, AreaPicker, AreaMap, readDock, saveDock, type DockPlace, type DockItem } from "./board/Stage"
+import { STAGE_CSS, Dock, DockButton, ViewControls, PresentBar, AreaPicker, AreaMap, readDock, saveDock, readPanelSide, savePanelSide, type DockPlace, type DockItem, type PanelSide } from "./board/Stage"
 import { NameRun, TeamSheet, NAMES_CSS, splitNumber, type NameRunPlayer } from "./board/Names"
 import { reportError } from "./lib/telemetry" // also starts crash reporting
 import { shrinkForBoard, imageProblem } from "./lib/images"
@@ -373,7 +373,10 @@ const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSetting
   } else if (focus !== "board") {
     const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
     const [x1, x2] = end === "attack" ? [PW - part, PW] : [0, part]
-    const p = pitchRect(g, x1, 0, x2, PH)
+    // the view holds where the pitch normally sits, so a smaller (or moved) pitch shows as smaller; a bigger one widens the view to keep it whole
+    const a = pitchRect(g, x1, 0, x2, PH), b = pitchRect(pitchGeo(g.v, 1, 0, 0), x1, 0, x2, PH)
+    const px = Math.min(a.x, b.x), py = Math.min(a.y, b.y)
+    const p = { x: px, y: py, w: Math.max(a.x + a.w, b.x + b.w) - px, h: Math.max(a.y + a.h, b.y + b.h) - py }
     r = { x: p.x - 36, y: p.y - 36, w: p.w + 72, h: p.h + 100 }
   }
   // The editorial frame: room above for the slate (and under it for the score strip on a narrow frame) and below for the caption and the legend.
@@ -2359,6 +2362,8 @@ function TacticsBoard() {
   const [focusEnd, setFocusEnd] = useState<BoardSettings["focusEnd"]>("attack")
   const [area, setArea] = useState<BoardSettings["area"]>(null) // the area zoomed into
   const [dock, setDockPlace] = useState<DockPlace>(readDock) // the tools in a row under the board, or down the side
+  const [panelSide, setPanelSide] = useState<PanelSide>(readPanelSide) // the settings panel on the left or the right
+  const movePanel = () => { const s: PanelSide = panelSide === "left" ? "right" : "left"; setPanelSide(s); savePanelSide(s) }
   const [presenting, setPresenting] = useState(false) // Present: only the board, full screen
   const [picking, setPicking] = useState(false) // choosing the area to zoom into
   const stageRef = useRef({ dock: "bottom" as DockPlace, presenting: false, tilt: false })
@@ -3456,7 +3461,8 @@ function TacticsBoard() {
   const edBoard = title.trim() === "Untitled board" ? "" : title.trim() // an unnamed board has no headline
   const edStrip = editorial && (homeName.trim() !== "" || awayName.trim() !== "" || homeScore !== "" || awayScore !== "")
   const edLines = editorial ? wrapCaption(caption) : []
-  const frame = frameRect(geo, canvasMode === "blank" ? "board" : presenting && focus === "board" ? "pitch" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length, pitch: canvasMode !== "blank" } : null, area)
+  const [heldFrame, setHeldFrame] = useState<{ x: number; y: number; w: number; h: number } | null>(null) // the view holds still while you resize or move the pitch
+  const frame = heldFrame ?? frameRect(geo, canvasMode === "blank" ? "board" : presenting && focus === "board" ? "pitch" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length, pitch: canvasMode !== "blank" } : null, area)
   const sealK = Math.min(1, Math.min(frame.w, frame.h) / CH) // the seal and the legend shrink with a small frame
   const dispW = Math.min(SVG_DISPLAY_W, (SVG_DISPLAY_W * CH / CW) * frame.w / frame.h)
   const dispRef = useRef({ w: dispW, h: dispW * frame.h / frame.w })
@@ -3984,6 +3990,7 @@ function TacticsBoard() {
     const m = moveRef.current
     if (dragRef.current?.kind === "move" && m && !m.live && m.keep) setSelection([m.item]) // a plain click on one of several selected pieces selects just that one
     dragRef.current = null; moveRef.current = null; dragStartedRef.current = false
+    setHeldFrame(null)
     const mq = marqueeRef.current
     marqueeRef.current = null
     if (mq && marquee) {
@@ -4785,10 +4792,12 @@ function TacticsBoard() {
 
         {panelOpen && !presenting && (
         <aside className={dock === "bottom" ? "st-glass st-panel" : undefined}
+          data-panel-side={panelSide}
           style={dock === "bottom"
-            ? { order: 2, width: 300, flexShrink: 0, margin: "12px 12px 12px 0", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden" }
-            : { width: 248, flexShrink: 0, height: "100%", background: SURFACE_BASE, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div style={{ display: "flex", gap: 2, padding: 3, margin: 10, borderRadius: 10, background: SURFACE_2, flexShrink: 0 }}>
+            ? { order: panelSide === "right" ? 2 : 0, width: 300, flexShrink: 0, margin: panelSide === "right" ? "12px 12px 12px 0" : "12px 0 12px 12px", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden" }
+            : { order: panelSide === "right" ? 2 : 0, width: 248, flexShrink: 0, height: "100%", background: SURFACE_BASE, [panelSide === "right" ? "borderLeft" : "borderRight"]: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, margin: 10, flexShrink: 0 }}>
+          <div style={{ flex: 1, display: "flex", gap: 2, padding: 3, borderRadius: 10, background: SURFACE_2 }}>
             {(["board", "selected"] as const).map(t => (
               <button key={t} onClick={() => setSideTab(t)} aria-pressed={sideTab === t}
                 style={{ flex: 1, height: 28, fontSize: 12.5, fontWeight: 600, border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "'Inter', sans-serif", transition: "background .16s, color .16s",
@@ -4797,6 +4806,11 @@ function TacticsBoard() {
                 {t === "selected" ? "Edit" : "Board"}
               </button>
             ))}
+          </div>
+            <button aria-label={panelSide === "right" ? "Move the panel to the left" : "Move the panel to the right"} title={panelSide === "right" ? "Move the panel to the left" : "Move the panel to the right"} onClick={movePanel}
+              style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 10, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: SURFACE_2, color: TEXT_MUTED }}>
+              {panelSide === "right" ? <ArrowLeftToLine size={16} /> : <ArrowRightToLine size={16} />}
+            </button>
           </div>
 
           {/* ── SELECTED TAB ── */}
@@ -5747,17 +5761,18 @@ function TacticsBoard() {
                     return (
                       <>
                         {corners.map(c => (
-                          <g key={c.id} style={{ cursor: c.cursor }}
-                            onPointerDown={e => { e.stopPropagation(); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
+                          <g key={c.id} style={{ cursor: c.cursor }} onMouseEnter={() => setHoveredPitch(true)} onMouseLeave={() => setHoveredPitch(false)}
+                            onPointerDown={e => { e.stopPropagation(); setHeldFrame(frame); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
                             <rect x={c.x - hS} y={c.y - hS} width={hS * 2} height={hS * 2} rx={3}
                               fill="#fbbf24" stroke="#0d1117" strokeWidth={2} opacity={0.9} />
                           </g>
                         ))}
                         {/* Move pitch grip — top-centre bar, drag to reposition pitch */}
-                        <g style={{ cursor: "grab" }}
+                        <g style={{ cursor: "grab" }} onMouseEnter={() => setHoveredPitch(true)} onMouseLeave={() => setHoveredPitch(false)}
                           onPointerDown={e => {
                             e.stopPropagation()
                             const { x: mx, y: my } = svgXY(e)
+                            setHeldFrame(frame)
                             dragRef.current = { kind: "movePitch", id: "pitch", ox: mx - pitchOffX - PX, oy: my - pitchOffY - PY }
                           }}>
                           <rect x={midX - 30} y={oy - 20} width={60} height={15} rx={7}

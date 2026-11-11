@@ -71,9 +71,9 @@ export default function HomePage() {
       run: () => navigate(lastA ? `/analysis?open=${lastA.id}` : "/analysis"),
       extra: lastA ? { label: "New", run: () => navigate("/analysis") } : undefined },
     { id: "report", name: "Match Report", icon: <FileText size={20} />,
-      desc: lastR ? `Continue: ${lastR.title} · ${relTime(lastR.updated_at)}` : "Your story, your colour, your seal",
-      run: () => navigate(lastR ? `/report?open=${lastR.id}` : "/report"),
-      extra: lastR ? { label: "New", run: () => navigate("/report") } : undefined },
+      desc: lastR ? `Pick a template, or continue: ${lastR.title} · ${relTime(lastR.updated_at)}` : "Pick a template: your story, your colour, your seal",
+      run: () => navigate("/report"), // always the templates first; your last report is one tap away
+      extra: lastR ? { label: "Continue", run: () => navigate(`/report?open=${lastR.id}`) } : undefined },
     { id: "braindump", name: "Brain Dump", desc: "A blank page to think on", icon: <StickyNote size={20} />, run: () => navigate("/braindump") },
     { id: "profile", name: "Creator Profile", desc: "Your handle, signature and look", icon: <User size={20} />, run: () => navigate("/profile") },
     { id: "learn", name: "Learn Football", desc: "The best threads, picked for you", icon: <BookOpen size={20} />, soon: true },
