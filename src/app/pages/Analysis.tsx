@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ChevronLeft, ChevronRight, Circle, Copy, Download, FolderOpen, ImagePlus, Loader2, Maximize, MousePointer2, MoveUpRight, Pentagon, Plus, Redo2, Slash, Tag as TagIcon, Trash2, Type, Undo2, X, Flashlight, ZoomIn, ZoomOut } from "lucide-react"
+import { ChevronLeft, ChevronRight, Circle, Clapperboard, Copy, Download, FolderOpen, ImagePlus, Images, Loader2, Maximize, MousePointer2, MoveUpRight, PanelLeft, Pentagon, Plus, Redo2, Slash, Tag as TagIcon, Trash2, Type, Undo2, X, Flashlight, ZoomIn, ZoomOut } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
@@ -9,11 +9,16 @@ import { CreatorSeal } from "../brand/Signature"
 import { DEFAULT_BRAND, logoToDataUrl, readBrand, type Brand } from "../brand/brand"
 import { Stage, START_DEFAULTS, type Defaults, type Tool } from "../analysis/Stage"
 import { Inspector } from "../analysis/Inspector"
-import { MAX_MARKS, MAX_SHOTS, combineShots, downloadShot, exportFontCSS, moveMark, newId, prepareShot, readAnalysis, removeShots, unit, uploadShot, type Mark, type Shot } from "../analysis/model"
+import { Library, copyKept, DRAG_SHOT, DRAG_LIB, type LibShot } from "../analysis/Library"
+import { Dock, STAGE_CSS, type DockItem } from "../board/Stage"
+import { VideoStudio } from "../analysis/Video"
+import { findVideo, keepVideo, probeVideo, videoKey, videoProblem } from "../analysis/videoStore"
+import { MAX_MARKS, MAX_SHOTS, combineShots, downloadShot, exportFontCSS, moveMark, newId, prepareShot, readAnalysis, removeShots, unit, uploadShot, type Mark, type Shot, type VideoProject } from "../analysis/model"
 import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT, SCRIM } from "../theme"
 
-/* Live Game Analysis ("/analysis"): draw on up to 4 match shots (tags, spotlights, perspective zones, arrows, lines, text),
-   saved to your account as you go, exported at full size with your seal, ready to post (an X post takes 4 pictures). */
+/* Live Game Analysis ("/analysis"): draw on up to 10 match shots (tags, spotlights, perspective zones, arrows, lines, text),
+   saved to your account as you go, exported at full size with your seal, ready to post. The Library on the left keeps
+   shots (with their drawings) in folders, for any analysis. */
 
 const TOOLS: { id: Tool; name: string; key: string; icon: ReactNode }[] = [
   { id: "select", name: "Select", key: "V", icon: <MousePointer2 size={18} /> },
@@ -68,6 +73,17 @@ export default function AnalysisPage() {
   const [exportOpen, setExportOpen] = useState(false)
   const [busy, setBusy] = useState("")
   const [dragOver, setDragOver] = useState(false)
+  const [mode, setMode] = useState<"shots" | "video">(() => new URLSearchParams(window.location.search).get("mode") === "video" ? "video" : "shots")
+  const [video, setVideoState] = useState<VideoProject | null>(null) // the match clip and its moments
+  const videoRef = useRef<VideoProject | null>(null)
+  const [videoFile, setVideoFile] = useState<File | null>(null)
+  const [editing, setEditing] = useState<string | null>(null) // the moment open for drawing
+  const exportVideo = useRef<(() => void) | null>(null)
+  const videoInput = useRef<HTMLInputElement>(null)
+  const setVideo = (v: VideoProject | null) => { videoRef.current = v; setVideoState(v) }
+  const [libOpen, setLibOpen] = useState(() => { try { const v = localStorage.getItem("ps_library"); return v ? v === "1" : window.innerWidth >= 1180 } catch { return true } })
+  const [stripOver, setStripOver] = useState(false)
+  const showLibrary = (v: boolean) => { setLibOpen(v); try { localStorage.setItem("ps_library", v ? "1" : "0") } catch { /* not remembered */ } }
   const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
   const [handle, setHandle] = useState("")
   const [logo, setLogo] = useState<string | null>(null)
@@ -104,8 +120,9 @@ export default function AnalysisPage() {
       if (error || !data) { setPhase("missing"); return }
       const a = readAnalysis((data as any).data, u.id)
       const t = (data as any).title || "Untitled analysis"
-      setTitle(t); titleRef.current = t; setShots(a.shots)
-      savedJson.current = payload(t, a.shots); savedOnce.current = true; setStatus("saved")
+      setTitle(t); titleRef.current = t; setShots(a.shots); setVideo(a.video)
+      if (a.video) { if (!a.shots.length) setMode("video"); findVideo(a.video.key, a.video.size).then(f => { if (!off && f) setVideoFile(f) }) }
+      savedJson.current = payload(t, a.shots, a.video); savedOnce.current = true; setStatus("saved")
       setPhase("ready")
       for (const s of a.shots) downloadShot(s.path!).then(d => { if (!off) setSrcs(x => ({ ...x, [s.id]: d ?? "" })) })
     })
@@ -120,13 +137,13 @@ export default function AnalysisPage() {
   }, [brand.logo])
 
   /* ── saving: a moment after every change, only shots that finished uploading ── */
-  function payload(t: string, s: Shot[]) {
-    return JSON.stringify({ title: t.trim().slice(0, 80) || "Untitled analysis", data: { v: 1, shots: s.filter(x => x.path).map(x => ({ id: x.id, path: x.path, w: x.w, h: x.h, dim: x.dim, items: x.items })) } })
+  function payload(t: string, s: Shot[], v: VideoProject | null) {
+    return JSON.stringify({ title: t.trim().slice(0, 80) || "Untitled analysis", data: { v: 1, shots: s.filter(x => x.path).map(x => ({ id: x.id, path: x.path, w: x.w, h: x.h, dim: x.dim, items: x.items })), ...(v ? { video: v } : {}) } })
   }
   const save = async () => {
     if (!user) return
     if (saving.current) { again.current = true; return }
-    const json = payload(titleRef.current, shotsRef.current)
+    const json = payload(titleRef.current, shotsRef.current, videoRef.current)
     if (json === savedJson.current) { setStatus(Object.values(uploads).includes("fail") ? "error" : "saved"); return }
     saving.current = true; setStatus("saving")
     const p = JSON.parse(json)
@@ -136,18 +153,18 @@ export default function AnalysisPage() {
     savedJson.current = json; savedOnce.current = true
     if (!window.location.search.includes(aid)) window.history.replaceState(null, "", `/analysis?open=${aid}`)
     if (again.current) { again.current = false; save(); return }
-    setStatus(payload(titleRef.current, shotsRef.current) === json ? "saved" : "saving")
+    setStatus(payload(titleRef.current, shotsRef.current, videoRef.current) === json ? "saved" : "saving")
   }
   useEffect(() => {
     if (phase !== "ready" || !user) return
-    const json = payload(title, shots)
+    const json = payload(title, shots, video)
     if (json === savedJson.current) return
-    if (!savedOnce.current && !shots.some(s => s.path)) return // nothing worth saving yet
+    if (!savedOnce.current && !shots.some(s => s.path) && !video) return // nothing worth saving yet
     setStatus("saving")
     const t = setTimeout(save, 900)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, shots, phase, user])
+  }, [title, shots, video, phase, user])
   // Leaving while something is still on its way: the browser asks first
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => { if (status === "saving" || Object.keys(uploads).length) { e.preventDefault(); e.returnValue = "" } }
@@ -157,7 +174,7 @@ export default function AnalysisPage() {
 
   /* ── undo and redo (the marks and darkening of every shot) ── */
   const past = useRef<string[]>([]), future = useRef<string[]>([]), pending = useRef<string | null>(null)
-  const snap = () => JSON.stringify(shotsRef.current.map(s => [s.id, s.dim, s.items]))
+  const snap = () => JSON.stringify([shotsRef.current.map(s => [s.id, s.dim, s.items]), videoRef.current?.moments ?? null])
   const begin = () => { if (pending.current === null) pending.current = snap() }
   const end = () => {
     const p = pending.current
@@ -165,16 +182,23 @@ export default function AnalysisPage() {
     if (p !== null && p !== snap()) { past.current.push(p); if (past.current.length > 150) past.current.shift(); future.current = []; force(n => n + 1) }
   }
   const restore = (j: string) => {
-    const m = new Map((JSON.parse(j) as [string, number, Mark[]][]).map(a => [a[0], a]))
+    const [list, moments] = JSON.parse(j) as [[string, number, Mark[]][], VideoProject["moments"] | null]
+    const m = new Map(list.map(a => [a[0], a]))
     applyShots(s => s.map(sh => { const a = m.get(sh.id); return a ? { ...sh, dim: a[1], items: a[2] } : sh }))
+    if (moments && videoRef.current) { setVideo({ ...videoRef.current, moments }); if (editing && !moments.some(x => x.id === editing)) setEditing(null) }
   }
   const undo = () => { end(); const prev = past.current.pop(); if (prev === undefined) return; future.current.push(snap()); restore(prev); setSel(null); force(n => n + 1) }
   const redo = () => { end(); const next = future.current.pop(); if (next === undefined) return; past.current.push(snap()); restore(next); setSel(null); force(n => n + 1) }
 
   /* ── the current shot and its marks ── */
-  const shot: Shot | null = shots[cur] ?? null
+  const moment = mode === "video" && video && editing ? video.moments.find(x => x.id === editing) ?? null : null
+  const shot: Shot | null = mode === "video" ? (moment && video ? { id: moment.id, path: "video", w: video.w, h: video.h, dim: moment.dim, items: moment.items } : null) : shots[cur] ?? null
   const selMark = shot && sel ? shot.items.find(m => m.id === sel) ?? null : null
-  const applyItems = (fn: (items: Mark[]) => Mark[]) => applyShots(s => s.map((sh, i) => (i === cur ? { ...sh, items: fn(sh.items) } : sh)))
+  const editMoment = (fn: (m: VideoProject["moments"][number]) => VideoProject["moments"][number]) => {
+    const v = videoRef.current
+    if (v && editing) setVideo({ ...v, moments: v.moments.map(x => (x.id === editing ? fn(x) : x)) })
+  }
+  const applyItems = (fn: (items: Mark[]) => Mark[]) => mode === "video" ? editMoment(m => ({ ...m, items: fn(m.items) })) : applyShots(s => s.map((sh, i) => (i === cur ? { ...sh, items: fn(sh.items) } : sh)))
   const create = (m: Mark) => {
     if (!shot) return
     if (shot.items.length >= MAX_MARKS) { say(`A shot holds ${MAX_MARKS} marks.`); return }
@@ -200,7 +224,7 @@ export default function AnalysisPage() {
     if (!selMark) return
     begin(); applyItems(items => { const rest = items.filter(x => x.id !== selMark.id); return front ? [...rest, selMark] : [selMark, ...rest] }); end()
   }
-  const setDim = (v: number) => applyShots(s => s.map((sh, i) => (i === cur ? { ...sh, dim: v } : sh)))
+  const setDim = (v: number) => mode === "video" ? editMoment(m => ({ ...m, dim: v })) : applyShots(s => s.map((sh, i) => (i === cur ? { ...sh, dim: v } : sh)))
   // A new tag, zone label or note: its words open for typing as soon as the panel shows them
   const [focusReq, setFocusReq] = useState(0)
   const focusText = () => setFocusReq(n => n + 1)
@@ -227,8 +251,8 @@ export default function AnalysisPage() {
     const imgs = files.filter(f => f.type.startsWith("image/"))
     if (!imgs.length) { say("That isn't a picture. Use a PNG, JPG or WebP screenshot."); return }
     const room = MAX_SHOTS - shotsRef.current.length
-    if (room <= 0) { say("An analysis holds 4 shots. Start a new one for more."); return }
-    if (imgs.length > room) say(`Added ${room} of ${imgs.length}: an analysis holds 4 shots.`)
+    if (room <= 0) { say(`An analysis holds ${MAX_SHOTS} shots. Keep some in your Library and start a new one.`); return }
+    if (imgs.length > room) say(`Added ${room} of ${imgs.length}: an analysis holds ${MAX_SHOTS} shots.`)
     for (const f of imgs.slice(0, room)) {
       let prep
       try { prep = await prepareShot(f) } catch (e) { say((e as Error).message === "too big" ? "That picture is over 25 MB." : "That picture couldn't be opened. Try a PNG or JPG."); continue }
@@ -258,12 +282,49 @@ export default function AnalysisPage() {
     setCur(c => Math.max(0, Math.min(c > i ? c - 1 : c, shotsRef.current.length - 1)))
     setSel(null); setConfirmDel(null)
   }
+  /** A match clip chosen: a new video for this analysis, or the same one found again on this computer */
+  const chooseVideo = async (f: File) => {
+    if (!user) return
+    let info
+    try { info = await probeVideo(f) } catch (e) { say(videoProblem(e)); return }
+    const key = videoKey(f), cur0 = videoRef.current
+    if (cur0 && cur0.key !== key && cur0.size !== f.size) {
+      if (cur0.moments.length) { say("That's a different video. Start a new analysis for it."); return }
+    }
+    if (!cur0 || (cur0.key !== key && cur0.size !== f.size)) {
+      setVideo({ name: f.name.slice(0, 200), key, size: f.size, dur: info.dur, w: info.w, h: info.h, inT: 0, outT: info.dur, moments: [] })
+      ;(window as any).posthog?.capture("video_imported", { seconds: Math.round(info.dur) })
+    }
+    setVideoFile(f); setEditing(null); setMode("video")
+    keepVideo(f, cur0?.key ?? key).then(ok => { if (!ok) say("This browser won't keep the video, so you'll choose it again next time.") })
+  }
+  /** A shot kept in the Library, copied into this analysis to work on */
+  const addKeptShot = async (k: LibShot) => {
+    if (!user) return
+    if (shotsRef.current.length >= MAX_SHOTS) { say(`An analysis holds ${MAX_SHOTS} shots.`); return }
+    setBusy("Adding from your Library…")
+    try {
+      const s = await copyKept(user.id, aid, k)
+      if (shotsRef.current.length >= MAX_SHOTS) return
+      applyShots(list => [...list, s]); setCur(shotsRef.current.length - 1); setSel(null); setZoom(1)
+      downloadShot(s.path!).then(d => setSrcs(x => ({ ...x, [s.id]: d ?? "" })))
+      ;(window as any).posthog?.capture("library_shot_used")
+    } catch { say("Couldn't add it. Try again.") } finally { setBusy("") }
+  }
   const moveShot = (i: number, by: number) => {
     const j = i + by
     if (j < 0 || j >= shotsRef.current.length) return
     applyShots(s => { const n = [...s]; [n[i], n[j]] = [n[j], n[i]]; return n })
     setCur(j)
   }
+
+  // A kept shot dropped on the strip: the Library hands over its row
+  const keptRef = useRef<Map<string, LibShot>>(new Map())
+  useEffect(() => {
+    const on = (e: Event) => { const k = keptRef.current.get((e as CustomEvent).detail); if (k) addKeptShot(k) }
+    window.addEventListener("ps-use-kept", on)
+    return () => window.removeEventListener("ps-use-kept", on)
+  })
 
   /* ── keys, paste and drop ── */
   useEffect(() => {
@@ -290,7 +351,7 @@ export default function AnalysisPage() {
       if (shot && e.key === "0") { setZoom(1); return }
       const t = BY_KEY[e.key.toLowerCase()]
       if (t && shot) { pickTool(t); return }
-      if (/^[1-4]$/.test(e.key) && +e.key <= shotsRef.current.length) { setCur(+e.key - 1); setSel(null) }
+      if (/^[1-9]$/.test(e.key) && +e.key <= shotsRef.current.length) { setCur(+e.key - 1); setSel(null) }
     }
     const up = (e: KeyboardEvent) => { if (e.key.startsWith("Arrow")) end() }
     const paste = (e: ClipboardEvent) => {
@@ -323,7 +384,7 @@ export default function AnalysisPage() {
   /* ── export: the shot at its full size, with your seal ── */
   const fileBase = (title.trim() || "Analysis").replace(/[^A-Za-z0-9 _.()-]+/g, "").trim().slice(0, 60) || "Analysis"
   const renderCanvas = async (type: "image/png" | "image/jpeg", seal = true): Promise<HTMLCanvasElement> => {
-    const svg = stageRef.current, s = shotsRef.current[curRef.current]
+    const svg = stageRef.current, s = shotRef.current
     if (!svg || !s) throw new Error("no shot")
     const css = await exportFontCSS()
     const clone = svg.cloneNode(true) as SVGSVGElement
@@ -349,6 +410,8 @@ export default function AnalysisPage() {
   }
   const curRef = useRef(cur)
   curRef.current = cur
+  const shotRef = useRef(shot)
+  shotRef.current = shot
   const frames = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 60))))
   const save1 = (blob: Blob, name: string) => {
     const url = URL.createObjectURL(blob)
@@ -409,12 +472,16 @@ export default function AnalysisPage() {
     if (r.id === aid) navigate("/analysis", { replace: true })
   }
 
-  const U = shot ? unit(shot.w) : 1
-  const sealNode = shot ? (
-    <g data-seal="1" transform={`translate(${shot.w - 8 * U},${shot.h - 8 * U}) scale(${1.25 * U})`} style={{ pointerEvents: "none" }}>
-      <CreatorSeal brand={brand} handle={handle} logo={logo} pill="rgba(0,0,0,0.62)" />
-    </g>
-  ) : null
+  /** Your seal, bottom right of a picture this size */
+  const sealFor = (w: number, h: number) => {
+    const u = unit(w)
+    return (
+      <g data-seal="1" transform={`translate(${w - 8 * u},${h - 8 * u}) scale(${1.25 * u})`} style={{ pointerEvents: "none" }}>
+        <CreatorSeal brand={brand} handle={handle} logo={logo} pill="rgba(0,0,0,0.62)" />
+      </g>
+    )
+  }
+  const sealNode = shot ? sealFor(shot.w, shot.h) : null
   const failed = Object.values(uploads).includes("fail")
   const upCount = Object.values(uploads).filter(v => v === "up").length
 
@@ -444,7 +511,10 @@ export default function AnalysisPage() {
         .an-menu { position: absolute; right: 0; top: 42px; z-index: 30; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER_STRONG}; border-radius: 12px; padding: 6px; min-width: 230px; box-shadow: 0 14px 40px rgba(0,0,0,.35); }
         .an-menu button { display: flex; width: 100%; align-items: center; gap: 10px; background: none; border: none; color: ${TEXT_PRIMARY}; font: 500 13px 'Inter', sans-serif; padding: 9px 10px; border-radius: 8px; cursor: pointer; text-align: left; }
         .an-menu button:hover { background: ${SURFACE_2}; } .an-menu small { color: ${TEXT_MUTED}; margin-left: auto; }
-        .an-body { display: grid; grid-template-columns: 78px 1fr 290px; min-height: 0; }
+        .an-body { display: grid; grid-template-columns: 1fr 290px; min-height: 0; }
+        .an-body.lib { grid-template-columns: 272px 1fr 290px; }
+        .an-dock { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; }
+        .an-mode button small { font: 600 10.5px 'Inter', sans-serif; color: ${TEXT_MUTED}; margin-left: 2px; }
         .an-rail { border-right: 1px solid ${DS_BORDER}; padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
         .an-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 7px; border-radius: 10px; border: 1px solid transparent; background: none; color: ${TEXT_MUTED}; font: 600 11px 'Inter', sans-serif; cursor: pointer; position: relative; }
         .an-tool:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
@@ -452,7 +522,7 @@ export default function AnalysisPage() {
         .an-tool kbd { position: absolute; top: 3px; right: 5px; font: 600 9px 'Inter', sans-serif; opacity: .6; }
         .an-tool:disabled { opacity: .35; cursor: default; }
         .an-mid { display: grid; grid-template-rows: 1fr auto; min-width: 0; min-height: 0; background: #101114; }
-        .an-view { position: relative; min-width: 0; min-height: 0; display: flex; padding: 12px; }
+        .an-view { position: relative; min-width: 0; min-height: 0; display: flex; padding: 12px 12px 84px; }
         .an-wrap { position: relative; margin: auto; flex-shrink: 0; box-shadow: 0 10px 40px rgba(0,0,0,.45); } /* auto margins centre it, and still let a zoomed shot scroll to every edge */
         .an-hint { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: rgba(12,14,18,.82); color: #f5f5f7; font: 500 12.5px 'Inter', sans-serif; padding: 7px 12px; border-radius: 999px; pointer-events: none; white-space: nowrap; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; }
         .an-zoom { display: flex; align-items: center; gap: 6px; justify-content: flex-end; padding: 6px 12px; color: #c9ccd2; font: 500 12px 'Inter', sans-serif; }
@@ -481,7 +551,8 @@ export default function AnalysisPage() {
         .an-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 12px; color: ${TEXT_MUTED}; }
         .an-keys div { display: flex; align-items: center; gap: 6px; } .an-keys kbd { font: 600 10.5px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 2px 5px; white-space: nowrap; }
         .an-steps { margin: 0; padding-left: 18px; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.9; }
-        .an-strip { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-top: 1px solid ${DS_BORDER}; background: ${SURFACE_BASE}; overflow-x: auto; }
+        .an-strip { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-top: 1px solid ${DS_BORDER}; background: ${SURFACE_BASE}; overflow-x: auto; outline: 2px solid transparent; outline-offset: -3px; transition: outline-color .14s, background .14s; }
+        .an-strip.over { outline-color: ${ACCENT_SOLID}; background: var(--ps-accent-soft); }
         .an-thumb { position: relative; width: 132px; height: 74px; border-radius: 9px; overflow: hidden; border: 2px solid transparent; cursor: pointer; flex-shrink: 0; background: #16181c; padding: 0; }
         .an-thumb.on { border-color: ${ACCENT_SOLID}; }
         .an-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -511,19 +582,22 @@ export default function AnalysisPage() {
           .an-top [data-export] { margin-left: auto; }
           .an-hide-sm { display: none; }
           .an-body { grid-template-columns: 1fr; }
-          .an-rail { flex-direction: row; border-right: none; border-bottom: 1px solid ${DS_BORDER}; overflow-x: auto; padding: 6px 8px; }
-          .an-tool { min-width: 62px; }
+          .an-body.lib { grid-template-columns: 1fr; }
+          .an-body .lb { border-right: none; border-bottom: 1px solid ${DS_BORDER}; max-height: 46vh; }
+          .an-dock { max-width: calc(100% - 16px); overflow-x: auto; border-radius: 18px; }
           .an-mid { height: 62vw; min-height: 240px; max-height: 70vh; }
           .an-insp { border-left: none; border-top: 1px solid ${DS_BORDER}; }
           .an-empty { padding: 18px; margin: 12px; } .an-empty h2 { font-size: 18px; }
           .an-hint { font-size: 11px; top: 6px; padding: 5px 10px; white-space: normal; text-align: center; width: max-content; max-width: 92%; }
           .an-keysbox { display: none; }
         }
-        @media (pointer: coarse) { .an-tool kbd, .an-keysbox { display: none; } }
+        @media (pointer: coarse) { .an-keysbox { display: none; } }
       `}</style>
 
       <header className="an-top">
         <button className="an-home" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
+        {phase !== "missing" && <button className="an-icon" aria-label={libOpen ? "Hide the Library" : "Show the Library"} aria-pressed={libOpen} title="Library" onClick={() => showLibrary(!libOpen)}
+          style={libOpen ? { color: ACCENT_TEXT } : undefined}><PanelLeft size={16} /></button>}
         <input className="an-title" aria-label="Analysis title" value={title} maxLength={80} onChange={e => setTitle(e.target.value)} onBlur={() => { if (!title.trim()) setTitle("Untitled analysis") }} />
         <span className={`an-status${failed || status === "error" ? " bad" : ""}`} aria-live="polite">
           {failed || status === "error" ? <>Not saved <button onClick={retry}>Retry</button></>
@@ -531,18 +605,32 @@ export default function AnalysisPage() {
               : status === "saving" ? "Saving…" : status === "saved" ? "Saved" : shots.length ? "" : "Not saved yet"}
         </span>
         <span className="an-sp" />
+        {phase !== "missing" && (
+          <div className="st-seg st-glass an-mode" role="group" aria-label="Work on" style={{ boxShadow: "none" }}>
+            <button aria-pressed={mode === "shots"} onClick={() => { setMode("shots"); setSel(null) }}><Images size={14} /> Shots{shots.length ? <small>{shots.length}</small> : null}</button>
+            <button aria-pressed={mode === "video"} onClick={() => { setMode("video"); setSel(null) }}><Clapperboard size={14} /> Video{video?.moments.length ? <small>{video.moments.length}</small> : null}</button>
+          </div>
+        )}
+        <span className="an-sp" />
         <button className="an-icon" onClick={undo} disabled={!past.current.length} aria-label="Undo" title="Undo (Ctrl Z)"><Undo2 size={16} /></button>
         <button className="an-icon" onClick={redo} disabled={!future.current.length} aria-label="Redo" title="Redo (Ctrl Shift Z)"><Redo2 size={16} /></button>
         <button className="an-btn" onClick={openList}><FolderOpen size={15} /><span className="an-hide-sm">My analyses</span></button>
         <button className="an-btn" onClick={() => navigate("/analysis")} aria-label="New analysis"><Plus size={15} /><span className="an-hide-sm">New</span></button>
         <div style={{ position: "relative" }} data-export>
-          <button className="an-btn pri" disabled={!shot || !!busy} onClick={() => setExportOpen(o => !o)} aria-expanded={exportOpen}><Download size={15} /> Export</button>
-          {exportOpen && (
+          <button className="an-btn pri" disabled={(!shot && !(mode === "video" && video && videoFile)) || !!busy} onClick={() => setExportOpen(o => !o)} aria-expanded={exportOpen}><Download size={15} /> Export</button>
+          {exportOpen && mode === "video" && (
+            <div className="an-menu" role="menu">
+              {video && videoFile && <button role="menuitem" onClick={() => { setExportOpen(false); exportVideo.current?.() }}><Clapperboard size={14} /> Video (MP4)<small>the clip with its moments</small></button>}
+              {shot && <button role="menuitem" onClick={() => doExport("png")}>PNG<small>this moment, full size</small></button>}
+              {shot && <button role="menuitem" onClick={() => doExport("copy")}><Copy size={14} /> Copy image</button>}
+            </div>
+          )}
+          {exportOpen && mode === "shots" && (
             <div className="an-menu" role="menu">
               <button role="menuitem" onClick={() => doExport("png")}>PNG<small>this shot, full size</small></button>
               <button role="menuitem" onClick={() => doExport("jpg")}>JPG<small>smaller file</small></button>
-              {shots.length > 1 && <button role="menuitem" onClick={() => doExport("all")}>All {shots.length} shots<small>PNG, ready for one post</small></button>}
-              {shots.length > 1 && <button role="menuitem" onClick={() => doExport("grid")}>Combine into one<small>{shots.length === 2 ? "side by side" : "2 by 2 grid"}, PNG</small></button>}
+              {shots.length > 1 && <button role="menuitem" onClick={() => doExport("all")}>All {shots.length} shots<small>PNG, one each</small></button>}
+              {shots.length > 1 && <button role="menuitem" onClick={() => doExport("grid")}>Combine into one<small>{shots.length === 2 ? "side by side" : shots.length <= 4 ? "2 by 2 grid" : "a grid"}, PNG</small></button>}
               <button role="menuitem" onClick={() => doExport("copy")}><Copy size={14} /> Copy image</button>
             </div>
           )}
@@ -561,17 +649,25 @@ export default function AnalysisPage() {
           </div>
         </div>
       ) : (
-        <div className="an-body">
-          <nav className="an-rail" aria-label="Tools">
-            {TOOLS.map(t => (
-              <button key={t.id} className={`an-tool${tool === t.id ? " on" : ""}`} aria-pressed={tool === t.id} disabled={!shot} title={`${t.name} (${t.key})`} onClick={() => pickTool(t.id)}>
-                <kbd>{t.key}</kbd>{t.icon}{t.name}
-              </button>
-            ))}
-          </nav>
+        <div className={`an-body${libOpen && user ? " lib" : ""}`}>
+          <style>{STAGE_CSS}</style>
+          {libOpen && user && <Library userId={user.id} getShot={id => shotsRef.current.find(s => s.id === id) ?? null} onUse={addKeptShot} say={say} onKept={list => { keptRef.current = new Map(list.map(k => [k.id, k])) }} />}
 
-          <div className="an-mid">
-            {shot ? (
+          <div className="an-mid" style={{ position: "relative" }}>
+            {(mode === "shots" || shot) && (
+              <div className="an-dock" style={mode === "video" ? { bottom: 128 } : undefined}><Dock groups={[TOOLS.map((t): DockItem => ({ id: t.id, icon: t.icon, label: t.name, key: t.key, pressed: tool === t.id, disabled: !shot, onClick: () => pickTool(t.id) }))]} /></div>
+            )}
+            {mode === "video" ? (
+              <VideoStudio project={video} file={videoFile} missing={!!video && !videoFile} editing={editing}
+                onChoose={() => videoInput.current?.click()}
+                onSet={fn => { const v = videoRef.current; if (v) { begin(); setVideo(fn(v)); end() } }}
+                onOpenMoment={(id, frame) => { if (id && frame) setSrcs(x => ({ ...x, [id]: frame })); setEditing(id); setSel(null); setZoom(1) }}
+                onCapture={blob => { addFiles([new File([blob], "frame.jpg", { type: "image/jpeg" })]).then(() => { setMode("video"); say("Added to your shots.") }) }}
+                seal={sealFor} fileBase={fileBase} exportRef={exportVideo} say={say}>
+                {shot && <Stage shot={shot} src={srcs[shot.id] || undefined} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
+                  onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={sealNode} stageRef={stageRef} hint={hintFor(tool)} />}
+              </VideoStudio>
+            ) : shot ? (
               <Stage shot={shot} src={srcs[shot.id] || undefined} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
                 onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={sealNode} stageRef={stageRef}
                 hint={srcs[shot.id] === "" ? "This shot couldn't be loaded. Check your connection and reopen." : srcs[shot.id] ? hintFor(tool) : "Loading the shot…"} />
@@ -579,12 +675,12 @@ export default function AnalysisPage() {
               <div className={`an-empty${dragOver ? " over" : ""}`} data-empty="drop">
                 <ImagePlus size={34} color="#d7ff3c" style={{ margin: "0 auto", display: "block" }} />
                 <h2>Add your match shots</h2>
-                <p>Up to 4 screenshots from the game. Drop them here, paste one with Ctrl V, or pick them.</p>
+                <p>Up to 10 screenshots from the game. Drop them here, paste one with Ctrl V, pick them, or drag one in from your Library.</p>
                 <button className="an-btn pri" style={{ margin: "0 auto" }} onClick={() => fileRef.current?.click()}><ImagePlus size={15} /> Choose pictures</button>
                 <small>Your shots stay private to your account. Only what you export is shared.</small>
               </div>
             )}
-            {shot && (
+            {shot && mode === "shots" && (
               <div className="an-zoom">
                 <button aria-label="Zoom out" onClick={() => setZoom(z => Math.max(1, z / 1.25))} disabled={zoom <= 1}><ZoomOut size={14} /></button>
                 <span style={{ width: 44, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
@@ -596,14 +692,18 @@ export default function AnalysisPage() {
 
           <Inspector mark={selMark} shot={shot} set={setMark} begin={begin} end={end} textRef={textRef}
             onDuplicate={dup} onDelete={del} onFront={() => restack(true)} onBack={() => restack(false)}
-            onDim={(v, live) => { if (!live) begin(); setDim(v); if (!live) end() }} />
+            onDim={(v, live) => { if (!live) begin(); setDim(v); if (!live) end() }} video={mode === "video"} />
         </div>
       )}
 
-      {phase !== "missing" && (
-        <div className="an-strip" aria-label="Shots">
+      {phase !== "missing" && mode === "shots" && (
+        <div className={`an-strip${stripOver ? " over" : ""}`} aria-label="Shots"
+          onDragOver={e => { if ([...e.dataTransfer.types].includes(DRAG_LIB)) { e.preventDefault(); setStripOver(true) } }}
+          onDragLeave={e => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setStripOver(false) }}
+          onDrop={e => { const id = e.dataTransfer.getData(DRAG_LIB); if (!id) return; e.preventDefault(); e.stopPropagation(); setStripOver(false); window.dispatchEvent(new CustomEvent("ps-use-kept", { detail: id })) }}>
           {shots.map((s, i) => (
             <div key={s.id} className={`an-thumb${i === cur ? " on" : ""}`} role="button" tabIndex={0} aria-label={`Shot ${i + 1}`} aria-pressed={i === cur}
+              draggable={!!s.path} onDragStart={e => { e.dataTransfer.setData(DRAG_SHOT, s.id); e.dataTransfer.effectAllowed = "copy" }}
               onClick={() => { setCur(i); setSel(null) }} onKeyDown={e => { if (e.key === "Enter") { setCur(i); setSel(null) } }}>
               {srcs[s.id] ? <img src={srcs[s.id]} alt="" /> : null}
               <span className="an-num">{i + 1}</span>
@@ -627,10 +727,12 @@ export default function AnalysisPage() {
           {shots.length < MAX_SHOTS && (
             <button className="an-add" onClick={() => fileRef.current?.click()}><ImagePlus size={18} />{shots.length ? "Add shot" : "Add shots"}</button>
           )}
-          <span className="an-strip-note">{shots.length}/{MAX_SHOTS} shots{shots.length ? " · numbered in post order" : ""}</span>
+          <span className="an-strip-note">{shots.length}/{MAX_SHOTS} shots{shots.length ? (libOpen ? " · drag one onto a folder to keep it" : " · numbered in post order") : ""}</span>
         </div>
       )}
 
+      <input ref={videoInput} id="an-video" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm" style={{ display: "none" }}
+        onChange={e => { const f = e.target.files?.[0]; if (f) chooseVideo(f); e.target.value = "" }} />
       <input ref={fileRef} id="an-files" type="file" accept="image/png,image/jpeg,image/webp" multiple style={{ display: "none" }}
         onChange={e => { addFiles([...(e.target.files ?? [])]); e.target.value = "" }} />
 
