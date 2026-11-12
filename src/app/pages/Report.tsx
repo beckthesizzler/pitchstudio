@@ -4,6 +4,7 @@ import { BarChart3, Circle as CircleIcon, Copy, Download, FolderOpen, Heading1, 
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
+import { pieceName, isAutoName, listName } from "../lib/names"
 import { Mark as PSMark } from "../brand/Mark"
 import { DEFAULT_BRAND, cardColours, logoToDataUrl, readBrand, type Brand } from "../brand/brand"
 import { Canvas, clampCrop, moveBlock, type Mode, type PitchTool, type Sel } from "../report/Canvas"
@@ -47,6 +48,12 @@ function scaleBlock(b: Block, s: number, ox: number, oy: number): Block {
 }
 const withNewIds = (b: Block): Block => (b.kind === "pitch" ? { ...b, id: newId(), marks: b.marks.map(m => ({ ...m, id: newId() })) } : { ...b, id: newId() })
 
+/** A report's headline, which names it until you give it a name: its biggest title text, first line */
+const headlineOf = (r: Report) => {
+  const t = (r.blocks as any[]).filter(b => b.kind === "text" && b.style === "title").sort((a, b) => b.size - a.size)[0]
+  return t ? String(t.text).split(String.fromCharCode(10))[0] : ""
+}
+
 export default function ReportPage() {
   const navigate = useNavigate()
   const loc = useLocation()
@@ -54,7 +61,8 @@ export default function ReportPage() {
   const [user, setUser] = useState<{ id: string; email: string } | null>(null)
   const [phase, setPhase] = useState<"loading" | "start" | "ready" | "missing">("loading")
   const [rid] = useState(() => openId ?? newId())
-  const [title, setTitle] = useState("Untitled report")
+  const [title, setTitle] = useState("") // the name you gave it ("" = none: it's named after its headline, or its day)
+  const made = useRef<string | null>(null) // when it was started: an unnamed report with no headline is called after that day
   const titleRef = useRef(title); titleRef.current = title
   const [report, setReportState] = useState<Report>(EMPTY)
   const repRef = useRef<Report>(EMPTY)
@@ -109,10 +117,13 @@ export default function ReportPage() {
         setBrand(readBrand((data as any)?.brand))
       })
       if (!openId) { setPhase("start"); return }
-      const { data, error } = await supabase.from("reports").select("id, title, data, rev").eq("id", openId).eq("user_id", u.id).maybeSingle()
+      const { data, error } = await supabase.from("reports").select("id, title, data, rev, created_at").eq("id", openId).eq("user_id", u.id).maybeSingle()
       if (off) return
       if (error || !data) { setPhase("missing"); return }
-      const r = readReport((data as any).data, u.id), t = (data as any).title || "Untitled report"
+      const r = readReport((data as any).data, u.id), saved: string = (data as any).title || ""
+      made.current = (data as any).created_at ?? null
+      // a name the app made (from the headline or the day) stays automatic; only a name you typed is kept as yours
+      const t = isAutoName(saved) || saved === pieceName("Report", "", headlineOf(r), made.current) ? "" : saved
       setTitle(t); titleRef.current = t; setReport(r); rev.current = (data as any).rev ?? 1
       savedJson.current = payload(t, r); setStatus("saved"); setPhase("ready")
       const paths = mediaOf(r)
@@ -129,14 +140,18 @@ export default function ReportPage() {
     return () => { off = true }
   }, [brand.logo])
   const start = (id: TemplateId) => {
-    setReport(makeTemplate(id)); setPhase("ready"); setSel({ bid: null, mid: null })
+    // a template isn't saved until you change something: leave without editing and nothing new appears in My reports
+    const tpl = makeTemplate(id)
+    made.current = new Date().toISOString(); setTitle(""); titleRef.current = ""
+    savedJson.current = payload("", tpl); setStatus("idle")
+    setReport(tpl); setPhase("ready"); setSel({ bid: null, mid: null })
     ;(window as any).posthog?.capture("report_started", { template: id })
   }
 
   /* ── saving: a moment after every change. A photo is saved once its file has arrived. ── */
   function payload(t: string, r: Report) {
     const up = uploadsRef.current
-    return JSON.stringify({ title: t.trim().slice(0, 80) || "Untitled report", data: { ...r, blocks: r.blocks.filter(b => !(b.kind === "photo" && b.src && up[b.src])) } })
+    return JSON.stringify({ title: pieceName("Report", t, headlineOf(r), made.current), data: { ...r, blocks: r.blocks.filter(b => !(b.kind === "photo" && b.src && up[b.src])) } })
   }
   const uploadsRef = useRef(uploads); uploadsRef.current = uploads
   const save = async (): Promise<void> => {
@@ -627,7 +642,7 @@ export default function ReportPage() {
 
       <header className="rp-top">
         <button className="rp-home" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
-        <input className="rp-title" aria-label="Report title" value={title} maxLength={80} onChange={e => setTitle(e.target.value)} onBlur={() => { if (!title.trim()) setTitle("Untitled report") }} />
+        <input className="rp-title" aria-label="Report title" value={title} maxLength={80} placeholder={pieceName("Report", "", headlineOf(report), made.current)} onChange={e => setTitle(e.target.value)} />
         <span className={`rp-status${failed || status === "error" || status === "conflict" || status === "offline" ? " bad" : ""}`} aria-live="polite">
           {status === "conflict" ? "Changed in another tab"
             : status === "offline" ? <>Offline: kept here <button onClick={() => save()}>Retry</button></>
@@ -739,7 +754,7 @@ export default function ReportPage() {
                       <div key={r.id} className="rp-card">
                         <div className="th" onClick={go} role="button" aria-label={`Open ${r.title}`}><ReportView report={rep} brand={brand} handle={handle} logo={logo} media={r.id === rid ? media : links} /></div>
                         <div className="meta">
-                          <div style={{ flex: 1, minWidth: 0 }}><div className="t">{r.title || "Untitled report"}{r.id === rid ? " (open)" : ""}</div><div className="d">{relTime(r.updated_at)}</div></div>
+                          <div style={{ flex: 1, minWidth: 0 }}><div className="t">{listName("Report", r.title, r.updated_at)}{r.id === rid ? " (open)" : ""}</div><div className="d">{relTime(r.updated_at)}</div></div>
                           {confirmDel === r.id ? <>
                             <button className="rp-btn sm" style={{ borderColor: DS_ERROR, color: DS_ERROR }} onClick={() => deleteReport(r)}>Delete</button>
                             <button className="rp-btn sm" onClick={() => setConfirmDel(null)}>Keep</button>

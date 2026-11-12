@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { LayoutDashboard, Image as ImageIcon, FileText, StickyNote, User, BookOpen } from "lucide-react"
+import { LayoutDashboard, Image as ImageIcon, FileText, StickyNote, User, BookOpen, Library } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
+import { listName } from "../lib/names"
 import { Mark } from "../brand/Mark"
 import { StudioScene } from "../brand/StudioScene"
 import { readBrand, DEFAULT_BRAND, type Brand } from "../brand/brand"
@@ -48,11 +49,11 @@ export default function HomePage() {
       setHandle(h)
       setBrand(readBrand((prof as any)?.brand))
       const b = (boards as any[] | null)?.[0]
-      setLast(b ? { id: b.id, title: b.title || "Untitled board", updated_at: b.updated_at } : null)
+      setLast(b ? { id: b.id, title: listName("Board", b.title, b.updated_at), updated_at: b.updated_at } : null)
       const a = (analyses as any[] | null)?.[0]
-      setLastA(a ? { id: a.id, title: a.title || "Untitled analysis", updated_at: a.updated_at } : null)
+      setLastA(a ? { id: a.id, title: listName("Analysis", a.title, a.updated_at), updated_at: a.updated_at } : null)
       const r = (reports as any[] | null)?.[0]
-      setLastR(r ? { id: r.id, title: r.title || "Untitled report", updated_at: r.updated_at } : null)
+      setLastR(r ? { id: r.id, title: listName("Report", r.title, r.updated_at), updated_at: r.updated_at } : null)
       setReady(true)
     })
     return () => { off = true }
@@ -75,6 +76,7 @@ export default function HomePage() {
       run: () => navigate("/report"), // always the templates first; your last report is one tap away
       extra: lastR ? { label: "Continue", run: () => navigate(`/report?open=${lastR.id}`) } : undefined },
     { id: "braindump", name: "Brain Dump", desc: "A blank page to think on", icon: <StickyNote size={20} />, run: () => navigate("/braindump") },
+    { id: "shelf", name: "Your Shelf", desc: "Everything you've made, in your order", icon: <Library size={20} />, run: () => navigate("/shelf") },
     { id: "profile", name: "Creator Profile", desc: "Your handle, signature and look", icon: <User size={20} />, run: () => navigate("/profile") },
     { id: "learn", name: "Learn Football", desc: "The best threads, picked for you", icon: <BookOpen size={20} />, soon: true },
   ]

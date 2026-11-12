@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Circle, Clapperboard, Copy, Download, Folder
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
+import { pieceName, isAutoName, listName } from "../lib/names"
 import { Mark as PSMark } from "../brand/Mark"
 import { CreatorSeal } from "../brand/Signature"
 import { DEFAULT_BRAND, logoToDataUrl, readBrand, type Brand } from "../brand/brand"
@@ -53,7 +54,8 @@ export default function AnalysisPage() {
   const [user, setUser] = useState<{ id: string; email: string } | null>(null)
   const [phase, setPhase] = useState<"loading" | "ready" | "missing">("loading")
   const [aid] = useState(() => openId ?? newId())
-  const [title, setTitle] = useState("Untitled analysis")
+  const [title, setTitle] = useState("") // the name you gave it ("" = none: it's called after the day it was started)
+  const made = useRef<string | null>(new Date().toISOString())
   const [shots, setShotsState] = useState<Shot[]>([])
   const shotsRef = useRef<Shot[]>([])
   const titleRef = useRef(title)
@@ -115,11 +117,12 @@ export default function AnalysisPage() {
         setBrand(readBrand((data as any)?.brand))
       })
       if (!openId) { setPhase("ready"); return }
-      const { data, error } = await supabase.from("analyses").select("id, title, data, updated_at").eq("id", openId).eq("user_id", u.id).maybeSingle()
+      const { data, error } = await supabase.from("analyses").select("id, title, data, updated_at, created_at").eq("id", openId).eq("user_id", u.id).maybeSingle()
       if (off) return
       if (error || !data) { setPhase("missing"); return }
       const a = readAnalysis((data as any).data, u.id)
-      const t = (data as any).title || "Untitled analysis"
+      made.current = (data as any).created_at ?? null
+      const t = isAutoName((data as any).title) ? "" : (data as any).title || "" // a day name stays automatic
       setTitle(t); titleRef.current = t; setShots(a.shots); setVideo(a.video)
       if (a.video) { if (!a.shots.length) setMode("video"); findVideo(a.video.key, a.video.size).then(f => { if (!off && f) setVideoFile(f) }) }
       savedJson.current = payload(t, a.shots, a.video); savedOnce.current = true; setStatus("saved")
@@ -138,7 +141,7 @@ export default function AnalysisPage() {
 
   /* ── saving: a moment after every change, only shots that finished uploading ── */
   function payload(t: string, s: Shot[], v: VideoProject | null) {
-    return JSON.stringify({ title: t.trim().slice(0, 80) || "Untitled analysis", data: { v: 1, shots: s.filter(x => x.path).map(x => ({ id: x.id, path: x.path, w: x.w, h: x.h, dim: x.dim, items: x.items })), ...(v ? { video: v } : {}) } })
+    return JSON.stringify({ title: pieceName("Analysis", t, "", made.current), data: { v: 1, shots: s.filter(x => x.path).map(x => ({ id: x.id, path: x.path, w: x.w, h: x.h, dim: x.dim, items: x.items })), ...(v ? { video: v } : {}) } })
   }
   const save = async () => {
     if (!user) return
@@ -598,7 +601,7 @@ export default function AnalysisPage() {
         <button className="an-home" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
         {phase !== "missing" && <button className="an-icon" aria-label={libOpen ? "Hide the Library" : "Show the Library"} aria-pressed={libOpen} title="Library" onClick={() => showLibrary(!libOpen)}
           style={libOpen ? { color: ACCENT_TEXT } : undefined}><PanelLeft size={16} /></button>}
-        <input className="an-title" aria-label="Analysis title" value={title} maxLength={80} onChange={e => setTitle(e.target.value)} onBlur={() => { if (!title.trim()) setTitle("Untitled analysis") }} />
+        <input className="an-title" aria-label="Analysis title" value={title} maxLength={80} placeholder={pieceName("Analysis", "", "", made.current)} onChange={e => setTitle(e.target.value)} />
         <span className={`an-status${failed || status === "error" ? " bad" : ""}`} aria-live="polite">
           {failed || status === "error" ? <>Not saved <button onClick={retry}>Retry</button></>
             : upCount ? <><Loader2 size={13} className="an-spin" /> Uploading {upCount === 1 ? "shot" : `${upCount} shots`}…</>
@@ -748,7 +751,7 @@ export default function AnalysisPage() {
                     return (
                       <div key={r.id} className="an-item">
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="t" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title || "Untitled analysis"}{r.id === aid ? " (open)" : ""}</div>
+                          <div className="t" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{listName("Analysis", r.title, r.updated_at)}{r.id === aid ? " (open)" : ""}</div>
                           <div className="d">{n} shot{n === 1 ? "" : "s"} · {relTime(r.updated_at)}</div>
                         </div>
                         {confirmDel === "row" + r.id ? <>

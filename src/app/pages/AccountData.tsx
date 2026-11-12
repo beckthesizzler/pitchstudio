@@ -9,7 +9,7 @@ import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, DS_BORDER, DS_ERROR,
 /* Profile, "Your data": download everything you made as one file, or delete your account and everything in it.
    Files (logo, analysis screenshots, report photos) are removed through the storage service first, because the
    database is not allowed to delete stored files itself; then one database call deletes the account, and with it
-   the profile, boards, analyses and reports. */
+   the profile, boards, analyses, reports and Brain Dump ideas. */
 
 const BUCKETS = ["brand-logos", "analysis-shots", "report-media"] as const
 
@@ -48,13 +48,14 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
     if (!userId || busy) return
     setBusy("download"); setMsg("")
     try {
-      const [p, b, a, r, lf, ls] = await Promise.all([
+      const [p, b, a, r, lf, ls, nd] = await Promise.all([
         supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
         supabase.from("boards").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         supabase.from("analyses").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         supabase.from("reports").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         (supabase as any).from("library_folders").select("*").eq("user_id", userId),
         (supabase as any).from("library_shots").select("*").eq("user_id", userId),
+        (supabase as any).from("notes").select("*").eq("user_id", userId).order("pos", { ascending: true }),
       ])
       const failed = [p, b, a, r].find(x => x.error)
       if (failed) throw failed.error
@@ -65,7 +66,8 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         exported_at: new Date().toISOString(),
         account: { id: userId, email },
         profile: p.data, boards: b.data ?? [], analyses: a.data ?? [], reports: r.data ?? [],
-        library: { folders: lf.error ? [] : lf.data ?? [], shots: ls.error ? [] : ls.data ?? [] }, files,
+        library: { folders: lf.error ? [] : lf.data ?? [], shots: ls.error ? [] : ls.data ?? [] },
+        brain_dump: { trees: nd.error ? [] : (nd.data ?? []).filter((x: any) => x.kind === "tree"), ideas: nd.error ? [] : (nd.data ?? []).filter((x: any) => x.kind !== "tree") }, files,
       }
       const url = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }))
       const link = document.createElement("a")
@@ -122,7 +124,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ minWidth: 220, flex: 1 }}>
             <div style={{ fontWeight: 600, fontSize: 14 }}>Download my data</div>
-            <div style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 3 }}>Your profile, Creator Card, boards, analyses, Library and reports in one file.</div>
+            <div style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 3 }}>Your profile, Creator Card, boards, analyses, Library, reports and Brain Dump in one file.</div>
           </div>
           <button className="pf-btn" onClick={download} disabled={!userId || !!busy}><Download size={15} /> {busy === "download" ? "Gathering…" : "Download"}</button>
         </div>
@@ -142,8 +144,8 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
               <AlertTriangle size={18} style={{ color: DS_ERROR, flexShrink: 0, marginTop: 1 }} />
               <div style={{ fontSize: 14, lineHeight: 1.5 }}>
                 <b>This deletes {email ? <span style={{ wordBreak: "break-all" }}>{email}</span> : "your account"} for good.</b>{" "}
-                {s ? <>Your profile, Creator Card, {plural(s.boards, "board", "boards")}, {plural(s.analyses, "analysis", "analyses")}, {plural(s.reports, "report", "reports")} and every photo you uploaded go with it.</>
-                  : <>Your profile, Creator Card, boards, analyses, reports and every photo you uploaded go with it.</>}
+                {s ? <>Your profile, Creator Card, {plural(s.boards, "board", "boards")}, {plural(s.analyses, "analysis", "analyses")}, {plural(s.reports, "report", "reports")}, your Brain Dump and every photo you uploaded go with it.</>
+                  : <>Your profile, Creator Card, boards, analyses, reports, your Brain Dump and every photo you uploaded go with it.</>}
                 {" "}Download your data first if you want a copy.
               </div>
             </div>
@@ -173,7 +175,7 @@ export function GoodbyePage() {
       <div style={{ maxWidth: 440, textAlign: "center" }}>
         <div style={{ display: "inline-grid", placeItems: "center", width: 64, height: 64, borderRadius: 18, background: SURFACE_1, border: `1px solid ${DS_BORDER}` }}><Mark size={30} color={ACCENT_SOLID} /></div>
         <h1 style={{ fontSize: 30, letterSpacing: "-0.03em", margin: "22px 0 0" }}>Your account is deleted</h1>
-        <p style={{ color: TEXT_MUTED, lineHeight: 1.55, fontSize: 15, margin: "12px 0 0" }}>Everything in it is gone: your profile, Creator Card, boards, analyses, reports and photos. You can start again with a new account any time.</p>
+        <p style={{ color: TEXT_MUTED, lineHeight: 1.55, fontSize: 15, margin: "12px 0 0" }}>Everything in it is gone: your profile, Creator Card, boards, analyses, reports, Brain Dump and photos. You can start again with a new account any time.</p>
         <button onClick={() => navigate("/", { replace: true })} style={{ marginTop: 26, height: 48, padding: "0 26px", borderRadius: 999, border: "none", background: ACCENT_SOLID, color: ACCENT_INK, fontWeight: 600, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>Back to PitchStudio</button>
       </div>
     </div>

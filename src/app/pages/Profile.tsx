@@ -376,9 +376,9 @@ export default function ProfilePage() {
               </div>
               <p className="pf-cap" style={{ marginTop: 18 }}>HAIR</p>
               {seg("Hair", brand.hair, "Spiky punk", "No hair", v => edit({ hair: v }))}
-              <p className="pf-cap" style={{ marginTop: 18 }}>“PITCHSTUDIO” ON YOUR EXPORTS</p>
+              <p className="pf-cap" style={{ marginTop: 18 }}>“MADE WITH PITCHSTUDIO” ON YOUR EXPORTS</p>
               {seg("PitchStudio on exports", brand.madeWith, "On", "Off", v => edit({ madeWith: v }))}
-              <p className="pf-hint" style={{ margin: "8px 0 0" }}>Your crest and handle always sign your exports. This is the small “PITCHSTUDIO” next to them.</p>
+              <p className="pf-hint" style={{ margin: "8px 0 0" }}>Your crest and handle always lead. This is the small, light “made with PitchStudio” after them.</p>
             </>)}
 
             {next && <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}><button className="pf-btn" onClick={() => go(next)}>Next: {next}</button></div>}

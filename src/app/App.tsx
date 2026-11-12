@@ -32,12 +32,15 @@ import { shrinkForBoard, imageProblem } from "./lib/images"
 import HomePage from "./pages/Home"
 import { Mark } from "./brand/Mark"
 import { CreatorSeal, SealDisc } from "./brand/Signature"
+import { dayName, isAutoName, listName } from "./lib/names"
+import { takeIssue, peekIssue, issueLabel, issueDay as dayStamp } from "./lib/issues"
 import { DEFAULT_BRAND, readBrand, logoToDataUrl, type Brand } from "./brand/brand"
 import ProfilePage from "./pages/Profile"
 import { GoodbyePage } from "./pages/AccountData"
 const AnalysisPage = lazy(() => import("./pages/Analysis")) // only downloaded when someone opens Live Game Analysis
 const ReportPage = lazy(() => import("./pages/Report")) // only downloaded when someone opens Match Report
 const BrainDumpPage = lazy(() => import("./pages/BrainDump")) // only downloaded when someone opens Brain Dump
+const ShelfPage = lazy(() => import("./pages/Shelf")) // only downloaded when someone opens their shelf
 import Tour, { TOUR_KEY } from "./Tour"
 
 /* ─────────────────────────── Types ─────────────────────────── */
@@ -162,6 +165,7 @@ interface BoardSettings {
   homeScore: string; awayScore: string; scoreNote: string // the score strip: the goals each side scored, and a note such as FT
   caption: string // the line (or two) under the board
   showLegend: boolean; cropMarks: boolean; showEdition: boolean
+  issueNo: number; issueDay: string // this board's issue number and the day it took it (0 = not numbered yet: it takes one at its first export)
   animSpeed: "slow" | "normal" | "fast"; endCard: boolean // how fast the steps play, and the animated end card on GIF and video exports
 }
 /** What a saved board keeps in canvas_data (version 2). Version 1 boards only had the five element lists. */
@@ -183,7 +187,7 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto", area: null,
   homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
   pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "",
-  showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true,
+  showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true, issueNo: 0, issueDay: "",
 }
 /** A zoomed area from saved data: four numbers inside the pitch, at least 60 × 40, else none */
 const areaFrom = (a: unknown): [number, number, number, number] | null => {
@@ -238,6 +242,8 @@ function settingsFrom(src: Record<string, unknown> | null | undefined, fresh = f
     scoreNote: typeof v.scoreNote === "string" ? v.scoreNote.slice(0, 12) : d.scoreNote,
     caption: typeof v.caption === "string" ? v.caption.slice(0, 160) : d.caption,
     showLegend: bool(v.showLegend, d.showLegend), cropMarks: bool(v.cropMarks, d.cropMarks), showEdition: bool(v.showEdition, d.showEdition),
+    issueNo: typeof v.issueNo === "number" && Number.isInteger(v.issueNo) && v.issueNo > 0 && v.issueNo < 1000000 ? v.issueNo : d.issueNo,
+    issueDay: typeof v.issueDay === "string" ? v.issueDay.slice(0, 8) : d.issueDay,
     animSpeed: oneOf(v.animSpeed, ["slow", "normal", "fast"] as const, d.animSpeed), endCard: bool(v.endCard, d.endCard),
   }
 }
@@ -339,7 +345,7 @@ const FIT_SCALE = (v: boolean) => (v ? 1 : 1.15)
 /** The offsets that centre a pitch of this size on the board */
 const centreOff = (v: boolean, s: number) => v ? { x: (PH * VERT_SCALE * (1 - s)) / 2, y: (PW * VERT_SCALE * (1 - s)) / 2 } : { x: (PW * (1 - s)) / 2, y: (PH * (1 - s)) / 2 }
 /** A new board: the whole board on screen and a big, centred pitch you can make bigger or smaller by its corners */
-const NEW_BOARD_SETTINGS: BoardSettings = { ...DEFAULT_BOARD_SETTINGS, pitchScale: FIT_SCALE(false), pitchOffX: centreOff(false, FIT_SCALE(false)).x, pitchOffY: centreOff(false, FIT_SCALE(false)).y }
+const NEW_BOARD_SETTINGS: BoardSettings = { ...DEFAULT_BOARD_SETTINGS, editorial: true, pitchScale: FIT_SCALE(false), pitchOffX: centreOff(false, FIT_SCALE(false)).x, pitchOffY: centreOff(false, FIT_SCALE(false)).y }
 /** Pitch coordinates (the pitch drawn 1050 × 680, home goal on the left) → board coordinates */
 const toCanvas = (g: PitchGeo, px: number, py: number) =>
   g.v ? { x: g.ox + g.sc * py, y: g.oy + g.sc * (PW - px) } : { x: g.ox + g.sc * px, y: g.oy + g.sc * py }
@@ -390,10 +396,10 @@ const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSetting
     const top = 104 + (ed.strip && r.w < 1100 ? 58 : 0), bottom = 40 + (ed.lines ? ed.lines * 22 + 14 : 0)
     r = { ...r, y: r.y - top, h: r.h + top + bottom }
   }
-  // On the whole board, the slate and a long caption must clear the pitch too (an upright pitch reaches almost to the edges)
+  // On the whole board, the slate, a long caption, the issue number and the seal must clear the pitch too (a big or upright pitch reaches almost to the edges)
   if (ed?.pitch && focus === "board") {
     const p = pitchRect(g, 0, 0, PW, PH)
-    const top = Math.max(0, 104 - (p.y - r.y)), bottom = Math.max(0, (ed.lines ? 84 + (ed.lines - 1) * 22 : 52) - (r.y + r.h - p.y - p.h))
+    const top = Math.max(0, 104 - (p.y - r.y)), bottom = Math.max(0, 84 + (ed.lines ? (ed.lines - 1) * 22 : 0) - (r.y + r.h - p.y - p.h))
     if (top || bottom) r = { ...r, y: r.y - top, h: r.h + top + bottom }
   }
   const size = FRAME_SIZES[ratio]
@@ -1142,13 +1148,8 @@ function wrapCaption(text: string, max = 48): string[] {
   if (line) out.push(line)
   return out.slice(0, 4)
 }
-/** "PS/0142 · 12.10.26": the number of this export, and today's date */
-const editionStamp = (n: number) => {
-  const d = new Date(), two = (x: number) => String(x).padStart(2, "0")
-  return `PS/${String(n).padStart(4, "0")} · ${two(d.getDate())}.${two(d.getMonth() + 1)}.${two(d.getFullYear() % 100)}`
-}
-const EDITION_KEY = "ps-edition"
-const readEdition = () => { try { const n = parseInt(localStorage.getItem(EDITION_KEY) || "0", 10); return Number.isFinite(n) && n > 0 ? n : 0 } catch { return 0 } }
+/** "No. 07 · 12.11.26": the board's issue number in your series, and the day it took it */
+const editionStamp = (n: number, day?: string) => `${issueLabel(n)} · ${day || dayStamp()}`
 type EdTeam = { name: string; score: string; pat: KitPattern; c1: string; c2: string }
 type LegendItem = { kind: LineKind | "ghost"; color: string; label: string }
 /** The slate across the top (kicker, title, score strip), the caption and the legend underneath, crop marks at the corners and the edition number. It sits on the board, so every export carries it. */
@@ -1584,7 +1585,7 @@ function StepTag({ x, y, k, n, of, note, fade }: { x: number; y: number; k: numb
     </g>
   )
 }
-/** The end card on GIF and video exports: your crest or logo stamps down, then the handle and PITCHSTUDIO come up, like a broadcaster's sting */
+/** The end card on GIF and video exports: your crest or logo stamps down, then your handle comes up, like a broadcaster's sting, with a small "made with PitchStudio" under it if you keep it on */
 function EndCard({ frame, k, t, handle, brand, logo, bg, ink, edition }: { frame: { x: number; y: number; w: number; h: number }; k: number; t: number; handle: string; brand: Brand; logo: string | null; bg: string; ink: string; edition: string | null }) {
   const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2 - 34 * k, R = 66 * k
   const back = (x: number) => { const y = x - 1; return 1 + y * y * (2.7 * y + 1.7) } // a stamp that lands with a little bounce
@@ -1604,7 +1605,7 @@ function EndCard({ frame, k, t, handle, brand, logo, bg, ink, edition }: { frame
       {handle && (
         <text x={cx} y={cy + R + 66 * k + 16 * k * (1 - easeOut(h))} textAnchor="middle" fill={ink} opacity={h} fontSize={44 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.04em" }}>@{handle}</text>
       )}
-      {brand.madeWith && <text x={cx} y={cy + R + (handle ? 108 : 70) * k + 12 * k * (1 - easeOut(w))} textAnchor="middle" fill={ink} fillOpacity={0.88} opacity={w} fontSize={(handle ? 21 : 30) * k} fontWeight={700} style={{ ...font, letterSpacing: "0.42em" }}>PITCHSTUDIO</text>}
+      {brand.madeWith && <text x={cx} y={cy + R + (handle ? 104 : 70) * k + 12 * k * (1 - easeOut(w))} textAnchor="middle" fill={ink} fillOpacity={0.55} opacity={w} fontSize={(handle ? 18 : 22) * k} fontWeight={500} style={{ fontFamily: "'Inter',sans-serif", letterSpacing: "0.02em" }}>made with PitchStudio</text>}
       {edition && <text x={cx} y={frame.y + frame.h - 40 * k} textAnchor="middle" fill={ink} fillOpacity={0.6} opacity={ed} fontSize={15 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.16em" }}>{edition}</text>}
     </g>
   )
@@ -2144,7 +2145,7 @@ const dropCache = new Map<number, CanvasState>()
 /** A drop as it looks when nothing has been changed (for the picture on its card) */
 const dropPreview = (drop: Drop) => { let s = dropCache.get(drop.no); if (!s) { s = buildDrop(drop); dropCache.set(drop.no, s) } return s }
 /** The picture on a drop's card: the pitch, the zones, lines and pieces */
-function DropThumb({ data, crop }: { data: CanvasState; crop?: [number, number, number, number] }) {
+export function DropThumb({ data, crop }: { data: CanvasState; crop?: [number, number, number, number] }) {
   const st = data.settings?.pitchStyle ?? "classic"
   const geo = pitchGeo(data.settings?.vertical === true, 1, 0, 0)
   const box = crop ? pitchRect(geo, crop[0], crop[1], crop[0] + crop[2], crop[1] + crop[3]) : null
@@ -2336,7 +2337,8 @@ function TacticsBoard() {
   const [zoom, setZoom] = useState(1)
   const [panX, setPanX] = useState(0)
   const [panY, setPanY] = useState(0)
-  const [title, setTitle] = useState("Untitled board")
+  const [title, setTitle] = useState("") // the name you gave it ("" = none yet: it shows and saves as autoName until you do)
+  const autoName = useRef(dayName("Board")) // an unnamed board's name: the day it was made, "Board · 12 Nov"
   const [editingTitle, setEditingTitle] = useState(false)
   const [editingText, setEditingText] = useState<string | null>(null)
   const [bgColor, setBgColor] = useState(DEFAULT_BOARD_SETTINGS.bgColor)
@@ -2376,12 +2378,14 @@ function TacticsBoard() {
   const [frameRatio, setFrameRatio] = useState<BoardSettings["frameRatio"]>("auto")
   const [pitchStyle, setPitchStyle] = useState<BoardSettings["pitchStyle"]>("classic")
   const [psMark, setPsMark] = useState(false)
-  const [editorial, setEditorial] = useState(false)
+  const [editorial, setEditorial] = useState(NEW_BOARD_SETTINGS.editorial) // a new board opens in the editorial frame
   const [kicker, setKicker] = useState("")
   const [homeScore, setHomeScore] = useState(""); const [awayScore, setAwayScore] = useState(""); const [scoreNote, setScoreNote] = useState("")
   const [caption, setCaption] = useState("")
   const [showLegend, setShowLegend] = useState(true); const [cropMarks, setCropMarks] = useState(true); const [showEdition, setShowEdition] = useState(true)
-  const [editionNo, setEditionNo] = useState(() => readEdition() + 1) // the number the next export will carry
+  const [issueNo, setIssueNo] = useState(0); const [issueDay, setIssueDay] = useState("") // this board's issue number (0 = none yet) and the day it took it
+  const [nextIssue, setNextIssue] = useState<number | null>(null) // the number its first export will take, when known
+  const [noIssue, setNoIssue] = useState(false) // an export going out without a number, because it couldn't be fetched
   const [exportNote, setExportNote] = useState("") // a short word after Copy: "Copied" or why it didn't work
   const [animSpeed, setAnimSpeed] = useState<BoardSettings["animSpeed"]>("normal")
   const [endCard, setEndCard] = useState(true)
@@ -2478,6 +2482,7 @@ function TacticsBoard() {
         const handle: string = (data as any)?.handle || ""
         setCreatorHandle(handle && stripHandleSuffix(handle, authUser.id, authUser.email) === handle ? handle : "")
         setCreatorBrand(readBrand((data as any)?.brand))
+        peekIssue(authUser.id).then(n => { if (!cancelled) setNextIssue(n) })
       })
     return () => { cancelled = true }
   }, [authUser?.id])
@@ -2517,7 +2522,7 @@ function TacticsBoard() {
     const running = savePromiseRef.current
     if (running && !forceNew) return running // one save at a time
     // What gets saved is decided now, even when it has to wait for a save that's already running
-    const snap: SaveSnap = { epoch: boardEpochRef.current, uid: authUser.id, title, narrative, data: collectBoard() }
+    const snap: SaveSnap = { epoch: boardEpochRef.current, uid: authUser.id, title: title.trim() || autoName.current, narrative, data: collectBoard() }
     // "Save as new board" waits for the running save, then makes its copy
     const p = running ? running.then(() => startSave(snap, true, auto)) : startSave(snap, forceNew, auto)
     if (forceNew) {
@@ -2705,6 +2710,7 @@ function TacticsBoard() {
       homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
       vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
       pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, area,
+      issueNo, issueDay,
     }),
     ...(stepList.length > 1 ? { steps: stepList, step: stepIdx } : {}),
   })
@@ -2727,7 +2733,7 @@ function TacticsBoard() {
     setHomeFormation(st.homeFormation); setHomeShape(st.homeShape); setAwayFormation(st.awayFormation); setAwayShape(st.awayShape)
     setPitchStyle(st.pitchStyle); setPsMark(st.psMark); setEditorial(st.editorial); setKicker(st.kicker)
     setHomeScore(st.homeScore); setAwayScore(st.awayScore); setScoreNote(st.scoreNote); setCaption(st.caption)
-    setShowLegend(st.showLegend); setCropMarks(st.cropMarks); setShowEdition(st.showEdition)
+    setShowLegend(st.showLegend); setCropMarks(st.cropMarks); setShowEdition(st.showEdition); setIssueNo(st.issueNo); setIssueDay(st.issueDay)
     setAnimSpeed(st.animSpeed); setEndCard(st.endCard)
     setSteps(d.steps ?? []); setStepIdx(d.step ?? 0)
   }
@@ -2735,7 +2741,9 @@ function TacticsBoard() {
    *  boardId = null starts a new, unsaved board (used for templates). */
   const openBoard = (raw: unknown, boardTitle: string | null, boardId: string | null, boardNarrative: string | null, boardUpdatedAt: string | null) => {
     const d = normalizeBoardData(raw)
-    const t = boardTitle || "Untitled board"
+    // a name the app made stays as it was; an old "Untitled board" becomes the day it was last saved
+    autoName.current = boardTitle && isAutoName(boardTitle) ? listName("Board", boardTitle, boardUpdatedAt) : dayName("Board")
+    const t = boardTitle && !isAutoName(boardTitle) ? boardTitle : ""
     const n = boardNarrative ?? ""
     boardEpochRef.current += 1 // anything still saving belongs to the previous board
     histRef.current = []; histIdx.current = -1; editRef.current = null // undo can't bring back another board's content
@@ -2805,7 +2813,7 @@ function TacticsBoard() {
       showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
       labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
       pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, steps, stepIdx, area,
-      currentBoardId, authUser, saveTick])
+      issueNo, issueDay, currentBoardId, authUser, saveTick])
 
   // "/board?open=ID": Home's "Continue" opens that saved board
   const openParam = new URLSearchParams(useLocation().search).get("open")
@@ -3463,7 +3471,9 @@ function TacticsBoard() {
   const geo = pitchGeo(vertical, pitchScale, pitchOffX, pitchOffY)
   const geoRef = useRef(geo)
   geoRef.current = geo
-  const edBoard = title.trim() === "Untitled board" ? "" : title.trim() // an unnamed board has no headline
+  const edBoard = isAutoName(title) ? "" : title.trim() // an unnamed board has no headline
+  // the number in the frame: the board's own, or (before its first export) the one it will take; none when that isn't known
+  const edition = issueNo ? editionStamp(issueNo, issueDay) : noIssue || !nextIssue ? null : editionStamp(nextIssue)
   const edStrip = editorial && (homeName.trim() !== "" || awayName.trim() !== "" || homeScore !== "" || awayScore !== "")
   const edLines = editorial ? wrapCaption(caption) : []
   const pitchDragRef = useRef<PitchSnap | null>(null) // the board as it was when a pitch resize or move began
@@ -4208,6 +4218,14 @@ function TacticsBoard() {
   }
 
   /* ── Export ── */
+  /** Before an export: a board in the editorial frame takes its issue number from your account, once, and keeps it.
+   *  If the number can't be fetched, this export goes out without one rather than with a wrong one. */
+  const numberBoard = async () => {
+    if (!editorial || !showEdition || issueNo) return
+    const n = await takeIssue()
+    if (n) { setIssueNo(n); setIssueDay(dayStamp()); setNextIssue(n + 1); setNoIssue(false) } else setNoIssue(true)
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
+  }
   const doExport = async (fmt: "png" | "jpeg" | "pdf" | "copy") => {
     if (!pitchRef.current) return
     const node = pitchRef.current
@@ -4217,6 +4235,7 @@ function TacticsBoard() {
       // No selection rings or handles in the picture
       setSelection([])
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
+      await numberBoard()
       // The board's fonts go into the picture too, otherwise numbers and names come out in a fallback font (fetched once)
       if (!exportFontCSS) exportFontCSS = getFontEmbedCSS(document.body).catch(() => { exportFontCSS = null; return "" })
       const fontEmbedCSS = await exportFontCSS
@@ -4228,6 +4247,7 @@ function TacticsBoard() {
         // 3D: the tilt as on screen, a little smaller so the near edge stays in the picture, with the corners in the canvas colour
         ...(view3d ? { backgroundColor: bgColor, style: { transform: `${UPRIGHT_3D} scale(0.86)`, transformOrigin: "center center" } } : {}),
       }
+      const file = title.trim() ? name : safeFileName(autoName.current) // an unnamed board's file takes its day name
       if (fmt === "copy") {
         const blob = await toBlob(node, opts)
         if (!blob) throw new Error("no image")
@@ -4235,10 +4255,10 @@ function TacticsBoard() {
         setExportNote("Copied to the clipboard")
       } else if (fmt === "png") {
         const url = await toPng(node, opts)
-        const a = document.createElement("a"); a.href = url; a.download = `${name}.png`; a.click()
+        const a = document.createElement("a"); a.href = url; a.download = `${file}.png`; a.click()
       } else if (fmt === "jpeg") {
         const url = await toJpeg(node, { ...opts, quality: 0.95, backgroundColor: bgColor })
-        const a = document.createElement("a"); a.href = url; a.download = `${name}.jpg`; a.click()
+        const a = document.createElement("a"); a.href = url; a.download = `${file}.jpg`; a.click()
       } else {
         const url = await toPng(node, opts)
         const img = new Image(); img.src = url
@@ -4246,16 +4266,14 @@ function TacticsBoard() {
         const { default: jsPDF } = await import("jspdf") // the PDF maker is only downloaded when someone exports a PDF
         const pdf = new jsPDF({ orientation: img.width >= img.height ? "landscape" : "portrait", unit: "px", format: [img.width, img.height] })
         pdf.addImage(url, "PNG", 0, 0, img.width, img.height)
-        pdf.save(`${name}.pdf`)
+        pdf.save(`${file}.pdf`)
       }
-      // The next export carries the next number
-      if (editorial && showEdition) { try { localStorage.setItem(EDITION_KEY, String(editionNo)) } catch { /* storage blocked */ } setEditionNo(editionNo + 1) }
       ;(window as any).posthog?.capture("board_exported", { format: fmt })
     } catch (err) {
       console.error(err)
       setExportNote(fmt === "copy" ? "Couldn't copy: your browser didn't allow it. Use PNG instead." : `Couldn't export the ${fmt.toUpperCase()}. Try again.`)
     }
-    finally { setSelection(keepSelection) }
+    finally { setSelection(keepSelection); setNoIssue(false) }
   }
   useEffect(() => { if (!exportNote) return; const t = setTimeout(() => setExportNote(""), 3200); return () => clearTimeout(t) }, [exportNote])
 
@@ -4322,6 +4340,7 @@ function TacticsBoard() {
     cancelMakeRef.current = false
     setMaking({ fmt, done: 0 })
     try {
+      await numberBoard()
       if (!exportFontCSS) exportFontCSS = getFontEmbedCSS(document.body).catch(() => { exportFontCSS = null; return "" })
       const fontEmbedCSS = await exportFontCSS
       // The size: the export size, or the frame's own shape inside 1920 × 1080 (1080 × 1920 upright). A GIF is at most 1200 across.
@@ -4404,15 +4423,13 @@ function TacticsBoard() {
         blob = mp4File({ w: W, h: H, fps: 30, codec: config.codec, config: desc, frames })
       }
       const url = URL.createObjectURL(blob)
-      const a = document.createElement("a"); a.href = url; a.download = `${safeFileName(title)}.${fmt}`; a.click()
+      const a = document.createElement("a"); a.href = url; a.download = `${safeFileName(title.trim() || autoName.current)}.${fmt}`; a.click()
       setTimeout(() => URL.revokeObjectURL(url), 60000)
-      // The next export carries the next number
-      if (editorial && showEdition) { try { localStorage.setItem(EDITION_KEY, String(editionNo)) } catch { /* storage blocked */ } setEditionNo(editionNo + 1) }
       ;(window as any).posthog?.capture("board_exported", { format: fmt, steps: tl.frames.length })
     } catch (err) {
       if (!cancelMakeRef.current) { console.error(err); setExportNote(fmt === "mp4" ? "Couldn't make the video in this browser. Try GIF." : "Couldn't make the GIF. Try again.") }
     } finally {
-      setPlay(null); setMaking(null); setSelection(keepSelection)
+      setPlay(null); setMaking(null); setSelection(keepSelection); setNoIssue(false)
     }
   }
   /* ── Templates ── */
@@ -4553,7 +4570,7 @@ function TacticsBoard() {
             onClick={async () => { if (await confirmLeave()) navigateBoard("/") }}
             style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex" }}><Mark size={28} color={ACCENT_SOLID} /></button>
           {editingTitle ? (
-            <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
+            <input autoFocus value={title} placeholder={autoName.current} onChange={e => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)}
               onKeyDown={e => { if (e.key === "Enter") setEditingTitle(false) }}
               className="bg-transparent outline-none font-bold text-sm min-w-0"
@@ -4563,7 +4580,7 @@ function TacticsBoard() {
               className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-[var(--ps-hover)] transition-colors min-w-0"
               title="Click to rename">
               <span className="font-bold text-sm truncate max-w-40 xl:max-w-72"
-                style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em" }}>{title}</span>
+                style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", opacity: title.trim() ? 1 : 0.6 }}>{title.trim() || autoName.current}</span>
               <Pencil size={11} className="opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: ACCENT_SOLID }} />
             </button>
           )}
@@ -5576,7 +5593,7 @@ function TacticsBoard() {
                     </label>
                     <Segmented label="Legend" value={showLegend ? "on" : "off"} onChange={v => { undoPoint(); setShowLegend(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
                     <Segmented label="Crop marks" value={cropMarks ? "on" : "off"} onChange={v => { undoPoint(); setCropMarks(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
-                    <Segmented label={`Edition number · next is ${editionStamp(editionNo)}`} value={showEdition ? "on" : "off"} onChange={v => { undoPoint(); setShowEdition(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
+                    <Segmented label={issueNo ? `Issue number · this board is ${issueLabel(issueNo)}` : nextIssue ? `Issue number · its first export becomes ${issueLabel(nextIssue)}` : "Issue number · given at its first export"} value={showEdition ? "on" : "off"} onChange={v => { undoPoint(); setShowEdition(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
                   </>
                 )}
               </div>
@@ -6206,7 +6223,7 @@ function TacticsBoard() {
                     return (
                       <EditorialFrame frame={frame} k={sealK} ink={inkOn(bgColor)} title={edBoard} kicker={kicker.trim()}
                         strip={edStrip ? { home: { name: homeName, score: homeScore, pat: hk.pat, c1: hk.c1, c2: hk.c2 }, away: { name: awayName, score: awayScore, pat: ak.pat, c1: ak.c1, c2: ak.c2 } } : null}
-                        note={scoreNote.trim()} caption={edLines} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? editionStamp(editionNo) : null}
+                        note={scoreNote.trim()} caption={edLines} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? edition : null}
                         step={stepList.length > 1 ? { n: (view ? view.step : stepIdx) + 1, of: stepList.length, note: (view ? view.note : stepList[stepIdx]?.note ?? "").trim(), fade: view ? view.noteFade : 1 } : null}
                         band={canvasMode !== "blank" && (focus === "half" || focus === "third") ? { color: bgColor, top: Math.min(frame.y + (edStrip && frame.w < 1100 ? 196 : 112) * sealK, partRect.y - 2), bottom: Math.max(frame.y + frame.h - (edLines.length ? 92 + (edLines.length - 1) * 22 : 60) * sealK, partRect.y + partRect.h + 2) } : null} />
                     )
@@ -6218,7 +6235,7 @@ function TacticsBoard() {
                   </g>
                   {/* 14. The end card, at the end of a move */}
                   {view && view.end !== null && (
-                    <EndCard frame={frame} k={sealK} t={view.end} handle={creatorHandle} brand={creatorBrand} logo={creatorLogo} bg={bgColor} ink={inkOn(bgColor)} edition={editorial && showEdition ? editionStamp(editionNo) : null} />
+                    <EndCard frame={frame} k={sealK} t={view.end} handle={creatorHandle} brand={creatorBrand} logo={creatorLogo} bg={bgColor} ink={inkOn(bgColor)} edition={editorial && showEdition ? edition : null} />
                   )}
                   </>)
                   })()}
@@ -6554,12 +6571,12 @@ function hubRelTime(iso: string): string {
 /* ─────────────────────── Your boards: My Boards ─────────────── */
 interface BoardCardRow { id: string; title: string; updated_at: string; thumb: CanvasState }
 /** What a board's card needs. The picture is drawn from its pieces, lines and zones, never its photos (they can be large). */
-const BOARD_CARD_COLS = "id, title, updated_at, players:canvas_data->players, arrows:canvas_data->arrows, shapes:canvas_data->shapes, zones:canvas_data->customZones, settings:canvas_data->settings, bg:canvas_data->bgColor"
-const boardCardOf = (r: any): BoardCardRow => {
+export const BOARD_CARD_COLS = "id, title, updated_at, players:canvas_data->players, arrows:canvas_data->arrows, shapes:canvas_data->shapes, zones:canvas_data->customZones, settings:canvas_data->settings, bg:canvas_data->bgColor"
+export const boardCardOf = (r: any): BoardCardRow => {
   const list = (v: unknown) => (Array.isArray(v) ? v : [])
   const settings = settingsFrom(r.settings && typeof r.settings === "object" ? r.settings : { bgColor: typeof r.bg === "string" ? r.bg : "#0d1117" })
   return {
-    id: r.id, title: r.title || "Untitled board", updated_at: r.updated_at,
+    id: r.id, title: listName("Board", r.title, r.updated_at), updated_at: r.updated_at,
     thumb: { players: list(r.players), arrows: list(r.arrows), shapes: list(r.shapes), customZones: list(r.zones), texts: [], images: [], settings, title: "", bgColor: settings.bgColor, showPitch: true },
   }
 }
@@ -6613,7 +6630,9 @@ function BoardGrid({ userId, currentId = null, onOpen, onDeleted, onRenamed, emp
     await waitForBoardSave(b.id)
     const { data: src } = await supabase.from("boards").select("canvas_data, narrative").eq("id", b.id).single()
     const title = `${b.title} (copy)`.slice(0, 80)
-    const res = src ? await (supabase as any).from("boards").insert({ user_id: userId, title, canvas_data: (src as any).canvas_data, narrative: (src as any).narrative ?? "" }).select("id, updated_at").single() : null
+    // a copy is a new piece: it takes its own issue number when it's first exported
+    const cd = (src as any)?.canvas_data, copy = cd && typeof cd === "object" && cd.settings ? { ...cd, settings: { ...cd.settings, issueNo: 0, issueDay: "" } } : cd
+    const res = src ? await (supabase as any).from("boards").insert({ user_id: userId, title, canvas_data: copy, narrative: (src as any).narrative ?? "" }).select("id, updated_at").single() : null
     setBusyId(null)
     if (!res || res.error || !res.data?.id) { setNote(`Couldn't duplicate "${b.title}". Try again.`); return }
     setBoards(list => [{ ...b, id: res.data.id, title, updated_at: res.data.updated_at ?? new Date().toISOString() }, ...(list ?? [])])
@@ -7454,6 +7473,12 @@ function ReportRoute({ signedIn }: { signedIn: boolean }) {
   return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><ReportPage key={loc.key} /></Suspense>
 }
 
+/** "/shelf" is your shelf (sign-in only): everything you've made, in your order */
+function ShelfRoute({ signedIn }: { signedIn: boolean }) {
+  if (!signedIn) return <Navigate to="/" replace />
+  return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><ShelfPage /></Suspense>
+}
+
 /** "/braindump" is Brain Dump (sign-in only): the wall of notes */
 function BraindumpRoute({ signedIn }: { signedIn: boolean }) {
   if (!signedIn) return <Navigate to="/" replace />
@@ -7505,6 +7530,7 @@ export default function Root() {
           <Route path="/braindump" element={<BraindumpRoute signedIn={!!authUser} />} />
           <Route path="/analysis" element={<AnalysisRoute signedIn={!!authUser} />} />
           <Route path="/report" element={<ReportRoute signedIn={!!authUser} />} />
+          <Route path="/shelf" element={<ShelfRoute signedIn={!!authUser} />} />
           <Route path="/signin" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signin" />} />
           <Route path="/signup" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signup" />} />
           <Route path="/reset" element={<AuthPage mode="reset" />} />

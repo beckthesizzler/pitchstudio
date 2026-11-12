@@ -2,7 +2,8 @@ import { useId, useLayoutEffect, useRef, useState } from "react"
 import { Glyph } from "./crests"
 import { cardColours, type Brand } from "./brand"
 
-/* How a creator signs what they export: a round badge (their logo, or their crest) with their handle, and "PITCHSTUDIO" if they keep it on.
+/* How a creator signs what they export: a round badge (their logo, or their crest) and their handle first, then a small, light
+   "made with PitchStudio" if they keep it on.
    The same pieces draw the small seal on every picture and the end card on GIFs and videos. */
 
 /** The round badge: the uploaded logo, or the crest icon on the brand colour. Drawn around (cx, cy). */
@@ -42,8 +43,8 @@ export function CreatorSeal({ brand, handle, logo, pill }: { brand: Brand; handl
       <SealDisc cx={-14 - w + 17} cy={-28} r={11} brand={brand} logo={logo} clipId={clipId} />
       {hasText && (
         <text ref={textRef} x={-26} y={-22} textAnchor="end" fontSize={17} style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
-          {handle && <tspan fill="rgba(255,255,255,0.78)" fontWeight="600" style={{ letterSpacing: "0.04em" }}>@{handle}</tspan>}
-          {brand.madeWith && <tspan dx={handle ? 8 : 0} fill="rgba(255,255,255,0.95)" fontWeight="700" style={{ letterSpacing: "0.12em" }}>PITCHSTUDIO</tspan>}
+          {handle && <tspan fill="rgba(255,255,255,0.97)" fontWeight="700" style={{ letterSpacing: "0.04em" }}>@{handle}</tspan>}
+          {brand.madeWith && <tspan dx={handle ? 9 : 0} fill="rgba(255,255,255,0.58)" fontWeight="500" fontSize={12} style={{ fontFamily: "'Inter',sans-serif", letterSpacing: "0.02em" }}>made with PitchStudio</tspan>}
         </text>
       )}
     </g>

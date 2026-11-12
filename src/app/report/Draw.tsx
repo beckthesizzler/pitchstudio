@@ -480,8 +480,9 @@ export function blockBox(b: Block): { x: number; y: number; w: number; h: number
 
 /* ── the seal, in any corner ── */
 function Seal({ brand, handle, logo, corner, W, H, k }: { brand: Brand; handle: string; logo: string | null; corner: Report["seal"]; W: number; H: number; k: number }) {
-  const sc = 1.3 * k, words = (handle ? "@" + handle + " " : "") + (brand.madeWith ? "PITCHSTUDIO" : "")
-  const w = (handle || brand.madeWith ? textWidth(words, `700 17px "Barlow Condensed"`, 17 * 0.08) + 48 : 34) + 14
+  const sc = 1.3 * k
+  const words = (handle ? textWidth("@" + handle, `700 17px "Barlow Condensed"`, 17 * 0.04) : 0) + (brand.madeWith ? textWidth("made with PitchStudio", `500 12px "Inter"`, 12 * 0.02) + (handle ? 9 : 0) : 0)
+  const w = (handle || brand.madeWith ? words + 48 : 34) + 14
   const left = corner === "bl" || corner === "tl", top = corner === "tr" || corner === "tl"
   const x = left ? 20 * k + w * sc : W - 20 * k, y = top ? 20 * k + 42 * sc : H - 20 * k
   return <g data-seal="1" transform={`translate(${x},${y}) scale(${sc})`} style={{ pointerEvents: "none" }}><CreatorSeal brand={brand} handle={handle} logo={logo} pill="rgba(0,0,0,0.66)" /></g>

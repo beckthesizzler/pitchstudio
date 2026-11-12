@@ -67,6 +67,8 @@ const readNote = (n: any): Note => ({
   color: COLORS.some(c => c.id === n.color) ? n.color : "yellow", pos: Number(n.pos) || 0, body: readBody(n.body), updated_at: String(n.updated_at ?? new Date().toISOString()),
 })
 const firstLine = (n: Note) => { const t = n.body.find((b): b is TextBlock => b.type === "text" && !!plain(b.html)); return t ? plain(t.html) : "" }
+/** What an idea or a tree is called before it's named: an idea by its first line, a tree by the name it's waiting for */
+const nameOf = (n: Note) => n.title.trim() || (n.kind === "tree" ? "Name this tree" : firstLine(n).split(String.fromCharCode(10))[0].slice(0, 60) || "New idea")
 const drawings = (n: Note) => n.body.filter(b => b.type !== "text").length
 
 function Words({ block, onChange, onFocus }: { block: TextBlock; onChange: (b: TextBlock) => void; onFocus: (el: HTMLDivElement) => void }) {
@@ -127,6 +129,9 @@ export default function BrainDumpPage() {
   const [moving, setMoving] = useState<{ id: string; x: number; y: number } | null>(null)
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; over: string | null } | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false) // the ideas didn't load: the line says so and offers to try again
+  const [tries, setTries] = useState(0)
+  const failed = useRef(new Set<string>()) // ideas whose last save didn't go through
   const focused = useRef<HTMLDivElement | null>(null)
   const quickRef = useRef<HTMLInputElement>(null)
   const timers = useRef(new Map<string, number>())
@@ -145,11 +150,14 @@ export default function BrainDumpPage() {
       setUser({ id: session.user.id })
       const { data, error } = await (supabase as any).from("notes").select(COLS).eq("user_id", session.user.id).order("pos", { ascending: true }).limit(2000)
       if (off) return
-      if (error) { setNotes([]); setToast("Your ideas couldn't be loaded. Check your connection."); return }
+      if (error) { reportError(error, "notes_load"); setLoadFailed(true); setNotes(n => n ?? []); return }
+      setLoadFailed(false)
       setNotes((data ?? []).map(readNote))
+      const want = new URLSearchParams(window.location.search).get("tree") // opened from your shelf: that tree, lit up
+      if (want) setTimeout(() => { setFlash(want); document.querySelector(`[data-roof="${want}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }) }, 120)
     })
     return () => { off = true }
-  }, [navigate])
+  }, [navigate, tries])
   // leaving with something unsaved: the browser asks first
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => { if (timers.current.size) { e.preventDefault(); e.returnValue = "" } }
@@ -182,9 +190,12 @@ export default function BrainDumpPage() {
     if (!n) return
     setStatus("saving")
     const { error } = await (supabase as any).from("notes").update({ title: n.title.slice(0, 120), color: n.color, pos: n.pos, parent_id: n.parent_id, body: n.body, updated_at: new Date().toISOString() }).eq("id", id)
-    if (error) { setStatus("error"); reportError(error, "note_save"); return }
-    if (!timers.current.size) setStatus("saved")
+    if (error) { failed.current.add(id); setStatus("error"); reportError(error, "note_save"); return }
+    failed.current.delete(id)
+    if (!timers.current.size && !failed.current.size) setStatus("saved")
   }
+  /** Sends every idea whose save didn't go through again */
+  const retry = () => { for (const id of [...failed.current]) save(id) }
   const change = (id: string, fn: (n: Note) => Note, wait = 700) => {
     setNotes(ns => (ns ?? []).map(n => (n.id === id ? fn(n) : n)))
     setStatus("saving")
@@ -229,7 +240,7 @@ export default function BrainDumpPage() {
     const pos = parent === null ? Math.min(0, ...sib.map(x => x.pos)) - 1 : Math.max(0, ...sib.map(x => x.pos)) + 1
     change(id, x => ({ ...x, parent_id: parent, pos }), 0)
     const t = parent ? treeOf(notesRef.current.find(x => x.id === parent)) : null
-    setToast(t ? `Filed under “${t.title || "Untitled tree"}”` : "Back on the line")
+    setToast(t ? `Filed under “${nameOf(t)}”` : "Back on the line")
     track("note_moved", { to: parent ? "tree" : "line" })
   }
   /** Deleting: an idea's own ideas move up to where it hung; a tree's ideas all go back on the line */
@@ -332,9 +343,9 @@ export default function BrainDumpPage() {
       <div key={n.id} className={`bd-pad${drag?.id === n.id ? " lifted" : ""}${drag && drag.over === `note:${n.id}` && drag.id !== n.id ? " target" : ""}${term && !hit(n) ? " dim" : ""}`}
         data-drop={inTree ? `note:${n.id}` : "line"} data-pad={n.id} style={{ ["--pad" as any]: c.c, ["--pin" as any]: c.root }}>
         {!inTree && <span className="bd-pin" aria-hidden="true" />}
-        <button className="bd-pad-face" onPointerDown={e => padDown(e, n.id)} onClick={() => { if (!dragged.current) setOpen(n.id) }} aria-label={`Open ${n.title || "Untitled idea"}`}>
-          <h3>{n.title || "Untitled"}</h3>
-          {words && <p>{words}</p>}
+        <button className="bd-pad-face" onPointerDown={e => padDown(e, n.id)} onClick={() => { if (!dragged.current) setOpen(n.id) }} aria-label={`Open ${nameOf(n)}`}>
+          <h3>{nameOf(n)}</h3>
+          {n.title.trim() && words && <p>{words}</p>}
           <small>{new Date(n.updated_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}{d > 0 && <><span>·</span><Shapes size={12} /> {d}</>}{sub > 0 && <><span>·</span><GitFork size={12} /> {sub}</>}</small>
         </button>
         <button className="bd-pad-move" aria-label={`Move ${n.title || "this idea"}`} title="Move to a tree, under an idea, or back on the line"
@@ -467,6 +478,9 @@ export default function BrainDumpPage() {
         .bd-adds button { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1.5px dashed rgba(27,26,23,.3); background: none; color: #1b1a17; font: 600 13px 'Inter', sans-serif; cursor: pointer; }
         .bd-adds button:hover { border-style: solid; background: rgba(255,255,255,.5); }
         .bd-status { font: 500 12px 'Inter', sans-serif; color: rgba(27,26,23,.55); margin-left: 6px; display: inline-flex; align-items: center; gap: 5px; }
+        .bd-retry { border: none; background: none; padding: 0; cursor: pointer; color: ${DS_ERROR}; font: 600 12px 'Inter', sans-serif; text-decoration: underline; text-underline-offset: 3px; }
+        .bd-failed { display: flex; align-items: center; gap: 14px; padding: 16px 18px; margin-bottom: 14px; border-radius: 14px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; font-size: 14px; }
+        .bd-failed span { flex: 1; color: ${TEXT_MUTED}; }
         .bd-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: ${TEXT_PRIMARY}; color: ${SURFACE_BASE}; padding: 10px 16px; border-radius: 999px; font: 500 13px 'Inter', sans-serif; z-index: 90; }
         @media (max-width: 860px) {
           .bd { grid-template-columns: minmax(0, 1fr); }
@@ -507,7 +521,7 @@ export default function BrainDumpPage() {
                 <div style={{ display: "flex", alignItems: "center" }}>
                   <button className="bd-row" onClick={() => goTo(t.id)}>
                     <span className="bd-dot" style={{ background: hex(t.color) }} />
-                    <span className="t">{t.title || "Untitled tree"}</span><em>{under(t.id).length}</em>
+                    <span className="t">{nameOf(t)}</span><em>{under(t.id).length}</em>
                   </button>
                   <button className="bd-icon" style={{ width: 28, height: 28 }} aria-label={isShut ? "Show its ideas" : "Hide its ideas"}
                     onClick={() => setShut(s => { const c = new Set(s); if (c.has(t.id)) c.delete(t.id); else c.add(t.id); return c })}>
@@ -515,7 +529,7 @@ export default function BrainDumpPage() {
                   </button>
                 </div>
                 {!isShut && (term ? inside : under(t.id)).map(n => (
-                  <button key={n.id} className="bd-row sub" aria-current={open === n.id} onClick={() => goTo(n.id)}><span className="t">{n.title || "Untitled"}</span></button>
+                  <button key={n.id} className="bd-row sub" aria-current={open === n.id} onClick={() => goTo(n.id)}><span className="t">{nameOf(n)}</span></button>
                 ))}
               </div>
             )
@@ -524,7 +538,7 @@ export default function BrainDumpPage() {
           {line.length === 0 && <p className="bd-none">Every idea you dump lands here first.</p>}
           {line.filter(hit).map(n => (
             <button key={n.id} className="bd-row" aria-current={open === n.id} onClick={() => goTo(n.id)}>
-              <span className="bd-dot" style={{ background: hex(n.color) }} /><span className="t">{n.title || "Untitled"}</span>
+              <span className="bd-dot" style={{ background: hex(n.color) }} /><span className="t">{nameOf(n)}</span>
               <em>{new Date(n.updated_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</em>
             </button>
           ))}
@@ -544,11 +558,12 @@ export default function BrainDumpPage() {
             <h1>Dump it. Then give it roots.</h1>
             <p>Throw every idea onto the line as fast as it comes. When a few belong together, plant a tree and hang them under its roof.</p>
           </div>
-          <span className="bd-saved" aria-live="polite">{status === "saving" ? <><Loader2 size={12} className="an-spin" /> Saving</> : status === "saved" ? <><Check size={12} /> Saved</> : status === "error" ? <span style={{ color: DS_ERROR }}>Not saved. Check your connection.</span> : ""}</span>
+          <span className="bd-saved" aria-live="polite">{status === "saving" ? <><Loader2 size={12} className="an-spin" /> Saving</> : status === "saved" ? <><Check size={12} /> Saved</> : status === "error" ? <button className="bd-retry" onClick={retry}>Not saved yet · Try again</button> : ""}</span>
         </header>
 
         <section className="bd-sec" aria-label="On the line">
           <div className="bd-sec-head"><h2>On the line</h2><span>{line.length ? `${line.length} idea${line.length === 1 ? "" : "s"} · drag one onto a tree to file it` : "Type an idea and press Enter"}</span></div>
+          {loadFailed && <div className="bd-failed" role="alert"><b>Your ideas didn't load.</b><span>Nothing is lost. They're kept in your account.</span><button className="bd-btn" onClick={() => setTries(t => t + 1)}>Try again</button></div>}
           <div className={`bd-line${drag?.over === "line" ? " over" : ""}`} data-drop="line">
             <div className="bd-quick">
               <input ref={quickRef} value={quick} maxLength={120} placeholder="Dump an idea…" aria-label="Dump an idea" disabled={!user}
@@ -616,13 +631,13 @@ export default function BrainDumpPage() {
           <>
             <div style={{ position: "fixed", inset: 0, zIndex: 65 }} onClick={() => setMoving(null)} />
             <div className="bd-menu" role="menu" aria-label="Move to" style={{ left: Math.max(8, moving.x), top: Math.min(moving.y, window.innerHeight - 370) }}>
-              <p>Move “{n.title || "Untitled"}” to</p>
+              <p>Move “{nameOf(n)}” to</p>
               <button role="menuitem" className="bd-row" disabled={!n.parent_id} onClick={() => { moveTo(n.id, null); setMoving(null) }}><span className="bd-dot" style={{ background: "transparent", border: `1.5px dashed ${TEXT_MUTED}` }} /><span className="t">On the line</span></button>
               {trees.map(t => (
                 <div key={t.id}>
-                  <button role="menuitem" className="bd-row" disabled={n.parent_id === t.id} onClick={() => { moveTo(n.id, t.id); setMoving(null) }}><span className="bd-dot" style={{ background: hex(t.color) }} /><span className="t">{t.title || "Untitled tree"}</span></button>
+                  <button role="menuitem" className="bd-row" disabled={n.parent_id === t.id} onClick={() => { moveTo(n.id, t.id); setMoving(null) }}><span className="bd-dot" style={{ background: hex(t.color) }} /><span className="t">{nameOf(t)}</span></button>
                   {under(t.id).filter(k => !no.has(k.id)).map(k => (
-                    <button key={k.id} role="menuitem" className="bd-row sub" disabled={n.parent_id === k.id} onClick={() => { moveTo(n.id, k.id); setMoving(null) }}><span className="t">under “{k.title || "Untitled"}”</span></button>
+                    <button key={k.id} role="menuitem" className="bd-row sub" disabled={n.parent_id === k.id} onClick={() => { moveTo(n.id, k.id); setMoving(null) }}><span className="t">under “{nameOf(k)}”</span></button>
                   ))}
                 </div>
               ))}
@@ -631,14 +646,14 @@ export default function BrainDumpPage() {
           </>
         )
       })()}
-      {drag && (() => { const n = all.find(x => x.id === drag.id); return n ? <div className="bd-ghost" style={{ left: drag.x, top: drag.y, background: hex(n.color) }}>{n.title || "Untitled"}</div> : null })()}
+      {drag && (() => { const n = all.find(x => x.id === drag.id); return n ? <div className="bd-ghost" style={{ left: drag.x, top: drag.y, background: hex(n.color) }}>{nameOf(n)}</div> : null })()}
 
       {note && (
         <div className="bd-sheet" role="dialog" aria-label={note.title || "Idea"} style={{ ["--bd-paper" as any]: `color-mix(in srgb, ${hex(note.color)} 22%, #fbfaf6)` }}>
           <div className="bd-sheet-top" onPointerDown={e => { if ((e.target as HTMLElement).closest("button")) e.preventDefault() }}>
             <button className="bd-tb" onClick={close} aria-label="Back to Brain Dump"><ArrowLeft size={17} /> Brain Dump</button>
-            <span className="bd-crumb">{noteTree ? <><Sprout size={13} /> {noteTree.title || "Untitled tree"}</> : "On the line"}</span>
-            <span className="bd-status" aria-live="polite">{status === "saving" ? <><Loader2 size={12} className="an-spin" /> Saving</> : status === "saved" ? <><Check size={12} /> Saved</> : status === "error" ? <span style={{ color: DS_ERROR }}>Not saved</span> : ""}</span>
+            <span className="bd-crumb">{noteTree ? <><Sprout size={13} /> {nameOf(noteTree)}</> : "On the line"}</span>
+            <span className="bd-status" aria-live="polite">{status === "saving" ? <><Loader2 size={12} className="an-spin" /> Saving</> : status === "saved" ? <><Check size={12} /> Saved</> : status === "error" ? <button className="bd-retry" onClick={retry}>Not saved yet · Try again</button> : ""}</span>
             <span style={{ flex: 1 }} />
             <button className="bd-tb" aria-label="Bold" title="Bold" onClick={() => fmt("bold")}><Bold size={16} /></button>
             <button className="bd-tb" aria-label="Italic" title="Italic" onClick={() => fmt("italic")}><Italic size={16} /></button>
