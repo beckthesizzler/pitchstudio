@@ -164,7 +164,7 @@ export default function ReportPage() {
     let newRev: number | null = null, failed = false
     try {
       if (rev.current === null) {
-        const { data, error } = await supabase.from("reports").insert({ id: rid, user_id: user.id, title: p.title, data: p.data }).select("rev").single()
+        const { data, error } = await (supabase as any).from("reports").insert({ id: rid, user_id: user.id, title: p.title, data: p.data }).select("rev").single()
         if (error && (error as any).code === "23505") {
           // it was made already (an answer lost on the way back): carry on from the saved revision
           const cur = await supabase.from("reports").select("rev").eq("id", rid).maybeSingle()
@@ -173,7 +173,7 @@ export default function ReportPage() {
         if (error && String((error as any).message).includes("report limit")) say("You have 500 reports. Delete a few in My reports to save this one.")
         if (error) failed = true; else newRev = (data as any)?.rev ?? 1
       } else {
-        const { data, error } = await supabase.from("reports").update({ title: p.title, data: p.data }).eq("id", rid).eq("rev", rev.current).select("rev")
+        const { data, error } = await (supabase as any).from("reports").update({ title: p.title, data: p.data }).eq("id", rid).eq("rev", rev.current).select("rev")
         if (error) failed = true
         else if (!data || !(data as any[]).length) { saving.current = false; setStatus("conflict"); return } // changed somewhere else since
         else newRev = (data as any[])[0].rev
@@ -544,10 +544,10 @@ export default function ReportPage() {
         .rp-body { display: grid; grid-template-columns: 84px 1fr 304px; min-height: 0; }
         .rp-rail { border-right: 1px solid ${DS_BORDER}; padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
         .rp-rail-cap { font: 700 9.5px 'Inter', sans-serif; letter-spacing: .16em; color: ${TEXT_MUTED}; text-align: center; margin: 4px 0 4px; }
-        .rp-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 7px; border-radius: 10px; border: 1px solid transparent; background: none; color: ${TEXT_MUTED}; font: 600 11px 'Inter', sans-serif; cursor: pointer; position: relative; }
+        .rp-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 7px; border-radius: 10px; border: 1px solid transparent; background: none; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; cursor: pointer; position: relative; }
         .rp-tool:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
         .rp-tool.on { color: ${ACCENT_INK}; background: ${ACCENT_SOLID}; }
-        .rp-tool kbd { position: absolute; top: 3px; right: 5px; font: 600 9px 'Inter', sans-serif; opacity: .6; }
+        .rp-tool kbd { position: absolute; top: 3px; right: 5px; font: 600 12px 'Inter', sans-serif; opacity: .6; }
         .rp-mid { position: relative; display: grid; grid-template-rows: 1fr auto; min-width: 0; min-height: 0; background: #101114; }
         .rp-view { position: relative; min-width: 0; min-height: 0; display: flex; padding: 28px; }
         .rp-wrap { position: relative; margin: auto; flex-shrink: 0; box-shadow: 0 12px 48px rgba(0,0,0,.5); }
@@ -556,7 +556,7 @@ export default function ReportPage() {
         .rp-zoom button { width: 28px; height: 28px; border-radius: 8px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: #f5f5f7; display: grid; place-items: center; cursor: pointer; }
         .rp-insp { border-left: 1px solid ${DS_BORDER}; padding: 16px; overflow-y: auto; min-height: 0; }
         .rp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; } .rp-head .rp-cap { margin: 0; }
-        .rp-cap { font-size: 11px; letter-spacing: .14em; font-weight: 700; color: ${TEXT_MUTED}; margin: 0 0 12px; }
+        .rp-cap { font-size: 12px; letter-spacing: .14em; font-weight: 700; color: ${TEXT_MUTED}; margin: 0 0 12px; }
         .rp-row { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; min-width: 0; }
         .rp-lab { font-size: 12px; color: ${TEXT_MUTED}; }
         .rp-two { display: grid; grid-template-columns: 76px 1fr; gap: 10px; }
@@ -568,7 +568,7 @@ export default function ReportPage() {
         .rp-statrow .rp-inp:first-child { width: 86px; flex: none; } .rp-statrow .rp-inp { padding: 7px 9px; font-size: 13px; }
         .rp-num { width: 24px; height: 24px; flex: none; border-radius: 50%; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 800 12px 'Inter', sans-serif; display: grid; place-items: center; margin-top: 6px; }
         .rp-cols { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
-        .rp-sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(128,128,128,.4); cursor: pointer; padding: 0; font: 800 11px 'Inter', sans-serif; color: #111; }
+        .rp-sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(128,128,128,.4); cursor: pointer; padding: 0; font: 800 12px 'Inter', sans-serif; color: #111; }
         .rp-sw.rp-paper { border-radius: 7px; border: 1px solid rgba(128,128,128,.45); }
         .rp-sw.on { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
         .rp-any { background: none; overflow: hidden; }
@@ -584,8 +584,12 @@ export default function ReportPage() {
         .rp-slide { display: flex; align-items: center; gap: 10px; } .rp-slide input { flex: 1; accent-color: ${ACCENT_TEXT}; } .rp-slide span { font-size: 12px; color: ${TEXT_MUTED}; width: 40px; text-align: right; }
         .rp-note { font-size: 12px; color: ${TEXT_MUTED}; line-height: 1.5; margin: 0 0 12px; }
         .rp-acts { display: flex; gap: 6px; margin-top: 18px; padding-top: 14px; border-top: 1px solid ${DS_BORDER}; }
+        .rp-keysbtn { margin-top: 22px; display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 6px; border-radius: 999px; border: 1px solid ${DS_BORDER}; background: none; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; cursor: pointer; }
+        .rp-keysbtn span { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; font-weight: 700; }
+        .rp-keysbtn:hover, .rp-keysbtn[aria-expanded="true"] { color: ${TEXT_PRIMARY}; border-color: ${TEXT_MUTED}; }
+        .rp-keysbtn + .rp-keys { margin-top: 12px; }
         .rp-keys { display: grid; grid-template-columns: 1fr; gap: 6px; font-size: 12px; color: ${TEXT_MUTED}; }
-        .rp-keys div { display: flex; align-items: center; gap: 8px; } .rp-keys kbd { font: 600 10.5px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 2px 6px; white-space: nowrap; min-width: 86px; text-align: center; }
+        .rp-keys div { display: flex; align-items: center; gap: 8px; } .rp-keys kbd { font: 600 12px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 2px 6px; white-space: nowrap; min-width: 86px; text-align: center; }
         .tm-tabs { display: flex; gap: 4px; background: ${SURFACE_2}; border-radius: 10px; padding: 3px; margin-bottom: 14px; }
         .tm-tabs button { flex: 1; border: none; background: none; color: ${TEXT_MUTED}; font: 600 12.5px 'Inter', sans-serif; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
         .tm-tabs button.on { background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
@@ -594,11 +598,11 @@ export default function ReportPage() {
         .tm { border: 1px solid ${DS_BORDER}; border-radius: 14px; margin-bottom: 10px; background: ${SURFACE_BASE}; overflow: hidden; }
         .tm.open { border-color: ${DS_BORDER_STRONG}; }
         .tm-head { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: none; padding: 10px 12px; color: ${TEXT_PRIMARY}; cursor: pointer; text-align: left; font-family: 'Inter', sans-serif; }
-        .tm-name { flex: 1; min-width: 0; display: flex; flex-direction: column; } .tm-name b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tm-name small { font-size: 11.5px; color: ${TEXT_MUTED}; }
+        .tm-name { flex: 1; min-width: 0; display: flex; flex-direction: column; } .tm-name b { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tm-name small { font-size: 12px; color: ${TEXT_MUTED}; }
         .tm-chev { color: ${TEXT_MUTED}; transition: transform .15s; flex: none; } .tm.open .tm-chev { transform: rotate(180deg); }
         .tm-body { padding: 2px 12px 12px; }
         .tm-forms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-        .tm-form { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 4px 6px; border-radius: 10px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; color: ${TEXT_MUTED}; font: 600 11.5px 'Inter', sans-serif; cursor: pointer; }
+        .tm-form { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 4px 6px; border-radius: 10px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; cursor: pointer; }
         .tm-form:hover { color: ${TEXT_PRIMARY}; } .tm-form.on { border-color: ${ACCENT_SOLID}; color: ${TEXT_PRIMARY}; box-shadow: 0 0 0 2px ${ACCENT_SOFT}; }
         .tm-kits { display: flex; flex-wrap: wrap; gap: 3px; }
         .tm-kit { padding: 2px; border-radius: 50%; border: 2px solid transparent; background: none; cursor: pointer; } .tm-kit.on { border-color: ${ACCENT_SOLID}; } .tm-kit:hover { transform: scale(1.1); }
@@ -606,7 +610,7 @@ export default function ReportPage() {
         .tm-link { background: none; border: none; padding: 0; margin-top: 8px; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; } .tm-link:hover { color: ${TEXT_PRIMARY}; }
         .tm-links .tm-link { margin-top: 0; }
         .tm-own { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
-        .tm-cols { display: flex; gap: 14px; } .tm-cols label { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; color: ${TEXT_MUTED}; }
+        .tm-cols { display: flex; gap: 14px; } .tm-cols label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: ${TEXT_MUTED}; }
         .tm-cols input { width: 44px; height: 30px; padding: 0; border: 1px solid ${DS_BORDER}; border-radius: 8px; background: none; cursor: pointer; }
         .tm-acts { display: flex; margin-top: 12px; }
         .tm-names { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; align-items: flex-start; } .tm-names .rp-inp { font-size: 13px; }
@@ -625,7 +629,7 @@ export default function ReportPage() {
         .rp-list { overflow-y: auto; padding: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
         .rp-card { border: 1px solid ${DS_BORDER}; border-radius: 12px; overflow: hidden; background: ${SURFACE_BASE}; display: flex; flex-direction: column; }
         .rp-card .th { aspect-ratio: 1; cursor: pointer; background: #0f1114; display: grid; place-items: center; overflow: hidden; }
-        .rp-card .meta { padding: 9px 10px; display: flex; align-items: center; gap: 6px; } .rp-card .t { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .rp-card .d { font-size: 11.5px; color: ${TEXT_MUTED}; }
+        .rp-card .meta { padding: 9px 10px; display: flex; align-items: center; gap: 6px; } .rp-card .t { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .rp-card .d { font-size: 12px; color: ${TEXT_MUTED}; }
         .rp-toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: ${TEXT_PRIMARY}; color: ${SURFACE_BASE}; font: 500 13px 'Inter', sans-serif; padding: 10px 16px; border-radius: 999px; z-index: 60; box-shadow: 0 8px 24px rgba(0,0,0,.3); max-width: calc(100vw - 32px); }
         .rp-busy { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 55; display: grid; place-items: center; color: #fff; font: 600 14px 'Inter', sans-serif; }
         .rp-spin { animation: rpSpin 1s linear infinite; } @keyframes rpSpin { to { transform: rotate(360deg); } }

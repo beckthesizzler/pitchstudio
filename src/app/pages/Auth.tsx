@@ -146,7 +146,7 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
       setLoading(false)
       if (!data.session) { track("sign_up_email_sent"); setSentTo(cleanEmail); return } // "Confirm email" is on: wait for the link
       // Only if the database step hasn't been set up yet (the name check above failed): save the answers directly.
-      if (freeErr && data.user) void supabase.from("profiles").update({ handle: h, identity }).eq("id", data.user.id).then(() => {})
+      if (freeErr && data.user) void (supabase as any).from("profiles").update({ handle: h, identity }).eq("id", data.user.id).then(() => {})
       return // the app notices you're signed in and opens your board
     }
 

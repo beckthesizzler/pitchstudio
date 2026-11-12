@@ -38,6 +38,7 @@ export function Panel(P: PanelProps) {
   const { report, block: b, mark: m, mode, begin, end } = P
   // inside a pitch the panel has two tabs: the teams, and the selected mark. Choosing a mark opens its tab.
   const [tab, setTab] = useState<"teams" | "marks">("teams")
+  const [showKeys, setShowKeys] = useState(false) // the keyboard shortcuts, folded away until you ask
   useEffect(() => { setTab(m ? "marks" : "teams") }, [m?.id])
   const slider = (label: string, value: number, min: number, max: number, step: number, put: (v: number) => void, fmt: (v: number) => string) => (
     <Row label={label}>
@@ -135,10 +136,10 @@ export function Panel(P: PanelProps) {
           : swatches(report.story, v => P.setReport({ story: v }), P.storyAuto, "Your colour (from your Creator Card)")}</Row>
         <Toggle label="Glow of your colour" on={report.glow} set={v => P.setReport({ glow: v })} />
         <Row label="Your seal"><Seg label="Seal corner" value={report.seal} options={[["tl", "↖"], ["tr", "↗"], ["bl", "↙"], ["br", "↘"]]} set={v => P.setReport({ seal: v })} /></Row>
-        <p className="rp-cap" style={{ marginTop: 22 }}>KEYS</p>
-        <div className="rp-keys">
+        <button className="rp-keysbtn" aria-expanded={showKeys} onClick={() => setShowKeys(v => !v)}><span aria-hidden="true">?</span> Keyboard shortcuts</button>
+        {showKeys && <div className="rp-keys">
           {[["Double-click", "Go inside"], ["Drag", "Move, snaps"], ["Ctrl drag", "No snapping"], ["Shift drag", "Straight line"], ["Alt click", "The one underneath"], ["Arrows", "Nudge"], ["Ctrl D", "Duplicate"], ["Ctrl C / V", "Copy, paste"], ["Ctrl V", "Paste a photo"], ["Ctrl Z", "Undo"], ["Delete", "Remove"], ["Esc", "Step out"]].map(([k, t]) => <div key={k}><kbd>{k}</kbd><span>{t}</span></div>)}
-        </div>
+        </div>}
       </div>
     )
   }

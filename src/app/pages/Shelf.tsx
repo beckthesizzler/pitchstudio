@@ -26,6 +26,9 @@ const KIND_NAME: Record<Kind, string> = { board: "Board", analysis: "Analysis", 
 const KIND_ICON: Record<Kind, React.ReactNode> = { board: <LayoutDashboard size={12} />, analysis: <ImageIcon size={12} />, report: <FileText size={12} />, tree: <Sprout size={12} /> }
 const TREE_COLORS: Record<string, string> = { yellow: "#f7e36a", pink: "#f58cb4", peach: "#f9b27e", orange: "#f6a04a", lime: "#c8e86c", aqua: "#88dde0", teal: "#5ec6cb", lilac: "#c6b6fb" }
 
+/** An idea's first line, as Brain Dump shows an idea with no title */
+const plainText = (html: unknown) => { if (typeof html !== "string" || !html) return ""; const d = document.createElement("div"); d.innerHTML = html; return (d.textContent || "").trim().split(String.fromCharCode(10))[0] }
+
 /** A small drawing of a Brain Dump tree: its roof and the first ideas hanging under it */
 function TreeThumb({ name, color, ideas }: { name: string; color: string; ideas: string[] }) {
   const c = TREE_COLORS[color] ?? TREE_COLORS.lime, shown = ideas.slice(0, 4), n = Math.max(1, shown.length)
@@ -83,7 +86,7 @@ export default function ShelfPage() {
         (supabase as any).from("boards").select(BOARD_CARD_COLS).eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
         (supabase as any).from("analyses").select("id, title, updated_at, shots:data->shots").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
         (supabase as any).from("reports").select("id, title, updated_at, data").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
-        (supabase as any).from("notes").select("id, kind, parent_id, title, color, pos, updated_at").eq("user_id", u.id).limit(2000),
+        (supabase as any).from("notes").select("id, kind, parent_id, title, color, pos, updated_at, first:body->0->>html").eq("user_id", u.id).limit(2000),
       ])
       if (off) return
       // without the shelf column (or the profile) the shelf still opens, in the order things were last changed
@@ -109,7 +112,7 @@ export default function ShelfPage() {
       for (const t of notes.filter(x => x.kind === "tree" && !x.parent_id)) {
         const kids = notes.filter(x => x.parent_id === t.id).sort((x, y) => x.pos - y.pos)
         const latest = [t, ...kids].map(x => x.updated_at).sort().pop() ?? t.updated_at
-        out.push({ key: "tree:" + t.id, kind: "tree", id: t.id, name: t.title?.trim() || "Name this tree", no: 0, updated: latest, href: `/braindump?tree=${t.id}`, thumb: <TreeThumb name={t.title?.trim() || "Name this tree"} color={t.color} ideas={kids.map(k => k.title || "Idea")} /> })
+        out.push({ key: "tree:" + t.id, kind: "tree", id: t.id, name: t.title?.trim() || "Name this tree", no: 0, updated: latest, href: `/braindump?tree=${t.id}`, thumb: <TreeThumb name={t.title?.trim() || "Name this tree"} color={t.color} ideas={kids.map(k => k.title?.trim() || plainText(k.first) || "New idea")} /> })
       }
       const saved: string[] = Array.isArray(prof.data?.shelf) ? prof.data.shelf.filter((k: unknown) => typeof k === "string") : []
       setOrder(saved)

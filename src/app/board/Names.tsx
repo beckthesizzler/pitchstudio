@@ -29,7 +29,7 @@ export const NAMES_CSS = `
   .nr-hud { position: fixed; left: 50%; transform: translateX(-50%); z-index: 59; display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 14px;
     border-radius: 999px; font: 500 12.5px Inter, system-ui, sans-serif; white-space: nowrap; animation: nr-in .2s ease-out; }
   .nr-hud b { font-weight: 700; }
-  .nr-hud kbd { font: 600 11px Inter, system-ui, sans-serif; padding: 1px 6px; border-radius: 6px; border: 1px solid rgba(127,127,127,0.35); opacity: .8; }
+  .nr-hud kbd { font: 600 12px Inter, system-ui, sans-serif; padding: 1px 6px; border-radius: 6px; border: 1px solid rgba(127,127,127,0.35); opacity: .8; }
   .nr-hud button { height: 28px; padding: 0 10px; border-radius: 999px; border: 0; display: inline-flex; align-items: center; gap: 4px; font: 600 12.5px Inter, system-ui, sans-serif; cursor: pointer; }
   .nr-ring { animation: nr-pulse 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
   @keyframes nr-in { from { opacity: 0; transform: translate(-50%, 4px) } to { opacity: 1; transform: translate(-50%, 0) } }

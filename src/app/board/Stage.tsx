@@ -41,7 +41,7 @@ export const STAGE_CSS = `
 .st-btn:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
 .st-tip { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translate(-50%, 4px); opacity: 0; pointer-events: none;
   white-space: nowrap; font: 500 12px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; padding: 6px 9px; border-radius: 8px; transition: opacity .14s, transform .14s; z-index: 5; }
-.st-tip kbd { font: 600 10.5px 'Inter', sans-serif; opacity: .55; margin-left: 6px; }
+.st-tip kbd { font: 600 12px 'Inter', sans-serif; opacity: .55; margin-left: 6px; }
 .st-btn:hover .st-tip { opacity: 1; transform: translate(-50%, 0); }
 .st-seg { display: inline-flex; padding: 3px; border-radius: 11px; gap: 2px; }
 .st-seg button { height: 28px; padding: 0 12px; border-radius: 8px; border: none; background: transparent; cursor: pointer;

@@ -4221,10 +4221,12 @@ function TacticsBoard() {
   /** Before an export: a board in the editorial frame takes its issue number from your account, once, and keeps it.
    *  If the number can't be fetched, this export goes out without one rather than with a wrong one. */
   const numberBoard = async () => {
-    if (!editorial || !showEdition || issueNo) return
-    const n = await takeIssue()
+    if (!editorial || !showEdition || issueNo || !authUser) return
+    const n = await takeIssue(authUser.id)
     if (n) { setIssueNo(n); setIssueDay(dayStamp()); setNextIssue(n + 1); setNoIssue(false) } else setNoIssue(true)
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
+    // a board that took a number is saved now, so the number always belongs to a board in your account
+    if (n && !currentBoardId) await saveBoardRef.current().catch(() => false)
   }
   const doExport = async (fmt: "png" | "jpeg" | "pdf" | "copy") => {
     if (!pitchRef.current) return
@@ -4740,7 +4742,7 @@ function TacticsBoard() {
         <div style={{ width: 52, flexShrink: 0, height: "100%", background: SURFACE_1, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 8, paddingBottom: 8 }}>
           <style>{`
             .rl-wrap { position: relative; width: 100%; display: flex; justify-content: center; margin-bottom: 2px; }
-            .rl-tip { display: none; position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 6px; padding: 5px 9px; font-size: 11px; color: ${TEXT_PRIMARY}; white-space: nowrap; z-index: 200; pointer-events: none; font-family: 'Inter', sans-serif; }
+            .rl-tip { display: none; position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 6px; padding: 5px 9px; font-size: 12px; color: ${TEXT_PRIMARY}; white-space: nowrap; z-index: 200; pointer-events: none; font-family: 'Inter', sans-serif; }
             .rl-wrap:hover .rl-tip { display: block; }
             @media (max-height: 640px) { .rl-wrap { margin-bottom: 0; } .rl-wrap > button { height: 32px !important; } }
           `}</style>
@@ -5135,7 +5137,7 @@ function TacticsBoard() {
                       <input type="checkbox" checked={selA.dist || false} onChange={e => updA({ dist: e.target.checked || undefined })} className="accent-green-400" />
                       <span style={{ color: TEXT_PRIMARY }}>Show length · {metres(geo, curveLen(selA))} m</span>
                     </label>
-                    <p className="text-[10px] italic mt-1" style={{ color: TEXT_MUTED }}>Drag the handle on the arrow to curve manually.</p>
+                    <p className="text-xs italic mt-1" style={{ color: TEXT_MUTED }}>Drag the handle on the arrow to curve manually.</p>
                   </div>
                 )}
 
@@ -5498,7 +5500,7 @@ function TacticsBoard() {
                       style={{ background: pitchVisible ? ACCENT_SOFT : SURFACE_2, borderColor: pitchVisible ? ACCENT_SOLID : DS_BORDER, color: pitchVisible ? ACCENT_SOLID : TEXT_PRIMARY }}>
                       <span className="flex items-center gap-2">{pitchVisible ? <Eye size={14} /> : <EyeOff size={14} />}Show pitch</span>
                       <span className="px-1.5 py-0.5 rounded font-bold"
-                        style={{ background: pitchVisible ? ACCENT_SOLID : SURFACE_1, color: pitchVisible ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
+                        style={{ background: pitchVisible ? ACCENT_SOLID : SURFACE_1, color: pitchVisible ? ACCENT_INK : TEXT_MUTED, fontSize: 12 }}>
                         {pitchVisible ? "ON" : "OFF"}
                       </span>
                     </button>
@@ -5514,7 +5516,7 @@ function TacticsBoard() {
                   style={{ background: show18Zones ? ACCENT_SOFT : SURFACE_2, borderColor: show18Zones ? ACCENT_SOLID : DS_BORDER, color: show18Zones ? ACCENT_SOLID : TEXT_PRIMARY }}>
                   <span className="flex items-center gap-2"><Grid3x3 size={14} />18 zones</span>
                   <span className="px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: show18Zones ? ACCENT_SOLID : SURFACE_1, color: show18Zones ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
+                    style={{ background: show18Zones ? ACCENT_SOLID : SURFACE_1, color: show18Zones ? ACCENT_INK : TEXT_MUTED, fontSize: 12 }}>
                     {show18Zones ? "ON" : "OFF"}
                   </span>
                 </button>
@@ -5523,7 +5525,7 @@ function TacticsBoard() {
                   style={{ background: showLanes ? ACCENT_SOFT : SURFACE_2, borderColor: showLanes ? ACCENT_SOLID : DS_BORDER, color: showLanes ? ACCENT_SOLID : TEXT_PRIMARY }}>
                   <span className="flex items-center gap-2"><Rows3 size={14} />Lanes</span>
                   <span className="px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: showLanes ? ACCENT_SOLID : SURFACE_1, color: showLanes ? ACCENT_INK : TEXT_MUTED, fontSize: 10 }}>
+                    style={{ background: showLanes ? ACCENT_SOLID : SURFACE_1, color: showLanes ? ACCENT_INK : TEXT_MUTED, fontSize: 12 }}>
                     {showLanes ? "ON" : "OFF"}
                   </span>
                 </button>
@@ -5562,7 +5564,7 @@ function TacticsBoard() {
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
               {boardGroups.editorial ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               Editorial
-              {editorial && <span className="ml-auto px-1.5 py-0.5 rounded font-bold" style={{ background: PS_VOLT, color: "#0a0c0f", fontSize: 9, letterSpacing: "0.08em" }}>ON</span>}
+              {editorial && <span className="ml-auto px-1.5 py-0.5 rounded font-bold" style={{ background: PS_VOLT, color: "#0a0c0f", fontSize: 12, letterSpacing: "0.08em" }}>ON</span>}
             </button>
             {boardGroups.editorial && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
@@ -5607,7 +5609,7 @@ function TacticsBoard() {
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
               {boardGroups.animation ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               Animation
-              {stepList.length > 1 && <span className="ml-auto px-1.5 py-0.5 rounded font-bold" style={{ background: PS_VOLT, color: "#0a0c0f", fontSize: 9, letterSpacing: "0.08em" }}>{stepList.length} STEPS</span>}
+              {stepList.length > 1 && <span className="ml-auto px-1.5 py-0.5 rounded font-bold" style={{ background: PS_VOLT, color: "#0a0c0f", fontSize: 12, letterSpacing: "0.08em" }}>{stepList.length} STEPS</span>}
             </button>
             {boardGroups.animation && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
@@ -5620,7 +5622,7 @@ function TacticsBoard() {
             )}
           </div>}
 
-          <div style={{ padding: "9px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 11, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
+          <div style={{ padding: "9px 12px", borderTop: `1px solid ${DS_BORDER}`, fontSize: 12, color: TEXT_MUTED, flexShrink: 0, lineHeight: 1.4 }}>
             {imageHint ? <span role="status" style={{ color: TEXT_PRIMARY }}>{imageHint}</span> : lockHint ? "That's locked. Right-click it to unlock." : <>
             {tool === "select" && "Click or drag a box to select · Shift adds · Arrow keys nudge · Right-click for more"}
             {tool === "pan" && "Drag to move · Alt+drag or middle-click also pans · Scroll to zoom"}
@@ -5673,14 +5675,14 @@ function TacticsBoard() {
                     </button>
                   ))}
                 </div>
-                <p style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 14 }}>Tip: hold Shift and click to select more than one player.</p>
+                <p style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 14 }}>Tip: hold Shift and click to select more than one player.</p>
               </div>
             </div>
           )}
 
           {/* Polygon floating hint */}
           {tool === "shape" && shapeKind === "polygon" && polyDraft && polyDraft.length >= 1 && (
-            <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", background: GLASS, border: `1px solid ${DS_BORDER}`, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: TEXT_PRIMARY, pointerEvents: "none", zIndex: 20, whiteSpace: "nowrap" }}>
+            <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", background: GLASS, border: `1px solid ${DS_BORDER}`, borderRadius: 6, padding: "6px 12px", fontSize: 12, color: TEXT_PRIMARY, pointerEvents: "none", zIndex: 20, whiteSpace: "nowrap" }}>
               Double-click to finish the shape
             </div>
           )}
@@ -5702,7 +5704,7 @@ function TacticsBoard() {
                   onPointerLeave={() => { if (!dragRef.current) setHoveredPitch(false) }}
                   onPointerUp={onSVGMouseUp}
                   onPointerDown={onSVGMouseDown}
-                  onClick={onSVGClick}
+                  onClick={onSVGClick as unknown as React.MouseEventHandler<SVGSVGElement>}
                   // ✕ markers and the ball go exactly where you click, even on top of a player, zone, shape or arrow
                   onPointerDownCapture={e => { if (tool === "marker" || tool === "ball") { mouseDownPosRef.current = { x: e.clientX, y: e.clientY }; hasDraggedRef.current = false } }}
                   onClickCapture={e => { if (tool === "marker" || tool === "ball") { e.stopPropagation(); onSVGClick(e as unknown as React.PointerEvent) } }}
@@ -6270,7 +6272,7 @@ function TacticsBoard() {
                   <div className="w-px h-4 mx-1" style={{ background: DS_BORDER_STRONG }} />
                 </>
               )}
-              <span className="text-[10px] font-semibold uppercase px-1" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Steps</span>
+              <span className="text-xs font-semibold uppercase px-1" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>Steps</span>
               {(stepList.length > 1 ? stepList : [null]).map((_, i) => {
                 const on = (view ? view.step : stepIdx) === i
                 return (
@@ -6404,7 +6406,7 @@ function TacticsBoard() {
               </span>
             )}
             <span className="ml-auto flex items-center gap-3 flex-shrink-0" style={{ color: TEXT_MUTED }}>
-              {narrativeOpen && <span id="ps-narrative-count" className="text-[11px] tabular-nums">{narrative.length.toLocaleString()} / 2,000</span>}
+              {narrativeOpen && <span id="ps-narrative-count" className="text-xs tabular-nums">{narrative.length.toLocaleString()} / 2,000</span>}
               {narrativeOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
             </span>
           </button>
@@ -6509,7 +6511,7 @@ function TacticsBoard() {
               { header: "STEPS", rows: [["Play the move / stop","P"],["Previous step","["],["Next step","]"]] },
             ] as { header: string; rows: [string, string][] }[]).map(group => (
               <div key={group.header} style={{ marginBottom: 14 }}>
-                <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: TEXT_MUTED, textTransform: "uppercase", fontFamily: "'Inter', sans-serif" }}>{group.header}</p>
+                <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", color: TEXT_MUTED, textTransform: "uppercase", fontFamily: "'Inter', sans-serif" }}>{group.header}</p>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "3px 12px" }}>
                   {group.rows.map(([action, key]) => (
                     <React.Fragment key={action}>

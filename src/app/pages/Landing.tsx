@@ -89,7 +89,7 @@ export default function LandingPage() {
         .ls-chips span { font-size: 12px; background: ${SURFACE_2}; border-radius: 999px; padding: 6px 11px; color: ${TEXT_PRIMARY}; }
         .ls-top { display: flex; justify-content: space-between; align-items: center; }
         .ls-ico { width: 40px; height: 40px; border-radius: 11px; background: ${SURFACE_2}; display: grid; place-items: center; color: ${TEXT_PRIMARY}; }
-        .ls-tag { font-size: 10px; letter-spacing: .12em; font-weight: 700; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; border-radius: 999px; padding: 4px 9px; }
+        .ls-tag { font-size: 12px; letter-spacing: .12em; font-weight: 700; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; border-radius: 999px; padding: 4px 9px; }
         .ls-band { margin-top: 110px; padding: 84px 0 80px; text-align: center; background: linear-gradient(180deg, transparent, var(--ps-accent-soft)); }
         .ls-band .ls-h2 { margin: 0 auto; }
         .ls-foot { padding: 30px 0 40px; text-align: center; font-size: 12px; color: ${TEXT_MUTED}; }

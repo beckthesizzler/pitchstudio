@@ -209,7 +209,7 @@ export function Library({ userId, getShot, onUse, say, onKept }: {
         .lb-row.hot { outline-color: ${ACCENT_SOLID}; background: var(--ps-accent-soft); color: ${TEXT_PRIMARY}; }
         .lb-tw { width: 16px; height: 16px; display: grid; place-items: center; border: none; background: none; color: inherit; padding: 0; cursor: pointer; flex-shrink: 0; }
         .lb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .lb-n { font-size: 11.5px; color: ${TEXT_MUTED}; font-variant-numeric: tabular-nums; }
+        .lb-n { font-size: 12px; color: ${TEXT_MUTED}; font-variant-numeric: tabular-nums; }
         .lb-acts { display: none; gap: 1px; position: absolute; right: 4px; background: inherit; border-radius: 7px; }
         .lb-row:hover .lb-acts { display: flex; } .lb-row:hover .lb-n { visibility: hidden; }
         .lb-acts button { width: 24px; height: 24px; border: none; border-radius: 6px; background: ${SURFACE_2}; color: ${TEXT_MUTED}; display: grid; place-items: center; cursor: pointer; }
@@ -224,7 +224,7 @@ export function Library({ userId, getShot, onUse, say, onKept }: {
         .lb-card { position: relative; aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden; background: #0f1013; cursor: grab; box-shadow: 0 0 0 1px ${DS_BORDER}; transition: transform .16s cubic-bezier(.2,.8,.2,1), box-shadow .16s; }
         .lb-card:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px ${DS_BORDER}, 0 8px 18px -8px rgba(0,0,0,.6); }
         .lb-card svg { width: 100%; height: 100%; display: block; }
-        .lb-card .lb-use { position: absolute; left: 6px; bottom: 6px; border: none; border-radius: 999px; padding: 4px 10px; font: 700 11px 'Inter', sans-serif; background: ${ACCENT_SOLID}; color: #0a0c0f; cursor: pointer; opacity: 0; transition: opacity .14s; }
+        .lb-card .lb-use { position: absolute; left: 6px; bottom: 6px; border: none; border-radius: 999px; padding: 4px 10px; font: 700 12px 'Inter', sans-serif; background: ${ACCENT_SOLID}; color: #0a0c0f; cursor: pointer; opacity: 0; transition: opacity .14s; }
         .lb-card .lb-del { position: absolute; right: 6px; top: 6px; width: 24px; height: 24px; border: none; border-radius: 7px; background: rgba(0,0,0,.66); color: #fff; display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .14s; }
         .lb-card:hover .lb-use, .lb-card:hover .lb-del, .lb-card:focus-within .lb-use, .lb-card:focus-within .lb-del { opacity: 1; }
         .lb-empty { grid-column: 1 / -1; border: 1.5px dashed ${DS_BORDER}; border-radius: 12px; padding: 18px 14px; text-align: center; font: 500 12.5px 'Inter', sans-serif; color: ${TEXT_MUTED}; line-height: 1.5; }

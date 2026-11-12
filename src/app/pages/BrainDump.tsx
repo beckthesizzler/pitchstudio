@@ -373,12 +373,12 @@ export default function BrainDumpPage() {
         .bd-search { margin: 0 14px 10px; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 11px; border-radius: 10px; background: ${SURFACE_BASE}; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
         .bd-search input { flex: 1; min-width: 0; border: none; outline: none; background: none; color: ${TEXT_PRIMARY}; font: 500 13.5px 'Inter', sans-serif; }
         .bd-list { flex: 1; overflow-y: auto; padding: 4px 8px 16px; }
-        .bd-cap { display: flex; align-items: center; justify-content: space-between; margin: 14px 8px 6px; font: 600 10.5px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .bd-cap { display: flex; align-items: center; justify-content: space-between; margin: 14px 8px 6px; font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; color: ${TEXT_MUTED}; }
         .bd-row { width: 100%; display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 6px 8px; border-radius: 9px; border: none; background: none; color: ${TEXT_PRIMARY}; font: 500 13.5px 'Inter', sans-serif; text-align: left; cursor: pointer; }
         .bd-row:hover, .bd-row[aria-current="true"] { background: ${SURFACE_2}; }
         .bd-row:disabled { opacity: .4; cursor: default; background: none; }
         .bd-row span.t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .bd-row em { font-style: normal; font-size: 11.5px; color: ${TEXT_MUTED}; }
+        .bd-row em { font-style: normal; font-size: 12px; color: ${TEXT_MUTED}; }
         .bd-row.sub { padding-left: 30px; font-size: 13px; color: ${TEXT_MUTED}; position: relative; }
         .bd-row.sub::before { content: ""; position: absolute; left: 17px; top: 0; bottom: 50%; width: 9px; border-left: 1.5px solid ${DS_BORDER}; border-bottom: 1.5px solid ${DS_BORDER}; border-bottom-left-radius: 6px; }
         .bd-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
@@ -387,7 +387,7 @@ export default function BrainDumpPage() {
         .bd-main { min-width: 0; overflow-y: auto; position: relative; }
         .bd-bar { display: none; }
         .bd-head { padding: 40px 44px 8px; display: flex; align-items: flex-end; gap: 20px; }
-        .bd-kick { font: 600 11px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .2em; text-transform: uppercase; color: ${ACCENT_SOLID}; }
+        .bd-kick { font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .2em; text-transform: uppercase; color: ${ACCENT_SOLID}; }
         .bd-head h1 { margin: 8px 0 0; font: 700 50px/1.02 ${HAND}; letter-spacing: -.01em; }
         .bd-head p { margin: 10px 0 0; max-width: 620px; color: ${TEXT_MUTED}; font-size: 15px; line-height: 1.55; }
         .bd-saved { margin-left: auto; font-size: 12px; color: ${TEXT_MUTED}; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding-bottom: 6px; }
@@ -410,7 +410,7 @@ export default function BrainDumpPage() {
         .bd-pad-face:focus-visible { outline: 3px solid ${ACCENT_SOLID}; outline-offset: 3px; }
         .bd-pad-face h3 { margin: 0; font: 700 21px/1.1 ${HAND}; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
         .bd-pad-face p { margin: 0; font: 400 12.5px/1.4 'Inter', sans-serif; opacity: .75; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-        .bd-pad-face small { margin-top: auto; font: 600 10.5px 'Inter', sans-serif; opacity: .55; display: flex; gap: 6px; align-items: center; }
+        .bd-pad-face small { margin-top: auto; font: 600 12px 'Inter', sans-serif; opacity: .55; display: flex; gap: 6px; align-items: center; }
         .bd-pin { position: absolute; z-index: 2; pointer-events: none; top: -9px; left: 50%; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--pin); box-shadow: inset -2px -2px 0 rgba(0,0,0,.2), 0 2px 3px rgba(0,0,0,.35); }
         .bd-pad-move { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 8px; border: none; background: rgba(27,26,23,.1); color: #1b1a17; display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .15s; }
         .bd-pad:hover .bd-pad-move, .bd-pad:focus-within .bd-pad-move { opacity: 1; }
@@ -420,7 +420,7 @@ export default function BrainDumpPage() {
         .bd-quick:focus-within { border-color: ${ACCENT_SOLID}; border-style: solid; }
         .bd-quick input { border: none; outline: none; background: none; color: ${TEXT_PRIMARY}; font: 700 20px ${HAND}; width: 100%; }
         .bd-quick input::placeholder { color: ${TEXT_MUTED}; }
-        .bd-quick small { font-size: 11px; color: ${TEXT_MUTED}; }
+        .bd-quick small { font-size: 12px; color: ${TEXT_MUTED}; }
         .bd-tree { margin: 0 0 22px; border-radius: 20px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; overflow: hidden; transition: box-shadow .3s; }
         .bd-tree.flash { box-shadow: 0 0 0 3px ${ACCENT_SOLID}; }
         .bd-tree-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-bottom: 1px solid ${DS_BORDER}; }
@@ -439,7 +439,7 @@ export default function BrainDumpPage() {
         .bd-confirm { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: ${TEXT_MUTED}; }
         .bd-confirm .bd-btn { height: 30px; font-size: 12px; }
         .bd-menu { position: fixed; z-index: 70; width: 280px; max-height: 360px; overflow-y: auto; padding: 6px; border-radius: 14px; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; box-shadow: 0 22px 50px -18px rgba(0,0,0,.7); }
-        .bd-menu p { margin: 6px 8px 4px; font: 600 10.5px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .bd-menu p { margin: 6px 8px 4px; font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; color: ${TEXT_MUTED}; }
         .bd-ghost { position: fixed; z-index: 80; width: 132px; height: 112px; border-radius: 3px 3px 14px 3px; padding: 12px; color: #1b1a17; font: 700 17px/1.1 ${HAND}; pointer-events: none; transform: translate(-50%, -60%) rotate(-4deg); box-shadow: 0 26px 40px -14px rgba(0,0,0,.6); overflow: hidden; }
         .bd-scrim { display: none; }
         @keyframes bd-in { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }

@@ -150,7 +150,7 @@ export default function AnalysisPage() {
     if (json === savedJson.current) { setStatus(Object.values(uploads).includes("fail") ? "error" : "saved"); return }
     saving.current = true; setStatus("saving")
     const p = JSON.parse(json)
-    const { error } = await supabase.from("analyses").upsert({ id: aid, user_id: user.id, title: p.title, data: p.data, updated_at: new Date().toISOString() })
+    const { error } = await (supabase as any).from("analyses").upsert({ id: aid, user_id: user.id, title: p.title, data: p.data, updated_at: new Date().toISOString() })
     saving.current = false
     if (error) { setStatus("error"); return }
     savedJson.current = json; savedOnce.current = true
@@ -517,12 +517,12 @@ export default function AnalysisPage() {
         .an-body { display: grid; grid-template-columns: 1fr 290px; min-height: 0; }
         .an-body.lib { grid-template-columns: 272px 1fr 290px; }
         .an-dock { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; }
-        .an-mode button small { font: 600 10.5px 'Inter', sans-serif; color: ${TEXT_MUTED}; margin-left: 2px; }
+        .an-mode button small { font: 600 12px 'Inter', sans-serif; color: ${TEXT_MUTED}; margin-left: 2px; }
         .an-rail { border-right: 1px solid ${DS_BORDER}; padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
-        .an-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 7px; border-radius: 10px; border: 1px solid transparent; background: none; color: ${TEXT_MUTED}; font: 600 11px 'Inter', sans-serif; cursor: pointer; position: relative; }
+        .an-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 7px; border-radius: 10px; border: 1px solid transparent; background: none; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; cursor: pointer; position: relative; }
         .an-tool:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
         .an-tool.on { color: ${ACCENT_INK}; background: ${ACCENT_SOLID}; }
-        .an-tool kbd { position: absolute; top: 3px; right: 5px; font: 600 9px 'Inter', sans-serif; opacity: .6; }
+        .an-tool kbd { position: absolute; top: 3px; right: 5px; font: 600 12px 'Inter', sans-serif; opacity: .6; }
         .an-tool:disabled { opacity: .35; cursor: default; }
         .an-mid { display: grid; grid-template-rows: 1fr auto; min-width: 0; min-height: 0; background: #101114; }
         .an-view { position: relative; min-width: 0; min-height: 0; display: flex; padding: 12px 12px 84px; }
@@ -536,7 +536,7 @@ export default function AnalysisPage() {
         .an-empty p { font-size: 14px; line-height: 1.55; margin: 0 0 18px; }
         .an-empty small { display: block; margin-top: 16px; font-size: 12px; color: #8b8f98; }
         .an-insp { border-left: 1px solid ${DS_BORDER}; padding: 16px; overflow-y: auto; min-height: 0; }
-        .an-cap { font-size: 11px; letter-spacing: .14em; font-weight: 700; color: ${TEXT_MUTED}; margin: 0 0 12px; }
+        .an-cap { font-size: 12px; letter-spacing: .14em; font-weight: 700; color: ${TEXT_MUTED}; margin: 0 0 12px; }
         .an-row { display: flex; flex-direction: column; gap: 7px; margin-bottom: 15px; }
         .an-lab { font-size: 12px; color: ${TEXT_MUTED}; }
         .an-inp { width: 100%; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 10px; color: ${TEXT_PRIMARY}; font: 500 14px 'Inter', sans-serif; padding: 9px 11px; resize: vertical; }
@@ -552,15 +552,15 @@ export default function AnalysisPage() {
         .an-note { font-size: 12px; color: ${TEXT_MUTED}; line-height: 1.5; margin: 0 0 12px; }
         .an-acts { display: flex; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid ${DS_BORDER}; }
         .an-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 12px; color: ${TEXT_MUTED}; }
-        .an-keys div { display: flex; align-items: center; gap: 6px; } .an-keys kbd { font: 600 10.5px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 2px 5px; white-space: nowrap; }
+        .an-keys div { display: flex; align-items: center; gap: 6px; } .an-keys kbd { font: 600 12px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 2px 5px; white-space: nowrap; }
         .an-steps { margin: 0; padding-left: 18px; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.9; }
         .an-strip { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-top: 1px solid ${DS_BORDER}; background: ${SURFACE_BASE}; overflow-x: auto; outline: 2px solid transparent; outline-offset: -3px; transition: outline-color .14s, background .14s; }
         .an-strip.over { outline-color: ${ACCENT_SOLID}; background: var(--ps-accent-soft); }
         .an-thumb { position: relative; width: 132px; height: 74px; border-radius: 9px; overflow: hidden; border: 2px solid transparent; cursor: pointer; flex-shrink: 0; background: #16181c; padding: 0; }
         .an-thumb.on { border-color: ${ACCENT_SOLID}; }
         .an-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-        .an-num { position: absolute; left: 5px; top: 5px; background: rgba(0,0,0,.72); color: #fff; font: 700 11px 'Inter', sans-serif; border-radius: 6px; padding: 2px 6px; }
-        .an-over { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.55); color: #fff; font: 600 11px 'Inter', sans-serif; text-align: center; padding: 4px; }
+        .an-num { position: absolute; left: 5px; top: 5px; background: rgba(0,0,0,.72); color: #fff; font: 700 12px 'Inter', sans-serif; border-radius: 6px; padding: 2px 6px; }
+        .an-over { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.55); color: #fff; font: 600 12px 'Inter', sans-serif; text-align: center; padding: 4px; }
         .an-tbtn { position: absolute; top: 4px; width: 22px; height: 22px; border-radius: 6px; border: none; background: rgba(0,0,0,.72); color: #fff; display: grid; place-items: center; cursor: pointer; padding: 0; }
         .an-add { width: 132px; height: 74px; border-radius: 9px; border: 1.5px dashed ${DS_BORDER_STRONG}; background: none; color: ${TEXT_MUTED}; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font: 600 12px 'Inter', sans-serif; cursor: pointer; flex-shrink: 0; }
         .an-strip-note { font-size: 12px; color: ${TEXT_MUTED}; margin-left: 6px; white-space: nowrap; }
@@ -591,7 +591,7 @@ export default function AnalysisPage() {
           .an-mid { height: 62vw; min-height: 240px; max-height: 70vh; }
           .an-insp { border-left: none; border-top: 1px solid ${DS_BORDER}; }
           .an-empty { padding: 18px; margin: 12px; } .an-empty h2 { font-size: 18px; }
-          .an-hint { font-size: 11px; top: 6px; padding: 5px 10px; white-space: normal; text-align: center; width: max-content; max-width: 92%; }
+          .an-hint { font-size: 12px; top: 6px; padding: 5px 10px; white-space: normal; text-align: center; width: max-content; max-width: 92%; }
           .an-keysbox { display: none; }
         }
         @media (pointer: coarse) { .an-keysbox { display: none; } }

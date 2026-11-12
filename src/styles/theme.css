@@ -79,6 +79,7 @@
 }
 
 @theme inline {
+  --text-xs: 12px; /* the smallest text anywhere: the small style was 10.5px (0.75 of the 14px base) */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);

@@ -107,7 +107,7 @@ export default function ProfilePage() {
       next = { ...brand, logo: supabase.storage.from(LOGO_BUCKET).getPublicUrl(path).data.publicUrl }
     }
     const sendBrand = touched || !!pending
-    const { error } = await supabase.from("profiles").update({
+    const { error } = await (supabase as any).from("profiles").update({
       display_name: displayName, handle: cleanHandle, bio, country,
       favorite_club: favoriteClub, favorite_player: favoritePlayer, identity: identity || null,
       ...(sendBrand ? { brand: brandForSave(next) } : {}),
@@ -212,7 +212,7 @@ export default function ProfilePage() {
         .pf-btn:disabled { opacity: .55; cursor: default; }
         .pf-panel { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 16px; padding: 18px; }
         .pf-pitch { height: 74px; border-radius: 8px; border: 1.5px solid rgba(255,255,255,.5); background: repeating-linear-gradient(90deg,#1f6a31 0 26px,#1a5c2a 26px 52px); overflow: hidden; }
-        .pf-cap { font-size: 11px; letter-spacing: .12em; font-weight: 600; color: ${TEXT_MUTED}; margin: 0 0 10px; }
+        .pf-cap { font-size: 12px; letter-spacing: .12em; font-weight: 600; color: ${TEXT_MUTED}; margin: 0 0 10px; }
         .pf-sec { margin: 0 0 14px; font-size: 12px; letter-spacing: .12em; font-weight: 600; color: ${TEXT_MUTED}; }
         .pf-g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         .pf-g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
@@ -224,7 +224,7 @@ export default function ProfilePage() {
         .pf-inp.bad { border-color: ${DS_ERROR}; }
         .pf-inp input, .pf-inp textarea, .pf-inp select { flex: 1; min-width: 0; width: 100%; background: transparent; border: none; outline: none; color: ${TEXT_PRIMARY}; font-size: 15px; font-family: inherit; height: 100%; }
         .pf-inp select option { background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; }
-        .pf-err { font-size: 12px; color: ${DS_ERROR}; } .pf-hint { font-size: 11px; color: ${TEXT_MUTED}; }
+        .pf-err { font-size: 12px; color: ${DS_ERROR}; } .pf-hint { font-size: 12px; color: ${TEXT_MUTED}; }
         .pf-chip { padding: 9px 16px; border-radius: 999px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; font-size: 14px; cursor: pointer; font-family: inherit; margin: 0 8px 8px 0; }
         .pf-chip.on { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; border-color: ${ACCENT_SOLID}; font-weight: 600; }
         .pf-seg { display: inline-flex; background: ${SURFACE_2}; border-radius: 10px; padding: 3px; gap: 2px; }
@@ -233,7 +233,7 @@ export default function ProfilePage() {
         .pf-panel .pf-seg { background: ${SURFACE_BASE}; }
         .pf-out { display: inline-flex; align-items: center; gap: 8px; background: none; border: 1px solid ${DS_BORDER}; color: ${TEXT_PRIMARY}; border-radius: 10px; padding: 9px 14px; font-size: 13px; cursor: pointer; font-family: inherit; width: 100%; justify-content: center; }
         .cc-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 0 0 14px; }
-        .cc-step { text-align: left; border-radius: 12px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; padding: 10px 12px; cursor: pointer; font-family: inherit; color: ${TEXT_MUTED}; font-size: 11px; }
+        .cc-step { text-align: left; border-radius: 12px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; padding: 10px 12px; cursor: pointer; font-family: inherit; color: ${TEXT_MUTED}; font-size: 12px; }
         .cc-step b { display: flex; align-items: center; gap: 6px; color: ${TEXT_PRIMARY}; font-size: 14px; margin-top: 2px; font-weight: 600; }
         .cc-step.on { border-color: ${ACCENT_SOLID}; box-shadow: 0 0 0 3px ${ACCENT_SOFT}; }
         .cc-packs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }

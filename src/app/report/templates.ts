@@ -89,8 +89,8 @@ export function makeTemplate(id: TemplateId): Report {
     pass([0.9, 0.8], [0.92, 0.5], 2, false, { run: true }), pass([0.08, 0.72], [0.07, 0.45], 2, false, { run: true }),
     pl(1, [0.5, 0.05], "", "", false), pl(1, [0.2, 0.21], "", "", false), pl(1, [0.4, 0.17], "", "", false), pl(1, [0.6, 0.17], "", "", false),
     pl(1, [0.8, 0.21], "", "", false), pl(1, [0.3, 0.39], "", "", false), pl(1, [0.62, 0.42], "", "", false), pl(1, [0.74, 0.55], "", "", false), pl(1, [0.38, 0.72], "", "", false),
-    pl(0, [0.5, 0.27], "9", "Lewandowski", false, "right"), pl(0, [0.12, 0.3], "11", "Raphinha", false), pl(0, [0.88, 0.3], "10", "Yamal", false),
-    pl(0, [0.69, 0.33], "16", "Fermín", true, "right"), pl(0, [0.47, 0.52], "8", "Pedri", true, "right"), pl(0, [0.43, 0.88], "21", "De Jong", true, "left"),
+    pl(0, [0.5, 0.27], "9", "Jesus", false, "right"), pl(0, [0.12, 0.3], "11", "Raphinha", false), pl(0, [0.88, 0.3], "10", "Yamal", false),
+    pl(0, [0.69, 0.33], "7", "Fermín", true, "right"), pl(0, [0.47, 0.52], "8", "Pedri", true, "right"), pl(0, [0.43, 0.88], "21", "De Jong", true, "left"),
     pl(0, [0.9, 0.8], "23", "Koundé", false, "left"), pl(0, [0.08, 0.72], "3", "Balde", false, "right"),
     pin([0.53, 0.84], 1), pin([0.6, 0.62], 2), pin([0.8, 0.4], 3),
   ]

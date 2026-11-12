@@ -5,14 +5,24 @@ import { supabase } from "./supabase"
    export carries none rather than a wrong one. */
 
 const KEY = "ps-edition" // the count this browser kept before numbers lived in your account
-const local = () => { try { const n = parseInt(localStorage.getItem(KEY) || "0", 10); return Number.isFinite(n) && n > 0 ? n : 0 } catch { return 0 } }
+const OWNER = "ps-edition-owner" // the one account that browser count belongs to
+const read = (k: string) => { try { const n = parseInt(localStorage.getItem(k) || "0", 10); return Number.isFinite(n) && n > 0 ? n : 0 } catch { return 0 } }
+/** This browser's count for this account. The old shared count goes to the first account that numbers anything here, and to nobody else. */
+const local = (userId: string) => {
+  let owner: string | null = null
+  try { owner = localStorage.getItem(OWNER) } catch { /* storage blocked */ }
+  return Math.max(read(`${KEY}:${userId}`), !owner || owner === userId ? read(KEY) : 0)
+}
 
 /** Takes the next number from your account. Your browser's old count goes along, so nobody's numbers go backwards. */
-export async function takeIssue(): Promise<number | null> {
+export async function takeIssue(userId: string): Promise<number | null> {
   try {
-    const { data, error } = await (supabase as any).rpc("take_issue_number", { seed: local() })
+    const { data, error } = await (supabase as any).rpc("take_issue_number", { seed: local(userId) })
     if (error || typeof data !== "number" || data < 1) return null
-    try { localStorage.setItem(KEY, String(Math.max(local(), data))) } catch { /* storage blocked */ }
+    try {
+      localStorage.setItem(`${KEY}:${userId}`, String(data))
+      if (!localStorage.getItem(OWNER)) localStorage.setItem(OWNER, userId)
+    } catch { /* storage blocked */ }
     return data
   } catch { return null }
 }
@@ -22,7 +32,7 @@ export async function peekIssue(userId: string): Promise<number | null> {
   try {
     const { data, error } = await (supabase as any).from("profiles").select("issue_count").eq("id", userId).maybeSingle()
     if (error || !data || typeof data.issue_count !== "number") return null
-    return Math.max(data.issue_count, local()) + 1
+    return Math.max(data.issue_count, local(userId)) + 1
   } catch { return null }
 }
 

@@ -109,7 +109,7 @@ export default function HomePage() {
         .hm-menu { padding: 52px 44px 32px 56px; display: flex; flex-direction: column; border-right: 1px solid ${DS_BORDER}; outline: none; }
         .hm-hi { font-size: 12px; letter-spacing: .2em; font-weight: 700; color: ${ACCENT_SOLID}; }
         .hm-h1 { font-size: clamp(28px, 3vw, 38px); line-height: 1.1; letter-spacing: -.03em; font-weight: 700; margin: 12px 0 30px; }
-        .hm-lab { font-size: 11px; letter-spacing: .2em; font-weight: 700; color: ${TEXT_MUTED}; margin-bottom: 12px; }
+        .hm-lab { font-size: 12px; letter-spacing: .2em; font-weight: 700; color: ${TEXT_MUTED}; margin-bottom: 12px; }
         .hm-it { display: flex; align-items: center; gap: 16px; padding: 14px 16px; border-radius: 12px; margin-bottom: 6px; position: relative; cursor: pointer; border: 1px solid transparent; }
         .hm-it.sel { background: ${SURFACE_1}; border-color: ${ACCENT_SOLID}; }
         .hm-it.sel:before { content: ""; position: absolute; left: -14px; top: 12px; bottom: 12px; width: 4px; border-radius: 4px; background: ${ACCENT_SOLID}; }
@@ -121,15 +121,15 @@ export default function HomePage() {
         .hm-grow { min-width: 0; flex: 1; } .hm-grow .hm-d { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .hm-pill { font-size: 13px; font-weight: 700; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; padding: 8px 14px; border-radius: 99px; border: 0; cursor: pointer; white-space: nowrap; }
         .hm-pill.alt { background: transparent; color: ${TEXT_PRIMARY}; border: 1px solid ${DS_BORDER}; margin-right: 6px; }
-        .hm-tag { font-size: 10px; letter-spacing: .14em; color: ${TEXT_MUTED}; border: 1px solid ${DS_BORDER}; padding: 4px 9px; border-radius: 99px; }
+        .hm-tag { font-size: 12px; letter-spacing: .14em; color: ${TEXT_MUTED}; border: 1px solid ${DS_BORDER}; padding: 4px 9px; border-radius: 99px; }
         .hm-foot { margin-top: auto; padding-top: 28px; display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
         .hm-tagline { font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; font-size: 24px; } .hm-tagline em { color: ${ACCENT_SOLID}; }
-        .hm-keys { font-size: 11.5px; color: ${TEXT_MUTED}; }
+        .hm-keys { font-size: 12px; color: ${TEXT_MUTED}; }
         .hm-k { display: inline-block; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 1px 6px; margin: 0 2px; }
         .hm-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; padding: 10px 16px; border-radius: 99px; font-size: 13px; z-index: 30; }
         .hm-art { position: relative; overflow: hidden; background: ${SURFACE_BASE}; min-height: 420px; }
         .hm-learn { position: absolute; right: 28px; bottom: 26px; width: 340px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 14px; padding: 14px 16px; opacity: .96; }
-        .hm-learn .t { font-size: 11px; letter-spacing: .18em; font-weight: 700; color: ${ACCENT_SOLID}; } .hm-learn .q { font-size: 13.5px; line-height: 1.45; margin-top: 8px; }
+        .hm-learn .t { font-size: 12px; letter-spacing: .18em; font-weight: 700; color: ${ACCENT_SOLID}; } .hm-learn .q { font-size: 13.5px; line-height: 1.45; margin-top: 8px; }
         @media (max-width: 880px) {
           .hm-top { padding: 0 16px; height: 56px; } .hm-word { display: none; } .hm-me .hm-hide { display: none; }
           .hm-main { grid-template-columns: 1fr; min-height: 0; }
@@ -137,7 +137,7 @@ export default function HomePage() {
           .hm-learn { display: none; }
           .hm-menu { padding: 22px 16px 28px; border-right: 0; }
           .hm-h1 { font-size: 25px; margin: 8px 0 18px; }
-          .hm-it { padding: 11px 12px; gap: 12px; } .hm-it.sel:before { left: -8px; } .hm-ic { width: 34px; height: 34px; } .hm-n { font-size: 16px; } .hm-d { font-size: 11.5px; }
+          .hm-it { padding: 11px 12px; gap: 12px; } .hm-it.sel:before { left: -8px; } .hm-ic { width: 34px; height: 34px; } .hm-n { font-size: 16px; } .hm-d { font-size: 12px; }
           .hm-pill { padding: 6px 11px; font-size: 12px; }
           .hm-pills { flex-basis: 100%; padding-left: 46px; margin-top: 4px; }
           .hm-it { flex-wrap: wrap; } .hm-keys { display: none; } .hm-tagline { font-size: 20px; }
