@@ -180,7 +180,7 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   homePat: "solid", homeC2: "#fbbf24", homeNum: "#000000", homeName: "",
   awayPat: "solid", awayC2: "#1d4ed8", awayNum: "#ffffff", awayName: "",
   labelSize: "large", nameStyle: "halo", tokenStyle: "classic",
-  vertical: false, focus: "pitch", focusEnd: "attack", frameRatio: "auto", area: null,
+  vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto", area: null,
   homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
   pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "",
   showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true,
@@ -193,9 +193,9 @@ const areaFrom = (a: unknown): [number, number, number, number] | null => {
   return r[2] - r[0] >= 60 && r[3] - r[1] >= 40 ? r : null
 }
 /** Builds a complete, valid settings object from anything (saved data or the live board). Missing or bad values fall back to the defaults. */
-function settingsFrom(src: Record<string, unknown> | null | undefined): BoardSettings {
+function settingsFrom(src: Record<string, unknown> | null | undefined, fresh = false): BoardSettings {
   const v = src ?? {}
-  const d = DEFAULT_BOARD_SETTINGS
+  const d = fresh ? NEW_BOARD_SETTINGS : DEFAULT_BOARD_SETTINGS
   const oneOf = <T extends string>(x: unknown, allowed: readonly T[], fallback: T): T =>
     (allowed as readonly unknown[]).includes(x) ? (x as T) : fallback
   const num = (x: unknown, fallback: number) => (typeof x === "number" && Number.isFinite(x) ? x : fallback)
@@ -250,7 +250,7 @@ function normalizeBoardData(raw: unknown): BoardData {
     players: list<Player>(r.players), arrows: list<Arrow>(r.arrows), texts: list<TextBox>(r.texts),
     shapes: list<Shape>(r.shapes), images: list<UploadedImage>(r.images),
     customZones: list<CustomZone>(r.customZones),
-    settings: settingsFrom(r.settings as Record<string, unknown> | undefined),
+    settings: settingsFrom(r.settings as Record<string, unknown> | undefined, !raw),
     ...stepsFrom(r.steps, r.step),
   }
 }
@@ -328,10 +328,18 @@ const SVG_DISPLAY_W = 980 // the board is shown at most 980 × 630 at 100% zoom
 
 /** Where the pitch sits on the canvas. Horizontal: as it always has. Vertical: turned a quarter, home goal at the bottom. */
 type PitchGeo = { ox: number; oy: number; sc: number; v: boolean }
+/** The board as it was when you took hold of the pitch to resize or move it */
+type PitchSnap = { geo: PitchGeo; s: number; offX: number; offY: number; players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]; steps: BoardStep[] }
 const VERT_SCALE = 0.78 // an upright pitch is scaled to fit the canvas height
 const pitchGeo = (v: boolean, scale: number, offX: number, offY: number): PitchGeo => v
   ? { ox: (CW - PH * VERT_SCALE) / 2 + offX, oy: (CH - PW * VERT_SCALE) / 2 + offY, sc: scale * VERT_SCALE, v }
   : { ox: PX + offX, oy: PY + offY, sc: scale, v }
+/** The size a new pitch starts at: as big as the board allows with room for names round it */
+const FIT_SCALE = (v: boolean) => (v ? 1 : 1.15)
+/** The offsets that centre a pitch of this size on the board */
+const centreOff = (v: boolean, s: number) => v ? { x: (PH * VERT_SCALE * (1 - s)) / 2, y: (PW * VERT_SCALE * (1 - s)) / 2 } : { x: (PW * (1 - s)) / 2, y: (PH * (1 - s)) / 2 }
+/** A new board: the whole board on screen and a big, centred pitch you can make bigger or smaller by its corners */
+const NEW_BOARD_SETTINGS: BoardSettings = { ...DEFAULT_BOARD_SETTINGS, pitchScale: FIT_SCALE(false), pitchOffX: centreOff(false, FIT_SCALE(false)).x, pitchOffY: centreOff(false, FIT_SCALE(false)).y }
 /** Pitch coordinates (the pitch drawn 1050 × 680, home goal on the left) → board coordinates */
 const toCanvas = (g: PitchGeo, px: number, py: number) =>
   g.v ? { x: g.ox + g.sc * py, y: g.oy + g.sc * (PW - px) } : { x: g.ox + g.sc * px, y: g.oy + g.sc * py }
@@ -373,10 +381,7 @@ const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSetting
   } else if (focus !== "board") {
     const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
     const [x1, x2] = end === "attack" ? [PW - part, PW] : [0, part]
-    // the view holds where the pitch normally sits, so a smaller (or moved) pitch shows as smaller; a bigger one widens the view to keep it whole
-    const a = pitchRect(g, x1, 0, x2, PH), b = pitchRect(pitchGeo(g.v, 1, 0, 0), x1, 0, x2, PH)
-    const px = Math.min(a.x, b.x), py = Math.min(a.y, b.y)
-    const p = { x: px, y: py, w: Math.max(a.x + a.w, b.x + b.w) - px, h: Math.max(a.y + a.h, b.y + b.h) - py }
+    const p = pitchRect(g, x1, 0, x2, PH)
     r = { x: p.x - 36, y: p.y - 36, w: p.w + 72, h: p.h + 100 }
   }
   // The editorial frame: room above for the slate (and under it for the score strip on a narrow frame) and below for the caption and the legend.
@@ -2338,9 +2343,9 @@ function TacticsBoard() {
   const [showPitch, setShowPitch] = useState(true)
   const [canvasMode, setCanvasMode] = useState<"full" | "half" | "blank">("full")
   const [pitchColor, setPitchColor] = useState<"green" | "white">("green")
-  const [pitchScale, setPitchScale] = useState(1)
-  const [pitchOffX, setPitchOffX] = useState(0)
-  const [pitchOffY, setPitchOffY] = useState(0)
+  const [pitchScale, setPitchScale] = useState(NEW_BOARD_SETTINGS.pitchScale)
+  const [pitchOffX, setPitchOffX] = useState(NEW_BOARD_SETTINGS.pitchOffX)
+  const [pitchOffY, setPitchOffY] = useState(NEW_BOARD_SETTINGS.pitchOffY)
   const pitchOffXRef = useRef(0)
   const pitchOffYRef = useRef(0)
   const [hoveredPitch, setHoveredPitch] = useState(false)
@@ -2358,7 +2363,7 @@ function TacticsBoard() {
   const [nameStyle, setNameStyle] = useState<BoardSettings["nameStyle"]>("halo")
   const [tokenStyle, setTokenStyle] = useState<BoardSettings["tokenStyle"]>("classic")
   const [vertical, setVertical] = useState(false)
-  const [focus, setFocus] = useState<BoardSettings["focus"]>("pitch")
+  const [focus, setFocus] = useState<BoardSettings["focus"]>("board")
   const [focusEnd, setFocusEnd] = useState<BoardSettings["focusEnd"]>("attack")
   const [area, setArea] = useState<BoardSettings["area"]>(null) // the area zoomed into
   const [dock, setDockPlace] = useState<DockPlace>(readDock) // the tools in a row under the board, or down the side
@@ -3461,6 +3466,7 @@ function TacticsBoard() {
   const edBoard = title.trim() === "Untitled board" ? "" : title.trim() // an unnamed board has no headline
   const edStrip = editorial && (homeName.trim() !== "" || awayName.trim() !== "" || homeScore !== "" || awayScore !== "")
   const edLines = editorial ? wrapCaption(caption) : []
+  const pitchDragRef = useRef<PitchSnap | null>(null) // the board as it was when a pitch resize or move began
   const [heldFrame, setHeldFrame] = useState<{ x: number; y: number; w: number; h: number } | null>(null) // the view holds still while you resize or move the pitch
   const frame = heldFrame ?? frameRect(geo, canvasMode === "blank" ? "board" : presenting && focus === "board" ? "pitch" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length, pitch: canvasMode !== "blank" } : null, area)
   const sealK = Math.min(1, Math.min(frame.w, frame.h) / CH) // the seal and the legend shrink with a small frame
@@ -3474,7 +3480,8 @@ function TacticsBoard() {
     if (v === vertical) return
     undoPoint()
     const from = pitchGeo(vertical, pitchScale, pitchOffX, pitchOffY)
-    const to = pitchGeo(v, pitchScale, 0, 0)
+    const s2 = Math.min(pitchScale, v ? 1.05 : 1.2), c2 = centreOff(v, s2) // turned, it's centred and never bigger than the board
+    const to = pitchGeo(v, s2, c2.x, c2.y)
     const T = (x: number, y: number) => { const p = toPitch(from, x, y); return toCanvas(to, p.x, p.y) }
     const k = to.sc / from.sc
     const turnP = (p: Player) => ({ ...p, ...T(p.x, p.y) })
@@ -3491,7 +3498,7 @@ function TacticsBoard() {
     setPlayers(l => l.map(turnP)); setArrows(l => l.map(turnA)); setTexts(l => l.map(turnT)); setShapes(l => l.map(turnS))
     setSteps(l => l.map(f => ({ ...f, players: f.players.map(turnP), arrows: f.arrows.map(turnA), texts: f.texts.map(turnT), shapes: f.shapes.map(turnS) }))) // every step turns with it
     setImages(l => l.map(im => { if (im.layer === "background") return im; const c = T(im.x + im.width / 2, im.y + im.height / 2); return { ...im, x: c.x - im.width / 2, y: c.y - im.height / 2 } }))
-    setPitchOffX(0); setPitchOffY(0)
+    setPitchScale(s2); setPitchOffX(c2.x); setPitchOffY(c2.y)
     setVertical(v)
     if (v && focus === "board") setFocus("pitch") // an upright pitch is usually wanted on its own
   }
@@ -3971,26 +3978,61 @@ function TacticsBoard() {
     }))
     else if (d.kind === "resizePlayer") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, scale: Math.max(0.5, (Math.hypot(x - pl.x, y - pl.y) - d.ox) / pieceBase(pl)) } : pl)) // the handle stays under the cursor (ox = where on the handle you grabbed it)
     else if (d.kind === "resizeImage") setImages(i => i.map(im => im.id === d.id ? { ...im, width: Math.max(20, x - im.x), height: Math.max(20, y - im.y) } : im))
-    else if (d.kind === "resizePitch") {
-      const g = geoRef.current, wide = g.v ? PH * VERT_SCALE : PW // the pitch's width on the board at 100%
-      if (d.id === "pitch-tr" || d.id === "pitch-br") {
-        setPitchScale(Math.max(0.3, Math.min(2.5, (x - g.ox) / wide)))
-      } else {
-        setPitchScale(prev => Math.max(0.3, Math.min(2.5, (g.ox + wide * prev - x) / wide)))
-      }
+    else if (d.kind === "resizePitch" && pitchDragRef.current) {
+      // the corner you hold follows the pointer and the opposite corner stays where it is; the pitch keeps its shape and stays on the board
+      const ps = pitchDragRef.current, r0 = pitchRect(ps.geo, 0, 0, PW, PH), w1 = r0.w / ps.s, a = r0.h / r0.w
+      const right = d.id.endsWith("r"), bottom = d.id.includes("-b")
+      const ax = right ? r0.x : r0.x + r0.w, ay = bottom ? r0.y : r0.y + r0.h
+      const most = Math.min(right ? CW - ax : ax, (bottom ? CH - ay : ay) / a)
+      const w = Math.max(w1 * 0.3, Math.min(most, Math.max(right ? x - ax : ax - x, ((bottom ? y - ay : ay - y)) / a)))
+      const left = right ? ax : ax - w, top = bottom ? ay : ay - w * a, base = pitchGeo(ps.geo.v, w / w1, 0, 0)
+      reshapePitch(ps, w / w1, left - base.ox, top - base.oy)
     }
-    else if (d.kind === "movePitch") {
-      setPitchOffX(x - d.ox - PX)
-      setPitchOffY(y - d.oy - PY)
+    else if (d.kind === "movePitch" && pitchDragRef.current) {
+      const ps = pitchDragRef.current, r0 = pitchRect(ps.geo, 0, 0, PW, PH)
+      const nx = Math.max(0, Math.min(CW - r0.w, r0.x + x - d.ox)), ny = Math.max(0, Math.min(CH - r0.h, r0.y + y - d.oy))
+      reshapePitch(ps, ps.s, ps.offX + nx - r0.x, ps.offY + ny - r0.y)
     }
   }, [svgXY, shapeKind])
 
   // Ends a move, a drag or a box-select wherever you let go, even off the board (it used to leave the piece stuck to the pointer)
+  /** Puts the pitch at a new size and place; everything on it goes with it (worked out from the snapshot taken when the drag began, so nothing drifts) */
+  const reshapePitch = (snap: PitchSnap, s: number, offX: number, offY: number) => {
+    const from = snap.geo, to = pitchGeo(from.v, s, offX, offY), k = to.sc / from.sc
+    const T = (x: number, y: number) => { const q = toPitch(from, x, y); return toCanvas(to, q.x, q.y) }
+    const r0 = pitchRect(from, 0, 0, PW, PH)
+    const on = (x: number, y: number) => x > r0.x - 40 && x < r0.x + r0.w + 40 && y > r0.y - 40 && y < r0.y + r0.h + 40 // on the pitch (or just off it)
+    const mP = (p: Player) => (on(p.x, p.y) ? { ...p, ...T(p.x, p.y) } : p)
+    const mA = (a: Arrow) => { if (!on(a.x1, a.y1) && !on(a.x2, a.y2)) return a; const a1 = T(a.x1, a.y1), a2 = T(a.x2, a.y2), c = T(a.cpx, a.cpy); return { ...a, x1: a1.x, y1: a1.y, x2: a2.x, y2: a2.y, cpx: c.x, cpy: c.y } }
+    const mT = (tb: TextBox) => { const h = textBoxH(tb); if (!on(tb.x + tb.width / 2, tb.y + h / 2)) return tb; const c = T(tb.x + tb.width / 2, tb.y + h / 2); return { ...tb, x: c.x - tb.width / 2, y: c.y - h / 2 } }
+    const mS = (sh: Shape): Shape => {
+      if (sh.kind === "polygon") return sh.pts.some(([x, y]) => on(x, y)) ? { ...sh, pts: sh.pts.map(([x, y]) => { const q = T(x, y); return [q.x, q.y] as [number, number] }) } : sh
+      if (!on(sh.x + sh.w / 2, sh.y + sh.h / 2)) return sh
+      const c = T(sh.x + sh.w / 2, sh.y + sh.h / 2), w = sh.w * k, h = sh.h * k
+      return { ...sh, x: c.x - w / 2, y: c.y - h / 2, w, h }
+    }
+    const mI = (im: UploadedImage) => { if (im.layer === "background" || !on(im.x + im.width / 2, im.y + im.height / 2)) return im; const c = T(im.x + im.width / 2, im.y + im.height / 2); return { ...im, x: c.x - im.width / 2, y: c.y - im.height / 2 } }
+    setPlayers(snap.players.map(mP)); setArrows(snap.arrows.map(mA)); setTexts(snap.texts.map(mT)); setShapes(snap.shapes.map(mS)); setImages(snap.images.map(mI))
+    if (snap.steps.length) setSteps(snap.steps.map(f => ({ ...f, players: f.players.map(mP), arrows: f.arrows.map(mA), texts: f.texts.map(mT), shapes: f.shapes.map(mS) })))
+    setPitchScale(s); setPitchOffX(offX); setPitchOffY(offY)
+  }
+  const pitchSnap = (): PitchSnap => ({ geo: geoRef.current, s: pitchScale, offX: pitchOffX, offY: pitchOffY, players, arrows, texts, shapes, images, steps })
+  /** The biggest the pitch can be and still fit on the board */
+  const maxPitch = () => { const g = geoRef.current, r0 = pitchRect(g, 0, 0, PW, PH), w1 = r0.w / pitchScale, h1 = r0.h / pitchScale; return Math.min(CW / w1, CH / h1) }
+  /** A new size from the slider or Reset: about the pitch's centre, kept on the board */
+  const sizePitch = (s: number, centre = false) => {
+    const snap = pitchSnap(), r0 = pitchRect(snap.geo, 0, 0, PW, PH), sc = Math.max(0.3, Math.min(maxPitch(), s))
+    const w = (r0.w / snap.s) * sc, h = (r0.h / snap.s) * sc
+    const cx = centre ? CW / 2 : r0.x + r0.w / 2, cy = centre ? CH / 2 : r0.y + r0.h / 2
+    const left = Math.max(0, Math.min(CW - w, cx - w / 2)), top = Math.max(0, Math.min(CH - h, cy - h / 2)), base = pitchGeo(snap.geo.v, sc, 0, 0)
+    reshapePitch(snap, sc, left - base.ox, top - base.oy)
+  }
+
   const endDrag = () => {
     const m = moveRef.current
     if (dragRef.current?.kind === "move" && m && !m.live && m.keep) setSelection([m.item]) // a plain click on one of several selected pieces selects just that one
     dragRef.current = null; moveRef.current = null; dragStartedRef.current = false
-    setHeldFrame(null)
+    setHeldFrame(null); pitchDragRef.current = null
     const mq = marqueeRef.current
     marqueeRef.current = null
     if (mq && marquee) {
@@ -5416,15 +5458,17 @@ function TacticsBoard() {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-xs" style={{ color: TEXT_MUTED }}>Pitch size</p>
-                      <button onClick={() => { undoPoint(); setPitchScale(1); setPitchOffX(0); setPitchOffY(0) }}
+                      <button onClick={() => { undoPoint(); sizePitch(FIT_SCALE(vertical), true) }}
                         className="text-xs px-2 py-0.5 rounded hover:bg-[var(--ps-hover)] transition-colors"
                         style={{ color: TEXT_MUTED }}>Reset</button>
                     </div>
-                    <input type="range" min={30} max={200} value={Math.round(pitchScale * 100)}
-                      onChange={e => { undoPoint("pitchScale"); setPitchScale(+e.target.value / 100) }} className="w-full accent-green-400" />
-                    <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>{Math.round(pitchScale * 100)}% · or drag a corner of the pitch</p>
-                    {(pitchOffX !== 0 || pitchOffY !== 0) && (
-                      <button onClick={() => { undoPoint(); setPitchOffX(0); setPitchOffY(0) }}
+                    {focus === "board" ? <>
+                    <input type="range" min={30} max={Math.floor(maxPitch() * 100)} value={Math.round(pitchScale * 100)} aria-label="Pitch size"
+                      onChange={e => { undoPoint("pitchScale"); sizePitch(+e.target.value / 100) }} className="w-full accent-green-400" />
+                    <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>{Math.round(pitchScale * 100)}% · or drag a corner of the pitch. Players and lines on it move with it</p>
+                    </> : <p className="text-xs" style={{ color: TEXT_MUTED }}>This view follows the pitch. <button onClick={() => { undoPoint(); setFocus("board") }} className="underline" style={{ color: TEXT_PRIMARY }}>Show the whole board</button> to make the pitch bigger or smaller.</p>}
+                    {focus === "board" && Math.hypot(pitchOffX - centreOff(vertical, pitchScale).x, pitchOffY - centreOff(vertical, pitchScale).y) > 1 && (
+                      <button onClick={() => { undoPoint(); sizePitch(pitchScale, true) }}
                         className="mt-1.5 w-full py-1 rounded text-xs hover:bg-[var(--ps-hover)] transition-colors"
                         style={{ color: TEXT_MUTED }}>Re-centre pitch</button>
                     )}
@@ -5633,7 +5677,12 @@ function TacticsBoard() {
                   viewBox={`${frame.x} ${frame.y} ${frame.w} ${frame.h}`}
                   width={dispW}
                   style={{ display: "block", userSelect: "none", aspectRatio: `${frame.w}/${frame.h}`, touchAction: "none" }}
-                  onPointerMove={onSVGMouseMove}
+                  onPointerMove={e => {
+                    onSVGMouseMove(e)
+                    // the pitch's handles show while the pointer is anywhere over the pitch, players and lines on it included
+                    if (!dragRef.current) { const { x, y } = svgXY(e), r = pitchRect(geoRef.current, 0, 0, PW, PH), m = 34; const inside = x > r.x - m && x < r.x + r.w + m && y > r.y - m - 30 && y < r.y + r.h + m; if (inside !== hoveredPitch) setHoveredPitch(inside) }
+                  }}
+                  onPointerLeave={() => { if (!dragRef.current) setHoveredPitch(false) }}
                   onPointerUp={onSVGMouseUp}
                   onPointerDown={onSVGMouseDown}
                   onClick={onSVGClick}
@@ -5682,9 +5731,7 @@ function TacticsBoard() {
 
                   {/* 4. Pitch group (translated to canvas offset + user drag offset) */}
                   {canvasMode !== "blank" && (
-                    <g transform={pitchTransformAttr(geo)}
-                      onMouseEnter={() => setHoveredPitch(true)}
-                      onMouseLeave={() => setHoveredPitch(false)}>
+                    <g transform={pitchTransformAttr(geo)}>
                       <g style={{ clipPath: canvasMode === "half" ? `url(#half-pitch-clip)` : undefined }}>
                         {pitchVisible && <PitchSVG pitchColor={pitchColor} look={pitchStyle} mark={psMark} upright={vertical} />}
                         {/* ── Zone overlays (pitch-local coords) ── */}
@@ -5744,13 +5791,13 @@ function TacticsBoard() {
                   )}
 
                   {/* Pitch handles — only on hover so they don't show in screenshots */}
-                  {canvasMode !== "blank" && tool === "select" && hoveredPitch && !presenting && (() => {
+                  {canvasMode !== "blank" && tool === "select" && hoveredPitch && !presenting && focus === "board" && (() => {
                     const pb = pitchRect(geo, 0, 0, PW, PH)
                     const ox = pb.x
                     const oy = pb.y
                     const pR = ox + pb.w
                     const pB = oy + pb.h
-                    const hS = 9
+                    const hS = 13
                     const midX = (ox + pR) / 2
                     const corners = [
                       { id: "pitch-tl", x: ox, y: oy,  cursor: "nwse-resize" },
@@ -5760,20 +5807,22 @@ function TacticsBoard() {
                     ]
                     return (
                       <>
+                        <rect x={ox} y={oy} width={pb.w} height={pb.h} fill="none" stroke="#fbbf24" strokeWidth={2} strokeDasharray="10 8" opacity={0.75} pointerEvents="none" />
                         {corners.map(c => (
-                          <g key={c.id} style={{ cursor: c.cursor }} onMouseEnter={() => setHoveredPitch(true)} onMouseLeave={() => setHoveredPitch(false)}
-                            onPointerDown={e => { e.stopPropagation(); setHeldFrame(frame); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
-                            <rect x={c.x - hS} y={c.y - hS} width={hS * 2} height={hS * 2} rx={3}
-                              fill="#fbbf24" stroke="#0d1117" strokeWidth={2} opacity={0.9} />
+                          <g key={c.id} style={{ cursor: c.cursor }}
+                            onPointerDown={e => { e.stopPropagation(); setHeldFrame(frame); pitchDragRef.current = pitchSnap(); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
+                            <rect x={c.x - hS - 8} y={c.y - hS - 8} width={hS * 2 + 16} height={hS * 2 + 16} fill="transparent" />
+                            <rect x={c.x - hS} y={c.y - hS} width={hS * 2} height={hS * 2} rx={5}
+                              fill="#fbbf24" stroke="#0d1117" strokeWidth={2.5} />
                           </g>
                         ))}
                         {/* Move pitch grip — top-centre bar, drag to reposition pitch */}
-                        <g style={{ cursor: "grab" }} onMouseEnter={() => setHoveredPitch(true)} onMouseLeave={() => setHoveredPitch(false)}
+                        <g style={{ cursor: "grab" }}
                           onPointerDown={e => {
                             e.stopPropagation()
                             const { x: mx, y: my } = svgXY(e)
-                            setHeldFrame(frame)
-                            dragRef.current = { kind: "movePitch", id: "pitch", ox: mx - pitchOffX - PX, oy: my - pitchOffY - PY }
+                            setHeldFrame(frame); pitchDragRef.current = pitchSnap()
+                            dragRef.current = { kind: "movePitch", id: "pitch", ox: mx, oy: my }
                           }}>
                           <rect x={midX - 30} y={oy - 20} width={60} height={15} rx={7}
                             fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} opacity={0.92} />
