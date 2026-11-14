@@ -29,7 +29,7 @@ async function listAll(bucket: string, prefix: string, depth = 0): Promise<strin
   return out
 }
 
-const count = async (table: string, col: string, id: string) => {
+const count = async (table: "boards" | "analyses" | "reports" | "notes" | "library_shots", col: string, id: string) => {
   const { count: n, error } = await supabase.from(table).select("id", { count: "exact", head: true }).eq(col, id)
   if (error) throw error
   return n ?? 0
