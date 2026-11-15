@@ -4,6 +4,7 @@ export const normalizeHandle = (s: string) => s.toLowerCase().replace(/[^a-z0-9_
 export const IDENTITY_OPTIONS = [
   { label: "Content creator", value: "creator", hint: "I post football breakdowns" },
   { label: "Analyst", value: "analyst", hint: "I study the game" },
+  { label: "Coach", value: "coach", hint: "I coach a team" },
   { label: "Just here to play", value: "fan", hint: "For fun" },
 ] as const
 

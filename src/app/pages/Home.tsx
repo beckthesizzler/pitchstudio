@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
 import { listName } from "../lib/names"
+import { openStudio, studioLabel } from "../lib/studio"
 import { Mark } from "../brand/Mark"
 import { StudioScene } from "../brand/StudioScene"
 import { readBrand, DEFAULT_BRAND, type Brand } from "../brand/brand"
@@ -25,6 +26,7 @@ export default function HomePage() {
   const [last, setLast] = useState<LastBoard | null>(null)
   const [lastA, setLastA] = useState<LastBoard | null>(null) // the analysis you worked on last
   const [lastR, setLastR] = useState<LastBoard | null>(null) // the report you worked on last
+  const [studioNo, setStudioNo] = useState<number | null>(null) // your studio number, once the database gives it
   const [sel, setSel] = useState(0)
   const [toast, setToast] = useState("")
   const menuRef = useRef<HTMLDivElement>(null)
@@ -35,13 +37,19 @@ export default function HomePage() {
       const u = session?.user
       if (!u) { navigate("/", { replace: true }); return }
       setIsNew(Date.now() - new Date(u.created_at).getTime() < 15 * 60 * 1000)
-      const [{ data: prof }, { data: boards }, { data: analyses }, { data: reports }] = await Promise.all([
+      const [{ data: prof, error: profErr }, { data: boards }, { data: analyses }, { data: reports }] = await Promise.all([
         supabase.from("profiles").select("display_name, handle, brand").eq("id", u.id).maybeSingle(),
         supabase.from("boards").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
         supabase.from("analyses").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
         supabase.from("reports").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
       ])
       if (off) return
+      // new members make their card first, unless they chose to do it later this visit
+      if (!profErr && (prof as any)?.brand == null) {
+        let later = false
+        try { later = !!sessionStorage.getItem("ps-card-later") } catch { /* storage blocked */ }
+        if (!later) { navigate("/profile?welcome=1", { replace: true }); return }
+      }
       const raw = (prof as any)?.display_name || (prof as any)?.handle || u.email?.split("@")[0] || ""
       const name = stripHandleSuffix(raw, u.id, u.email)
       setFirst(name.trim().split(" ")[0] || "")
@@ -55,6 +63,7 @@ export default function HomePage() {
       const r = (reports as any[] | null)?.[0]
       setLastR(r ? { id: r.id, title: listName("Report", r.title, r.updated_at), updated_at: r.updated_at } : null)
       setReady(true)
+      openStudio().then(n => { if (!off) setStudioNo(n) })
     })
     return () => { off = true }
   }, [])
@@ -75,7 +84,7 @@ export default function HomePage() {
       desc: lastR ? `Pick a template, or continue: ${lastR.title} · ${relTime(lastR.updated_at)}` : "Pick a template: your story, your colour, your seal",
       run: () => navigate("/report"), // always the templates first; your last report is one tap away
       extra: lastR ? { label: "Continue", run: () => navigate(`/report?open=${lastR.id}`) } : undefined },
-    { id: "braindump", name: "Brain Dump", desc: "A blank page to think on", icon: <StickyNote size={20} />, run: () => navigate("/braindump") },
+    { id: "braindump", name: "Dump & Arrange", desc: "Pin every idea. Tie them. Watch them grow.", icon: <StickyNote size={20} />, run: () => navigate("/braindump") },
     { id: "shelf", name: "Your Shelf", desc: "Everything you've made, in your order", icon: <Library size={20} />, run: () => navigate("/shelf") },
     { id: "profile", name: "Creator Profile", desc: "Your handle, signature and look", icon: <User size={20} />, run: () => navigate("/profile") },
     { id: "learn", name: "Learn Football", desc: "The best threads, picked for you", icon: <BookOpen size={20} />, soon: true },
@@ -153,7 +162,7 @@ export default function HomePage() {
       </header>
       <div className="hm-main">
         <div className="hm-menu" role="menu" aria-label="Creator hub" tabIndex={0} ref={menuRef} onKeyDown={onKey}>
-          <div className="hm-hi">{isNew ? "WELCOME" : "WELCOME BACK"}{first ? `, ${first.toUpperCase()}` : ""}</div>
+          <div className="hm-hi">{isNew ? "WELCOME" : "WELCOME BACK"}{first ? `, ${first.toUpperCase()}` : ""}{studioNo ? ` · STUDIO ${studioLabel(studioNo)}` : ""}</div>
           <h1 className="hm-h1">What do you want to<br />work on today?</h1>
           <div className="hm-lab">CREATOR HUB</div>
           {items.map((it, i) => (

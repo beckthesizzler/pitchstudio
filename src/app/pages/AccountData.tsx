@@ -124,7 +124,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ minWidth: 220, flex: 1 }}>
             <div style={{ fontWeight: 600, fontSize: 14 }}>Download my data</div>
-            <div style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 3 }}>Your profile, Creator Card, boards, analyses, Library, reports and Brain Dump in one file.</div>
+            <div style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 3 }}>Your profile, Creator Card, boards, analyses, Library, reports and Dump &amp; Arrange ideas in one file.</div>
           </div>
           <button className="pf-btn" onClick={download} disabled={!userId || !!busy}><Download size={15} /> {busy === "download" ? "Gathering…" : "Download"}</button>
         </div>
@@ -144,8 +144,8 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
               <AlertTriangle size={18} style={{ color: DS_ERROR, flexShrink: 0, marginTop: 1 }} />
               <div style={{ fontSize: 14, lineHeight: 1.5 }}>
                 <b>This deletes {email ? <span style={{ wordBreak: "break-all" }}>{email}</span> : "your account"} for good.</b>{" "}
-                {s ? <>Your profile, Creator Card, {plural(s.boards, "board", "boards")}, {plural(s.analyses, "analysis", "analyses")}, {plural(s.reports, "report", "reports")}, your Brain Dump and every photo you uploaded go with it.</>
-                  : <>Your profile, Creator Card, boards, analyses, reports, your Brain Dump and every photo you uploaded go with it.</>}
+                {s ? <>Your profile, Creator Card, {plural(s.boards, "board", "boards")}, {plural(s.analyses, "analysis", "analyses")}, {plural(s.reports, "report", "reports")}, your Dump &amp; Arrange ideas and every photo you uploaded go with it.</>
+                  : <>Your profile, Creator Card, boards, analyses, reports, your Dump &amp; Arrange ideas and every photo you uploaded go with it.</>}
                 {" "}Download your data first if you want a copy.
               </div>
             </div>
@@ -175,7 +175,7 @@ export function GoodbyePage() {
       <div style={{ maxWidth: 440, textAlign: "center" }}>
         <div style={{ display: "inline-grid", placeItems: "center", width: 64, height: 64, borderRadius: 18, background: SURFACE_1, border: `1px solid ${DS_BORDER}` }}><Mark size={30} color={ACCENT_SOLID} /></div>
         <h1 style={{ fontSize: 30, letterSpacing: "-0.03em", margin: "22px 0 0" }}>Your account is deleted</h1>
-        <p style={{ color: TEXT_MUTED, lineHeight: 1.55, fontSize: 15, margin: "12px 0 0" }}>Everything in it is gone: your profile, Creator Card, boards, analyses, reports, Brain Dump and photos. You can start again with a new account any time.</p>
+        <p style={{ color: TEXT_MUTED, lineHeight: 1.55, fontSize: 15, margin: "12px 0 0" }}>Everything in it is gone: your profile, Creator Card, boards, analyses, reports, Dump &amp; Arrange ideas and photos. You can start again with a new account any time.</p>
         <button onClick={() => navigate("/", { replace: true })} style={{ marginTop: 26, height: 48, padding: "0 26px", borderRadius: 999, border: "none", background: ACCENT_SOLID, color: ACCENT_INK, fontWeight: 600, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>Back to PitchStudio</button>
       </div>
     </div>

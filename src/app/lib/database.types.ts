@@ -42,15 +42,15 @@ export type Database = {
         Relationships: []
       }
       notes: {
-        Row: { body: Json; color: string; created_at: string; id: string; kind: string; parent_id: string | null; pos: number; title: string; updated_at: string; user_id: string }
-        Insert: { body?: Json; color?: string; created_at?: string; id: string; kind?: string; parent_id?: string | null; pos?: number; title?: string; updated_at?: string; user_id?: string }
-        Update: { body?: Json; color?: string; created_at?: string; id?: string; kind?: string; parent_id?: string | null; pos?: number; title?: string; updated_at?: string; user_id?: string }
+        Row: { body: Json; color: string; created_at: string; id: string; kind: string; made_ref: string | null; parent_id: string | null; pos: number; status: string; title: string; updated_at: string; user_id: string }
+        Insert: { body?: Json; color?: string; created_at?: string; id: string; kind?: string; made_ref?: string | null; parent_id?: string | null; pos?: number; status?: string; title?: string; updated_at?: string; user_id?: string }
+        Update: { body?: Json; color?: string; created_at?: string; id?: string; kind?: string; made_ref?: string | null; parent_id?: string | null; pos?: number; status?: string; title?: string; updated_at?: string; user_id?: string }
         Relationships: []
       }
       profiles: {
-        Row: { accent_color: string | null; bio: string | null; brand: Json | null; country: string | null; created_at: string | null; display_name: string | null; favorite_club: string | null; favorite_player: string | null; handle: string; id: string; identity: string | null; issue_count: number; shelf: Json }
-        Insert: { accent_color?: string | null; bio?: string | null; brand?: Json | null; country?: string | null; created_at?: string | null; display_name?: string | null; favorite_club?: string | null; favorite_player?: string | null; handle: string; id: string; identity?: string | null; issue_count?: number; shelf?: Json }
-        Update: { accent_color?: string | null; bio?: string | null; brand?: Json | null; country?: string | null; created_at?: string | null; display_name?: string | null; favorite_club?: string | null; favorite_player?: string | null; handle?: string; id?: string; identity?: string | null; issue_count?: number; shelf?: Json }
+        Row: { accent_color: string | null; bio: string | null; brand: Json | null; country: string | null; created_at: string | null; display_name: string | null; favorite_club: string | null; favorite_player: string | null; handle: string; id: string; identity: string | null; issue_count: number; opened_at: string | null; shelf: Json; studio_no: number | null }
+        Insert: { accent_color?: string | null; bio?: string | null; brand?: Json | null; country?: string | null; created_at?: string | null; display_name?: string | null; favorite_club?: string | null; favorite_player?: string | null; handle: string; id: string; identity?: string | null; issue_count?: number; opened_at?: string | null; shelf?: Json; studio_no?: number | null }
+        Update: { accent_color?: string | null; bio?: string | null; brand?: Json | null; country?: string | null; created_at?: string | null; display_name?: string | null; favorite_club?: string | null; favorite_player?: string | null; handle?: string; id?: string; identity?: string | null; issue_count?: number; opened_at?: string | null; shelf?: Json; studio_no?: number | null }
         Relationships: []
       }
       reports: {
@@ -63,7 +63,9 @@ export type Database = {
     Views: { [_ in never]: never }
     Functions: {
       delete_my_account: { Args: never; Returns: undefined }
+      get_public_card: { Args: { h: string }; Returns: { bio: string; brand: Json; display_name: string; favorite_club: string; handle: string; identity: string; opened_at: string; studio_no: number }[] }
       handle_available: { Args: { candidate: string }; Returns: boolean }
+      open_studio: { Args: never; Returns: number }
       take_issue_number: { Args: { seed?: number }; Returns: number }
     }
     Enums: { [_ in never]: never }

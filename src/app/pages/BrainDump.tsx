@@ -503,7 +503,7 @@ export default function BrainDumpPage() {
       <aside className={`bd-side${side ? " on" : ""}`} aria-label="Your trees and ideas">
         <div className="bd-side-top">
           <button className="bd-icon" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={26} color={ACCENT_SOLID} /></button>
-          <b>Brain Dump</b>
+          <b>Dump &amp; Arrange</b>
         </div>
         <div className="bd-acts">
           <button className="bd-btn pri" onClick={() => { setSide(false); quickRef.current?.focus() }} disabled={!user}><Plus size={15} /> New idea</button>
@@ -549,12 +549,12 @@ export default function BrainDumpPage() {
       <main className="bd-main">
         <div className="bd-bar">
           <button className="bd-icon" aria-label="Your trees and ideas" onClick={() => setSide(true)}><Menu size={18} /></button>
-          <b>Brain Dump</b>
+          <b>Dump &amp; Arrange</b>
           <button className="bd-icon" aria-label="Plant a tree" onClick={plant}><Sprout size={17} /></button>
         </div>
         <header className="bd-head">
           <div>
-            <div className="bd-kick">Brain Dump · your ideas studio</div>
+            <div className="bd-kick">Dump &amp; Arrange · your ideas studio</div>
             <h1>Dump it. Then give it roots.</h1>
             <p>Throw every idea onto the line as fast as it comes. When a few belong together, plant a tree and hang them under its roof.</p>
           </div>
@@ -651,7 +651,7 @@ export default function BrainDumpPage() {
       {note && (
         <div className="bd-sheet" role="dialog" aria-label={note.title || "Idea"} style={{ ["--bd-paper" as any]: `color-mix(in srgb, ${hex(note.color)} 22%, #fbfaf6)` }}>
           <div className="bd-sheet-top" onPointerDown={e => { if ((e.target as HTMLElement).closest("button")) e.preventDefault() }}>
-            <button className="bd-tb" onClick={close} aria-label="Back to Brain Dump"><ArrowLeft size={17} /> Brain Dump</button>
+            <button className="bd-tb" onClick={close} aria-label="Back to Dump & Arrange"><ArrowLeft size={17} /> Dump &amp; Arrange</button>
             <span className="bd-crumb">{noteTree ? <><Sprout size={13} /> {nameOf(noteTree)}</> : "On the line"}</span>
             <span className="bd-status" aria-live="polite">{status === "saving" ? <><Loader2 size={12} className="an-spin" /> Saving</> : status === "saved" ? <><Check size={12} /> Saved</> : status === "error" ? <button className="bd-retry" onClick={retry}>Not saved yet · Try again</button> : ""}</span>
             <span style={{ flex: 1 }} />
