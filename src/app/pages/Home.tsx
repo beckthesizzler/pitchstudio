@@ -7,14 +7,25 @@ import { relTime } from "../lib/time"
 import { listName } from "../lib/names"
 import { openStudio, studioLabel } from "../lib/studio"
 import { Mark } from "../brand/Mark"
-import { StudioScene } from "../brand/StudioScene"
+import { StudioScene, type SceneFocus } from "../brand/StudioScene"
 import { readBrand, DEFAULT_BRAND, type Brand } from "../brand/brand"
 import { ThemeToggle, PS_VOLT, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, ACCENT_SOLID, ACCENT_INK } from "../theme"
 
 /* Home ("/" when you are signed in): a menu to everything in the studio. The board is one step away at "/board". */
 
 interface LastBoard { id: string; title: string; updated_at: string }
-interface Item { id: string; name: string; desc: string; icon: React.ReactNode; soon?: boolean; run?: () => void; extra?: { label: string; run: () => void } }
+interface Item { id: SceneFocus; name: string; desc: string; icon: React.ReactNode; soon?: boolean; run?: () => void; extra?: { label: string; run: () => void } }
+
+/** The caption over the drawing for the tool you're on: a tag, then one line */
+const CAPTIONS: Record<SceneFocus, readonly [string, string]> = {
+  board: ["TACTICS BOARD", "Draw it, move it, export it as MP4, GIF or a still in any ratio."],
+  live: ["LIVE GAME ANALYSIS", "Grab the moment while the match is on. Clip, mark, keep."],
+  report: ["MATCH REPORT", "Five templates. Fill a form, the card designs itself."],
+  braindump: ["DUMP & ARRANGE", "Pin every idea. Tie them with thread. Watch them grow into a tree."],
+  shelf: ["YOUR SHELF", "Boards, clips and reports in one place, numbered like a series."],
+  profile: ["CREATOR PROFILE", "Your face, your tagline, your seal on every export."],
+  learn: ["LEARN FOOTBALL · COMING SOON", "Threads from creators you rate, in one feed."],
+}
 
 export default function HomePage() {
   const navigate = useNavigate()
@@ -29,6 +40,8 @@ export default function HomePage() {
   const [studioNo, setStudioNo] = useState<number | null>(null) // your studio number, once the database gives it
   const [sel, setSel] = useState(0)
   const [toast, setToast] = useState("")
+  const [look, setLook] = useState(0) // where the pointer is over the drawing, -1 (left) to 1 (right)
+  const lookFrame = useRef(0)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -70,6 +83,7 @@ export default function HomePage() {
 
   useEffect(() => { if (ready && window.matchMedia?.("(pointer: fine)").matches) menuRef.current?.focus({ preventScroll: true }) }, [ready])
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t) }, [toast])
+  useEffect(() => () => cancelAnimationFrame(lookFrame.current), [])
 
   const items: Item[] = [
     { id: "board", name: "Tactics Board", icon: <LayoutDashboard size={20} />,
@@ -99,6 +113,16 @@ export default function HomePage() {
     else if (e.key === "ArrowUp") { e.preventDefault(); setSel(s => (s + items.length - 1) % items.length) }
     else if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") { e.preventDefault(); activate(sel) }
   }
+  /* the creator in the drawing looks toward a mouse or pen over the art; touch and reduced motion leave it still */
+  const followPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "touch" || !window.matchMedia?.("(pointer: fine)").matches || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+    const r = e.currentTarget.getBoundingClientRect()
+    if (!r.width) return
+    const v = Math.round(Math.max(-1, Math.min(1, ((e.clientX - r.left) / r.width) * 2 - 1)) * 100) / 100
+    cancelAnimationFrame(lookFrame.current)
+    lookFrame.current = requestAnimationFrame(() => setLook(v))
+  }
+  const resetLook = () => { cancelAnimationFrame(lookFrame.current); setLook(0) }
 
   if (!ready) return <div style={{ minHeight: "100vh", background: SURFACE_BASE }} />
   const initials = (first || handle || "PS").slice(0, 2).toUpperCase()
@@ -137,13 +161,19 @@ export default function HomePage() {
         .hm-k { display: inline-block; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 1px 6px; margin: 0 2px; }
         .hm-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; padding: 10px 16px; border-radius: 99px; font-size: 13px; z-index: 30; }
         .hm-art { position: relative; overflow: hidden; background: ${SURFACE_BASE}; min-height: 420px; }
-        .hm-learn { position: absolute; right: 28px; bottom: 26px; width: 340px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 14px; padding: 14px 16px; opacity: .96; }
+        .hm-over { position: absolute; left: 28px; right: 28px; bottom: 26px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: flex-end; gap: 16px 28px; }
+        .hm-cap { flex: 1 1 260px; max-width: 460px; min-width: 0; margin-right: auto; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 14px; padding: 14px 16px; opacity: .96; }
+        .hm-cap .k { font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; color: ${ACCENT_SOLID}; }
+        .hm-cap .l { font-size: 18px; line-height: 1.35; font-weight: 500; letter-spacing: -.01em; margin-top: 8px; color: ${TEXT_PRIMARY}; }
+        @keyframes hmCap { from { opacity: 0; } }
+        @media (prefers-reduced-motion: no-preference) { .hm-cap { animation: hmCap .35s ease; } }
+        .hm-learn { flex: 0 0 340px; margin-left: auto; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 14px; padding: 14px 16px; opacity: .96; }
         .hm-learn .t { font-size: 12px; letter-spacing: .18em; font-weight: 700; color: ${ACCENT_SOLID}; } .hm-learn .q { font-size: 13.5px; line-height: 1.45; margin-top: 8px; }
         @media (max-width: 880px) {
           .hm-top { padding: 0 16px; height: 56px; } .hm-word { display: none; } .hm-me .hm-hide { display: none; }
           .hm-main { grid-template-columns: 1fr; min-height: 0; }
           .hm-art { order: -1; min-height: 0; height: 220px; }
-          .hm-learn { display: none; }
+          .hm-learn, .hm-cap { display: none; }
           .hm-menu { padding: 22px 16px 28px; border-right: 0; }
           .hm-h1 { font-size: 25px; margin: 8px 0 18px; }
           .hm-it { padding: 11px 12px; gap: 12px; } .hm-it.sel:before { left: -8px; } .hm-ic { width: 34px; height: 34px; } .hm-n { font-size: 16px; } .hm-d { font-size: 12px; }
@@ -184,9 +214,12 @@ export default function HomePage() {
             <div className="hm-keys"><span className="hm-k">↑</span><span className="hm-k">↓</span> move &nbsp;<span className="hm-k">Enter</span> open</div>
           </div>
         </div>
-        <div className="hm-art">
-          <StudioScene skin={brand.skin} hair={brand.hair} />
-          <div className="hm-learn"><div className="t">LEARN FOOTBALL · COMING SOON</div><div className="q">Hand-picked football threads from X, always credited to the people who wrote them.</div></div>
+        <div className="hm-art" onPointerMove={followPointer} onPointerLeave={resetLook}>
+          <StudioScene skin={brand.skin} hair={brand.hair} focus={items[sel].id} look={look} />
+          <div className="hm-over">
+            <div className="hm-cap" key={items[sel].id}><div className="k">{CAPTIONS[items[sel].id][0]}</div><div className="l">{CAPTIONS[items[sel].id][1]}</div></div>
+            <div className="hm-learn"><div className="t">LEARN FOOTBALL · COMING SOON</div><div className="q">Hand-picked football threads from X, always credited to the people who wrote them.</div></div>
+          </div>
         </div>
       </div>
       <div aria-live="polite">{toast && <div className="hm-toast">{toast}</div>}</div>
