@@ -25,6 +25,8 @@ export function handlesOf(b: Block): Handle[] {
     case "photo": return ["nw", "ne", "sw", "se", "n", "s", "e", "w", "rot"]
     case "text": return ["nw", "ne", "sw", "se", "e", "w", "rot"]
     case "pitch": return ["nw", "ne", "sw", "se"]
+    case "spine": case "shape": return ["nw", "ne", "sw", "se", "n", "s", "e", "w"]
+    case "series": return ["nw", "ne", "sw", "se", "e", "w"]
     default: return ["nw", "ne", "sw", "se", "e", "w"]
   }
 }
@@ -32,7 +34,7 @@ export function handlesOf(b: Block): Handle[] {
 /** Resizing by a handle, with the opposite corner (or side) held still, in the block's own turned frame */
 function resized(o: Block, h: Exclude<Handle, "rot">, p: Pt, free: boolean): Block {
   const B = blockBox(o), th = rad(B.rot), c0: Pt = [B.x + B.w / 2, B.y + B.h / 2]
-  const [hx, hy] = DIRS[h], flow = o.kind === "text" || o.kind === "stats" || o.kind === "story" // these grow downwards
+  const [hx, hy] = DIRS[h], flow = !["pitch", "photo", "spine", "shape"].includes(o.kind) // these grow downwards
   const ax = -hx, ay = hy === 0 ? (flow ? -1 : 0) : -hy
   const A = add(c0, rot([ax * B.w / 2, ay * B.h / 2], th)), d = rot(sub(p, A), -th)
   let w = B.w, hh = B.h, f = 1
@@ -40,7 +42,7 @@ function resized(o: Block, h: Exclude<Handle, "rot">, p: Pt, free: boolean): Blo
   if (corner && !(o.kind === "photo" && free)) {
     // scale along the diagonal
     f = Math.max(0.05, (hx * d[0] * B.w + hy * d[1] * B.h) / (B.w * B.w + B.h * B.h))
-    const min = o.kind === "text" ? 8 / (o as { size: number }).size : 40 / Math.min(B.w, B.h)
+    const min = o.kind === "text" || o.kind === "series" ? 8 / (o as { size: number }).size : 40 / Math.min(B.w, B.h)
     f = Math.max(f, min)
     w = B.w * f; hh = B.h * f
   } else {
@@ -57,7 +59,9 @@ function resized(o: Block, h: Exclude<Handle, "rot">, p: Pt, free: boolean): Blo
   switch (o.kind) {
     case "text": return corner ? { ...o, x, y, w: o.w * f, size: Math.round(o.size * f * 10) / 10 } : { ...o, x, y: o.y, w }
     case "pitch": return { ...o, x, y, w: o.w * f }
-    case "stats": case "story": return corner ? { ...o, x, y, w: o.w * f, s: o.s * f } : { ...o, x, y: o.y, w }
+    case "series": return corner ? { ...o, x, y, w: o.w * f, size: Math.round(o.size * f * 10) / 10 } : { ...o, x, y: o.y, w }
+    case "stats": case "story": case "timeline": case "idea": case "dial": case "cards": case "lines": return corner ? { ...o, x, y, w: o.w * f, s: o.s * f } : { ...o, x, y: o.y, w }
+    case "spine": case "shape": return { ...o, x, y, w, h: hh }
     case "photo": {
       if (corner) return { ...o, x, y, w, h: hh, ix: o.ix * f, iy: o.iy * f, iw: o.iw * f }
       // keep the picture still on the page: move it inside the frame by however much the frame's corner moved
@@ -83,6 +87,7 @@ export function nextNumber(marks: Mark[], kind: "player" | "pin", team = 0) {
 
 type Drag =
   | { t: "move"; bid: string; start: Pt; orig: Block; moved: boolean; dbl: boolean }
+  | { t: "needle"; bid: string }
   | { t: "size"; bid: string; h: Handle; orig: Block }
   | { t: "pan"; x: number; y: number; sl: number; st: number }
   | { t: "mark"; bid: string; mid: string; start: Pt; orig: Mark; links: { id: string; end: "a" | "b" }[]; moved: boolean; dbl: boolean }
@@ -91,8 +96,8 @@ type Drag =
   | { t: "newzone"; bid: string; a: Pt; b: Pt }
   | { t: "crop"; bid: string; start: Pt; orig: PhotoBlock }
 
-export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, setMode, tool, apply, begin, end, zoom, setZoom, svgRef, onEditText, onPickPhoto, onDropFiles, hint }: {
-  report: Report; brand: Brand; handle: string; logo: string | null; media: Record<string, string>
+export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, setMode, tool, apply, begin, end, zoom, setZoom, svgRef, onEditText, onPickPhoto, onDropFiles, hint, issue }: {
+  report: Report; brand: Brand; handle: string; logo: string | null; media: Record<string, string>; issue?: number | null
   sel: Sel; setSel: (s: Sel) => void; mode: Mode; setMode: (m: Mode) => void; tool: PitchTool
   apply: (fn: (r: Report) => Report) => void; begin: () => void; end: () => void
   zoom: number; setZoom: (z: number) => void; svgRef: RefObject<SVGSVGElement | null>
@@ -269,7 +274,9 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
       setMode({ kind: "page" }) // a click outside the pitch: back to the page, and that click counts there too
     }
 
-    // the page
+    // the page: a dial's needle drags along its bar, and the score follows
+    const nEl = target.closest("[data-needle]") as HTMLElement | null
+    if (nEl && mode.kind === "page") { const b = byId(nEl.dataset.needle ?? null); if (b?.kind === "dial") { setSel({ bid: b.id, mid: null }); begin(); setDrag({ t: "needle", bid: b.id }); capture(); return } }
     if (hEl && selBlock && hEl.dataset.h) { begin(); setDrag({ t: "size", bid: selBlock.id, h: hEl.dataset.h as Handle, orig: selBlock }); capture(); return }
     const bEl = target.closest("[data-bid]") as HTMLElement | null
     let b = bEl ? byId(bEl.dataset.bid ?? null) : null
@@ -298,6 +305,10 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
     }
     if (d.t === "pan") { const v = viewRef.current!; v.scrollLeft = d.sl - (e.clientX - d.x); v.scrollTop = d.st - (e.clientY - d.y); return }
     const p = toRep(e)
+    if (d.t === "needle") {
+      setBlock(d.bid, b => (b.kind === "dial" ? { ...b, value: Math.max(-10, Math.min(10, Math.round(((p[0] - b.x) / b.w - 0.5) / 0.05))) } : b))
+      return
+    }
     if (d.t === "move") {
       let dx = p[0] - d.start[0], dy = p[1] - d.start[1]
       if (!d.moved && Math.hypot(dx, dy) * scale < 3) return
@@ -365,7 +376,7 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
     if (!d) return
     // only a press that let go without moving can be the first half of a double-click (a drag, then a click, is not one)
     if (!((d.t === "move" || d.t === "mark") && !d.moved)) last.current = { ...last.current, t: 0 }
-    if (d.t === "move" || d.t === "size" || d.t === "crop" || d.t === "mark" || d.t === "mh") {
+    if (d.t === "move" || d.t === "size" || d.t === "crop" || d.t === "mark" || d.t === "mh" || d.t === "needle") {
       end()
       if (d.t === "move" && d.dbl && !d.moved) { const b = byId(d.bid); if (b) goInside(b) }
       if (d.t === "mark" && d.dbl && !d.moved) onEditText(d.bid, d.mid)
@@ -377,7 +388,9 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
     if (d.t === "newpass") {
       const A = pitchScreen(b, d.a), B = pitchScreen(b, d.b)
       if (Math.hypot(...sub(A, B)) * scale < 12) return
-      const m: Mark = { id: newId(), kind: "pass", a: d.a, b: d.b, c: null, run: d.run, weight: 2, hi: true, head: "end", air: false }
+      // a pass belongs to the side of the player it starts from
+      const from = b.marks.find((x): x is Extract<Mark, { kind: "player" }> => x.kind === "player" && Math.hypot(x.p[0] - d.a[0], x.p[1] - d.a[1]) < 0.012)
+      const m: Mark = { id: newId(), kind: "pass", a: d.a, b: d.b, c: null, run: d.run, weight: 2, hi: true, head: "end", air: false, team: from ? from.team : null }
       begin(); setMarks(b.id, ms => [...ms, m]); end(); setSel({ bid: b.id, mid: m.id })
       return
     }
@@ -485,7 +498,7 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
         <div className="rp-wrap" style={{ width: W * scale, height: H * scale, cursor, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel} onDragStart={e => e.preventDefault()}
           onPointerLeave={() => setHover(null)}>
-          <ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} editing svgRef={svgRef} />
+          <ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} editing svgRef={svgRef} issue={issue} />
           <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "visible" }} data-ui="1" data-stage="overlay">
             {pitchUi()}
             {cropUi()}

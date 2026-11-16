@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
+import { flushSync } from "react-dom"
 import { useLocation, useNavigate } from "react-router"
-import { BarChart3, Circle as CircleIcon, Copy, Download, FolderOpen, Heading1, ImagePlus, ListOrdered, Loader2, Maximize, MousePointer2, MoveUpRight, Plus, Redo2, Spline, Square, Type, Undo2, UserPlus, UserRound, X, ZoomIn, ZoomOut, MapPin, LayoutTemplate } from "lucide-react"
+import { Activity, BarChart3, Circle as CircleIcon, Copy, Download, FolderOpen, Gauge, Hash, Heading1, ImagePlus, Lightbulb, ListOrdered, Loader2, Maximize, MousePointer2, MoveUpRight, Plus, Redo2, Spline, Square, Type, Undo2, UserPlus, UserRound, X, ZoomIn, ZoomOut, MapPin, LayoutTemplate } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
@@ -10,8 +11,11 @@ import { DEFAULT_BRAND, cardColours, logoToDataUrl, readBrand, type Brand } from
 import { Canvas, clampCrop, moveBlock, type Mode, type PitchTool, type Sel } from "../report/Canvas"
 import { Panel, PITCH_HINTS } from "../report/Panel"
 import { ReportView, blockBox } from "../report/Draw"
-import { TEMPLATES, makeTemplate, type TemplateId } from "../report/templates"
-import { DEFAULT_TEAMS, MAX_BLOCKS, MAX_MARKS, SIZES, mediaOf, newId, pitchBox, projector, readReport, type Block, type Mark, type PhotoBlock, type PitchBlock, type Pt, type Report, type Shape, type Team } from "../report/model"
+import { BLANK_GAME, TEMPLATES, makeTemplate, nextGameFrom, type TemplateId } from "../report/templates"
+import { FillForm } from "../report/FillForm"
+import { applyFill, journalToGame, lockEdited, reflow, unlock as unlockSection } from "../report/fill"
+import { peekIssue, takeIssue } from "../lib/issues"
+import { DEFAULT_TEAMS, MAX_BLOCKS, MAX_MARKS, SIZES, mediaOf, newId, pitchBox, projector, readReport, type Block, type Fill, type Mark, type PhotoBlock, type PitchBlock, type Pt, type Report, type Shape, type Team } from "../report/model"
 import { applyLineup, formationOf, lineupOf, lineupText, placeFormation, type Squad } from "../report/team"
 import { downloadMedia, mediaLinks, preparePhoto, removeFolder, svgToCanvas, tidyFolder, uploadMedia } from "../report/media"
 import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT, SCRIM } from "../theme"
@@ -21,11 +25,13 @@ import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER
    so two tabs can never quietly overwrite each other. "/report?open=ID" opens a saved one. */
 
 type Row = { id: string; title: string; updated_at: string; data: unknown }
-type AddKind = "title" | "text" | "pitch" | "stats" | "story" | "photo"
+type AddKind = "title" | "text" | "pitch" | "stats" | "story" | "photo" | "series" | "timeline" | "idea" | "dial"
 const ADD: { id: AddKind; name: string; icon: ReactNode }[] = [
   { id: "title", name: "Headline", icon: <Heading1 size={18} /> }, { id: "text", name: "Text", icon: <Type size={18} /> },
   { id: "pitch", name: "Pitch", icon: <Square size={18} /> }, { id: "stats", name: "Key stats", icon: <BarChart3 size={18} /> },
   { id: "story", name: "Story", icon: <ListOrdered size={18} /> }, { id: "photo", name: "Photo", icon: <ImagePlus size={18} /> },
+  { id: "series", name: "Series line", icon: <Hash size={18} /> }, { id: "timeline", name: "Timeline", icon: <Activity size={18} /> },
+  { id: "idea", name: "The idea", icon: <Lightbulb size={18} /> }, { id: "dial", name: "Balance dial", icon: <Gauge size={18} /> },
 ]
 const TOOLS: { id: PitchTool; name: string; key: string; icon: ReactNode }[] = [
   { id: "select", name: "Select", key: "V", icon: <MousePointer2 size={18} /> }, { id: "player", name: "Player", key: "P", icon: <UserPlus size={18} /> },
@@ -42,8 +48,10 @@ function scaleBlock(b: Block, s: number, ox: number, oy: number): Block {
   switch (b.kind) {
     case "text": return { ...b, x, y, w: b.w * s, size: b.size * s }
     case "pitch": return { ...b, x, y, w: b.w * s }
-    case "stats": case "story": return { ...b, x, y, w: b.w * s, s: b.s * s }
+    case "stats": case "story": case "timeline": case "idea": case "dial": case "cards": case "lines": return { ...b, x, y, w: b.w * s, s: b.s * s }
     case "photo": return { ...b, x, y, w: b.w * s, h: b.h * s, ix: b.ix * s, iy: b.iy * s, iw: b.iw * s }
+    case "series": return { ...b, x, y, w: b.w * s, size: b.size * s }
+    case "spine": case "shape": return { ...b, x, y, w: b.w * s, h: b.h * s, ...(b.kind === "shape" ? { size: b.size * s } : {}) }
   }
 }
 const withNewIds = (b: Block): Block => (b.kind === "pitch" ? { ...b, id: newId(), marks: b.marks.map(m => ({ ...m, id: newId() })) } : { ...b, id: newId() })
@@ -95,9 +103,21 @@ export default function ReportPage() {
   const savedJson = useRef(""), rev = useRef<number | null>(null)
   const saving = useRef(false), again = useRef(false)
   const [, force] = useState(0)
+  const [view, setView] = useState<"fill" | "design">("design") // a report with a form opens on Fill
+  const viewRef = useRef(view); viewRef.current = view
+  const [phone, setPhone] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 700px)").matches)
+  useEffect(() => { const mq = window.matchMedia?.("(max-width: 700px)"); if (!mq) return; const on = () => setPhone(mq.matches); mq.addEventListener?.("change", on); return () => mq.removeEventListener?.("change", on) }, [])
+  const [nextIssue, setNextIssue] = useState<number | null>(null) // the number this report's series line would take at its first export
+  const [lastGame, setLastGame] = useState<Report | null>(null) // your most recent Game Report, to start the next match from
 
   const setReport = (r: Report) => { repRef.current = r; setReportState(r) }
-  const apply = (fn: (r: Report) => Report) => setReport(fn(repRef.current))
+  // in Design, a block that grows pushes what's under it down, and a form's block you edit by hand stops following the form
+  const apply = (fn: (r: Report) => Report) => {
+    const before = repRef.current
+    let next = fn(before)
+    if (viewRef.current === "design" && next !== before) { next = reflow(next, before); if (next.fill) next = lockEdited(next, before) }
+    setReport(next)
+  }
   const say = (t: string) => setToast(t)
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 3400); return () => clearTimeout(t) }, [toast])
   const setSel = (s: Sel) => setSelState(s)
@@ -116,7 +136,17 @@ export default function ReportPage() {
         setHandle(h && stripHandleSuffix(h, u.id, u.email) === h ? h : "")
         setBrand(readBrand((data as any)?.brand))
       })
-      if (!openId) { setPhase("start"); return }
+      peekIssue(u.id).then(n => { if (!off) setNextIssue(n) })
+      if (!openId) {
+        setPhase("start")
+        // your last Game Report, if you have one: the next match can start from it
+        supabase.from("reports").select("data").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(30).then(({ data }) => {
+          if (off) return
+          const g = ((data as any[] | null) ?? []).map(x => readReport(x.data, u.id)).find(x => x.fill?.template === "game")
+          if (g) setLastGame(g)
+        })
+        return
+      }
       const { data, error } = await supabase.from("reports").select("id, title, data, rev, created_at").eq("id", openId).eq("user_id", u.id).maybeSingle()
       if (off) return
       if (error || !data) { setPhase("missing"); return }
@@ -125,6 +155,7 @@ export default function ReportPage() {
       // a name the app made (from the headline or the day) stays automatic; only a name you typed is kept as yours
       const t = isAutoName(saved) || saved === pieceName("Report", "", headlineOf(r), made.current) ? "" : saved
       setTitle(t); titleRef.current = t; setReport(r); rev.current = (data as any).rev ?? 1
+      if (r.fill) setView("fill")
       savedJson.current = payload(t, r); setStatus("saved"); setPhase("ready")
       const paths = mediaOf(r)
       for (const pth of paths) downloadMedia(pth).then(d => { if (!off) setMedia(x => ({ ...x, [pth]: d ?? "" })) })
@@ -139,9 +170,10 @@ export default function ReportPage() {
     if (brand.logo) logoToDataUrl(brand.logo).then(d => { if (!off) setLogo(d) })
     return () => { off = true }
   }, [brand.logo])
-  const start = (id: TemplateId) => {
+  const start = (id: TemplateId | "next") => {
     // a template isn't saved until you change something: leave without editing and nothing new appears in My reports
-    const tpl = makeTemplate(id)
+    const tpl = id === "next" && lastGame ? nextGameFrom(lastGame, handle) : makeTemplate(id === "next" ? "game" : id, handle)
+    setView(tpl.fill ? "fill" : "design")
     made.current = new Date().toISOString(); setTitle(""); titleRef.current = ""
     savedJson.current = payload("", tpl); setStatus("idle")
     setReport(tpl); setPhase("ready"); setSel({ bid: null, mid: null })
@@ -264,6 +296,10 @@ export default function ReportPage() {
     if (kind === "text") return addBlock({ id: newId(), kind: "text", x: W * 0.25, y: H * 0.46, w: W * 0.5, rot: 0, text: "Write what happened.", style: "text", size: 24 * k, align: "left", color: "ink", plate: null }, true)
     if (kind === "stats") return addBlock({ id: newId(), kind: "stats", x: W * 0.15, y: H * 0.42, w: W * 0.7, s: k, type: "team", player: "", num: "", rows: [{ value: "", label: "Possession" }, { value: "", label: "xG" }, { value: "", label: "Shots" }] })
     if (kind === "story") return addBlock({ id: newId(), kind: "story", x: W * 0.3, y: H * 0.36, w: 420 * k, s: k, title: "The story", points: ["Your first point.", "Your second point."] }, true)
+    if (kind === "series") return addBlock({ id: newId(), kind: "series", x: W * 0.07, y: H * 0.05, w: W * 0.86, size: 21 * k, color: report.palette ? "b" : "muted", text: `${handle ? "@" + handle : "@HANDLE"} · SERIES · Nº {n}` })
+    if (kind === "timeline") return addBlock({ id: newId(), kind: "timeline", x: W * 0.07, y: H * 0.4, w: W * 0.86, s: k, events: [{ min: 7, label: "Your moment", kind: "goal" }] })
+    if (kind === "idea") return addBlock({ id: newId(), kind: "idea", x: W * 0.55, y: H * 0.25, w: 620 * k, s: 0.85 * k, title: "The idea", sections: [{ heading: "On-ball structure", body: "How you had the ball." }, { heading: "Off-ball structure", body: "How you won it back." }], situations: [{ tag: "Moment · 7'", text: "What happened.", pin: true }], pod: "", podLine: "" })
+    if (kind === "dial") return addBlock({ id: newId(), kind: "dial", x: W * 0.55, y: H * 0.6, w: 620 * k, s: 0.9 * k, value: 2, left: "CHAOS", right: "CONTROL", line: "" })
     const w = Math.min(W * 0.62, H * 0.62 * (68 / 52.5))
     addBlock({ id: newId(), kind: "pitch", x: (W - w) / 2, y: (H - w * (52.5 / 68)) / 2, w, view: "half", dir: "up", look: "flat", teams: DEFAULT_TEAMS(), marks: [], crest: true, ms: 1, legend: false })
   }
@@ -336,9 +372,9 @@ export default function ReportPage() {
         n = { ...n, view: arg as PitchBlock["view"], marks: b.marks.map(m => (m.kind === "pass" ? { ...m, a: mv(m.a), b: mv(m.b), c: m.c ? mv(m.c) : null } : m.kind === "zone" ? { ...m, p: mv(m.p), r: [m.r[0], m.r[1] * f] } : { ...m, p: mv(m.p) })) }
       }
       if (what === "dir") n = { ...n, dir: arg as PitchBlock["dir"] }
-      if (what === "look") n = { ...n, look: arg as PitchBlock["look"], w: arg === b.look ? b.w : arg === "stadium" ? b.w * 1.6 : b.w / 1.6 }
+      if (what === "look") n = { ...n, look: arg as PitchBlock["look"], w: arg === b.look || (arg !== "stadium" && b.look !== "stadium") ? b.w : arg === "stadium" ? b.w * 1.6 : b.w / 1.6 }
       // a flat pitch that changes shape fits inside the space the old one had, so nothing else on the page moves
-      if (n.look === "flat" && b.look === "flat") { const one = pitchBox({ ...n, w: 1 }); n = { ...n, w: Math.min(before.w / one.w, before.h / one.h) } }
+      if (n.look !== "stadium" && b.look !== "stadium" && what !== "look") { const one = pitchBox({ ...n, w: 1 }); n = { ...n, w: Math.min(before.w / one.w, before.h / one.h) } }
       const after = pitchBox(n)
       n = { ...n, x: c[0] - after.w / 2, y: c[1] - after.h / 2 }
       change(r => ({ ...r, blocks: r.blocks.map(x => (x.id === b.id ? n : x)) }))
@@ -475,6 +511,13 @@ export default function ReportPage() {
     if (mediaOf(report).some(pth => !media[pth])) { say("A photo is still loading. Try again in a moment."); return }
     setBusy("Exporting…")
     try {
+      // a report with a series line takes its number from your series at its first export, and keeps it
+      const wantsNo = report.blocks.some(b => b.kind === "series" && b.text.includes("{n}"))
+      if (wantsNo && !report.issue && user) {
+        const n = await takeIssue(user.id)
+        if (n) { flushSync(() => change(r => ({ ...r, issue: n }))); setNextIssue(n + 1) }
+        else say("Couldn't get your next number. This one exports without it, and tries again next time.")
+      }
       await document.fonts?.ready
       const cv = await svgToCanvas(svg, W, H, what === "jpg")
       const blob = await new Promise<Blob | null>(ok => cv.toBlob(ok, what === "jpg" ? "image/jpeg" : "image/png", 0.92))
@@ -514,6 +557,21 @@ export default function ReportPage() {
   const upCount = Object.values(uploads).filter(v => v === "up").length
   const hint = mode.kind === "pitch" ? PITCH_HINTS[tool] : mode.kind === "crop" ? "Drag the photo inside its frame. Scroll to zoom. Esc when you're done."
     : block?.kind === "pitch" ? "Double-click the pitch to add players, passes and pins." : block ? "" : "Click anything to change it. Double-click to go inside. Drag to move."
+
+  /* ── Fill: the form's answers, written onto the card ── */
+  const setFill = (f: Fill, live = false) => { if (!live) begin(); apply(r => applyFill(r, f)); if (!live) end() }
+  const toGame = async () => {
+    const j = report.fill
+    if (!user || j?.template !== "journal") return
+    const g = makeTemplate("game", handle), base = { ...BLANK_GAME, lineup: j.xi.map(x => x.name), shape: (["4-2-3-1", "4-3-3", "4-4-2", "3-5-2"].includes(j.shape) ? j.shape : "4-2-3-1") as typeof BLANK_GAME.shape }
+    const next = applyFill(g, journalToGame(j, base), false), id = newId()
+    setBusy("Making your Game Report…")
+    const { error } = await (supabase as any).from("reports").insert({ id, user_id: user.id, title: pieceName("Report", "", headlineOf(next), new Date().toISOString()), data: next })
+    setBusy("")
+    if (error) { say("Couldn't make it. Try again."); return }
+    window.location.assign(`/report?open=${id}`)
+  }
+  const shownIssue = report.issue ?? nextIssue
 
   if (phase === "loading") return <div className="rp-page" style={{ minHeight: "100vh", background: SURFACE_BASE }} />
 
@@ -615,12 +673,18 @@ export default function ReportPage() {
         .tm-acts { display: flex; margin-top: 12px; }
         .tm-names { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; align-items: flex-start; } .tm-names .rp-inp { font-size: 13px; }
         .tm-squad { display: flex; gap: 6px; align-items: center; width: 100%; } .tm-squad select { flex: 1; }
+        .rp-fd { margin-left: 4px; } .rp-fd button { padding: 6px 14px; font-weight: 600; }
+        .rp-fill { display: grid; grid-template-columns: 560px minmax(0, 1fr); min-height: 0; }
+        .rp-fill-form { overflow-y: auto; padding: 16px 18px 40px; border-right: 1px solid ${DS_BORDER}; min-height: 0; }
+        .rp-fill-card { display: flex; padding: 24px; background: #101114; min-width: 0; min-height: 0; overflow: auto; } .rp-fill-card .rp-wrap { margin: auto; }
+        .rp-box { border: 1px solid ${DS_BORDER}; border-radius: 12px; padding: 10px 10px 2px; margin-bottom: 10px; }
+        .rp-tpls.small { grid-template-columns: repeat(auto-fill, minmax(170px, 210px)); }
         .rp-start { overflow-y: auto; padding: 40px 32px; }
         .rp-start h1 { font-size: 30px; letter-spacing: -.03em; margin: 0 0 6px; } .rp-start > p { color: ${TEXT_MUTED}; margin: 0 0 26px; }
         .rp-tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px; max-width: 1180px; }
         .rp-tpl { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 16px; padding: 10px; cursor: pointer; text-align: left; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; transition: transform .15s, border-color .15s; }
         .rp-tpl:hover, .rp-tpl:focus-visible { transform: translateY(-3px); border-color: ${ACCENT_SOLID}; outline: none; }
-        .rp-tpl .th { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #0f1114; }
+        .rp-tpl .th { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #0f1114; display: grid; align-items: center; }
         .rp-tpl b { display: block; font-size: 15px; margin: 12px 4px 4px; } .rp-tpl span { display: block; font-size: 12.5px; color: ${TEXT_MUTED}; margin: 0 4px 6px; line-height: 1.45; }
         .rp-banner { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 20; background: ${SURFACE_1}; border: 1px solid ${DS_ERROR}; border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.4); max-width: calc(100% - 24px); }
         .rp-scrim { position: fixed; inset: 0; background: ${SCRIM}; z-index: 50; display: grid; place-items: center; padding: 20px; }
@@ -635,11 +699,13 @@ export default function ReportPage() {
         .rp-spin { animation: rpSpin 1s linear infinite; } @keyframes rpSpin { to { transform: rotate(360deg); } }
         @media (prefers-reduced-motion: reduce) { .rp-spin { animation: none; } .rp-tpl { transition: none; } }
         @media (max-width: 1100px) { .rp-body { grid-template-columns: 76px 1fr 270px; } .rp-hide-md { display: none; } }
+        @media (max-width: 700px) { .rp-fill-form { padding: 0; } }
         @media (max-width: 860px) {
           .rp-page { height: auto; min-height: 100vh; overflow: visible; grid-template-rows: auto auto; }
           .rp-top { flex-wrap: wrap; padding: 8px 12px; row-gap: 8px; } .rp-title { flex: 1 1 0; min-width: 0; } .rp-top .rp-sp { flex: 0 0 100%; height: 0; }
           .rp-body { grid-template-columns: 1fr; } .rp-rail { flex-direction: row; border-right: none; border-bottom: 1px solid ${DS_BORDER}; overflow-x: auto; } .rp-tool { min-width: 64px; } .rp-rail-cap { display: none; }
           .rp-mid { height: 92vw; max-height: 72vh; } .rp-insp { border-left: none; border-top: 1px solid ${DS_BORDER}; } .rp-hide-sm { display: none; }
+          .rp-fill { grid-template-columns: 1fr; } .rp-fill-form { border-right: none; }
         }
         @media (pointer: coarse) { .rp-tool kbd { display: none; } }
       `}</style>
@@ -654,6 +720,10 @@ export default function ReportPage() {
                 : upCount ? <><Loader2 size={13} className="rp-spin" /> Uploading {upCount === 1 ? "photo" : `${upCount} photos`}…</>
                   : status === "saving" ? "Saving…" : status === "saved" ? "Saved" : ""}
         </span>
+        {phase === "ready" && report.fill && <div className="rp-seg rp-fd" role="group" aria-label="Fill or design">
+          <button className={view === "fill" ? "on" : ""} aria-pressed={view === "fill"} onClick={() => { setView("fill"); setModeState({ kind: "page" }); setSel({ bid: null, mid: null }) }}>Fill</button>
+          <button className={view === "design" ? "on" : ""} aria-pressed={view === "design"} onClick={() => setView("design")}>Design</button>
+        </div>}
         <span className="rp-sp" />
         <button className="rp-icon" onClick={undo} disabled={!past.current.length} aria-label="Undo" title="Undo (Ctrl Z)"><Undo2 size={16} /></button>
         <button className="rp-icon" onClick={redo} disabled={!future.current.length} aria-label="Redo" title="Redo (Ctrl Shift Z)"><Redo2 size={16} /></button>
@@ -686,14 +756,35 @@ export default function ReportPage() {
         <div className="rp-start">
           <h1>Start a match report</h1>
           <p>Pick a starting point. Every word, block and colour can be changed, moved or deleted.</p>
+          {lastGame && <button className="rp-btn pri" style={{ marginBottom: 22 }} onClick={() => start("next")}><Plus size={15} /> Start from your last Game Report</button>}
           <div className="rp-tpls">
-            {TEMPLATES.map(t => (
+            {TEMPLATES.filter(t => !t.more).map(t => (
               <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
-                <div className="th"><ReportView report={makeTemplate(t.id)} brand={brand} handle={handle} logo={logo} media={{}} /></div>
+                <div className="th" style={{ aspectRatio: t.id === "journal" ? "16 / 9" : t.id === "game" || t.id === "formation" ? "4 / 5" : "1" }}><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></div>
                 <b>{t.name}</b><span>{t.note}</span>
               </button>
             ))}
           </div>
+          <p className="rp-cap" style={{ marginTop: 30 }}>MORE STARTING POINTS</p>
+          <div className="rp-tpls small">
+            {TEMPLATES.filter(t => t.more).map(t => (
+              <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
+                <div className="th"><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} /></div>
+                <b>{t.name}</b><span>{t.note}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : view === "fill" && report.fill ? (
+        <div className="rp-fill">
+          <div className="rp-fill-form">
+            <FillForm report={report} fill={report.fill} set={setFill} begin={begin} end={end} unlock={sec => change(r => unlockSection(r, sec))} phone={phone} title={title}
+              preview={<ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} />}
+              full={<ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} />}
+              onDesign={() => setView("design")} onToGame={report.fill.template === "journal" ? toGame : undefined} />
+          </div>
+          {!phone && <div className="rp-fill-card"><div className="rp-wrap" style={{ width: `min(100%, calc((100vh - 120px) * ${W / H}))` }}><ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} svgRef={svgRef} /></div></div>}
+          {phone && <div style={{ position: "fixed", left: -99999, top: 0, width: 400 }} aria-hidden="true"><ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} svgRef={svgRef} /></div>}
         </div>
       ) : (
         <div className="rp-body">
@@ -725,7 +816,7 @@ export default function ReportPage() {
               onPickPhoto={bid => { fileFor.current = bid; fileRef.current?.click() }} onDropFiles={(files, at) => {
                 const slot = report.blocks.find(b => b.kind === "photo" && !b.src && at[0] >= b.x && at[0] <= b.x + (b as PhotoBlock).w && at[1] >= b.y && at[1] <= b.y + (b as PhotoBlock).h)
                 addPhotos(files, at, slot?.id ?? null)
-              }} hint={hint} />
+              }} hint={hint} issue={shownIssue} />
             <div className="rp-zoom">
               <button aria-label="Zoom out" onClick={() => setZoom(z => Math.max(0.5, z / 1.2))}><ZoomOut size={14} /></button>
               <span style={{ width: 44, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
