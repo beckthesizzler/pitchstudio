@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
-import { useNavigate } from "react-router"
-import { ArrowLeft, LogOut, Dices, Download, Upload, Check } from "lucide-react"
+import { useLocation, useNavigate } from "react-router"
+import { ArrowLeft, LogOut, Dices, Download, Upload, ChevronDown, Copy, Instagram, Linkedin, ImagePlus, Trash2 } from "lucide-react"
 import { getFontEmbedCSS, toPng } from "html-to-image"
 import { supabase } from "../lib/supabase"
 import { IDENTITY_OPTIONS, normalizeHandle, stripHandleSuffix } from "../lib/account"
@@ -10,13 +10,31 @@ import { Mark } from "../brand/Mark"
 import { CreatorCard } from "../brand/CardArt"
 import { CreatorSeal } from "../brand/Signature"
 import { CREST_IDS, CREST_LABELS, CrestIcon } from "../brand/crests"
-import { COLOURS, DEFAULT_BRAND, LOGO_BUCKET, LOGO_PREFIX, MOTTO_MAX, PACKS, SKINS, SKIN_LABELS, TITLES, TITLE_MAX, brandForSave, cardColours, logoToDataUrl, readBrand, squareLogo, type Brand } from "../brand/brand"
+import { CARD_STYLES, COLOURS, DEFAULT_BRAND, DEFAULT_POS, LOGO_BUCKET, LOGO_PREFIX, MOTTO_MAX, PACKS, SKINS, SKIN_LABELS, TITLES, TITLE_MAX, brandForSave, cardColours, logoToDataUrl, readBrand, shrinkPhoto, squareLogo, type Brand } from "../brand/brand"
+import { openStudio, sinceLabel, studioLabel } from "../lib/studio"
+
+const SITE = "https://pitchstudio-brown.vercel.app"
+const postFor = (studio: number | null, handle: string) =>
+  `Proud new member of PitchStudio. Studio ${studio ? studioLabel(studio) : "Nº —"} is open: boards, reports and ideas, all in one place. ${SITE}/c/${handle || "you"}`
+/** A picture of the card on the studio's dark background, w by h, the card centred at cw wide */
+async function cardOnBackground(card: string, w: number, h: number, cw: number, handle: string): Promise<string> {
+  const img = await new Promise<HTMLImageElement>((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error("card")); i.src = card })
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h
+  const g = cv.getContext("2d")!
+  const bg = g.createRadialGradient(w / 2, h * 0.42, 40, w / 2, h / 2, h * 0.7); bg.addColorStop(0, "#1e2229"); bg.addColorStop(1, "#08090b")
+  g.fillStyle = bg; g.fillRect(0, 0, w, h)
+  const ch = cw * (470 / 330), x = (w - cw) / 2, y = (h - ch) / 2 - (h > w * 1.5 ? 60 : 0)
+  g.shadowColor = "rgba(0,0,0,.6)"; g.shadowBlur = 60; g.shadowOffsetY = 24
+  g.drawImage(img, x, y, cw, ch)
+  g.shadowColor = "transparent"
+  g.fillStyle = "#d7ff3c"; g.font = "700 30px Inter, sans-serif"; g.textAlign = "center"
+  g.fillText(`pitchstudio-brown.vercel.app/c/${handle || "you"}`, w / 2, y + ch + (h > w * 1.5 ? 110 : 60))
+  return cv.toDataURL("image/png")
+}
 import { useTheme, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT } from "../theme"
 
 /* Creator Profile ("/profile"): your Creator Card (your brand, which signs every export), who you are in the studio, and how the app looks. */
 
-const STEPS = ["Start", "Colours", "Crest", "Name", "You"] as const
-type Step = (typeof STEPS)[number]
 const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)]
 
 export default function ProfilePage() {
@@ -24,7 +42,6 @@ export default function ProfilePage() {
   const { choice, setChoice } = useTheme()
   const [userId, setUserId] = useState<string | null>(null)
   const [email, setEmail] = useState("")
-  const [since, setSince] = useState("")
   const [loaded, setLoaded] = useState(false)
   const [displayName, setDisplayName] = useState("")
   const [handle, setHandle] = useState("")
@@ -39,16 +56,29 @@ export default function ProfilePage() {
   // the Creator Card
   const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
   const [hadBrand, setHadBrand] = useState(false)          // has a card been saved before?
+  const savedLogoPhoto = useRef<string | null>(null)        // the photo address in the database
   const [touched, setTouched] = useState(false)             // has the card been changed on this page?
   const [savedLogo, setSavedLogo] = useState<string | null>(null) // the logo address in the database
   const [logoData, setLogoData] = useState<string | null>(null)   // the saved logo as a data address (cards and exports)
   const [pending, setPending] = useState<{ blob: Blob; data: string } | null>(null) // a new logo, uploaded when you save
   const [logoMsg, setLogoMsg] = useState("")
-  const [step, setStep] = useState<Step>("Start")
-  const [seen, setSeen] = useState<Step[]>(["Start"])
   const [downloading, setDownloading] = useState(false)
+  const [studioNo, setStudioNo] = useState<number | null>(null)
+  const [openedAt, setOpenedAt] = useState<string | null>(null)
+  const [photoPending, setPhotoPending] = useState<{ blob: Blob; data: string } | null>(null) // a new photo, uploaded when you save
+  const [photoData, setPhotoData] = useState<string | null>(null) // the saved photo as a data address (exports)
+  const [photoMsg, setPhotoMsg] = useState("")
+  const [cropping, setCropping] = useState(false)
+  const [tilt, setTilt] = useState<{ rx: number; ry: number; x: number; y: number } | null>(null)
+  const [post, setPost] = useState<string | null>(null) // null: the default post
+  const [shareMsg, setShareMsg] = useState("")
+  const [moreOpen, setMoreOpen] = useState(false)
+  const welcome = new URLSearchParams(useLocation().search).get("welcome") === "1"
   const cardRef = useRef<HTMLDivElement>(null)
+  const exportRef = useRef<HTMLDivElement>(null) // the card at its own size (330 by 470), out of sight, for downloads
   const fileRef = useRef<HTMLInputElement>(null)
+  const photoRef = useRef<HTMLInputElement>(null)
+  const cropDrag = useRef<{ x: number; y: number; px: number; py: number; w: number; h: number } | null>(null)
   const savedSnap = useRef("")
 
   useEffect(() => {
@@ -56,11 +86,9 @@ export default function ProfilePage() {
       if (!session?.user) { navigate("/"); return }
       setUserId(session.user.id)
       setEmail(session.user.email ?? "")
-      const made = new Date(session.user.created_at)
-      setSince(Number.isNaN(made.getTime()) ? "" : String(made.getFullYear()))
       const { data } = await supabase
         .from("profiles")
-        .select("display_name, handle, bio, country, favorite_club, favorite_player, identity, brand")
+        .select("display_name, handle, bio, country, favorite_club, favorite_player, identity, brand, studio_no, opened_at")
         .eq("id", session.user.id)
         .maybeSingle()
       if (data) {
@@ -72,7 +100,10 @@ export default function ProfilePage() {
         setFavoriteClub(d.favorite_club ?? "")
         setFavoritePlayer(d.favorite_player ?? "")
         setIdentity(d.identity ?? "")
-        if (d.brand) { const b = readBrand(d.brand); setBrand(b); setHadBrand(true); setSavedLogo(b.logo) }
+        if (d.brand) { const b = readBrand(d.brand); setBrand(b); setHadBrand(true); setSavedLogo(b.logo); savedLogoPhoto.current = b.photo }
+        setOpenedAt(d.opened_at ?? session.user.created_at ?? null)
+        if (typeof d.studio_no === "number") setStudioNo(d.studio_no)
+        else openStudio().then(n => { if (n) setStudioNo(n) })
       }
       setLoaded(true)
     })
@@ -86,8 +117,16 @@ export default function ProfilePage() {
     return () => { off = true }
   }, [savedLogo])
 
+  // The saved photo, as a data address (so a downloaded card never depends on another website)
+  useEffect(() => {
+    let off = false
+    if (!brand.photo || photoPending) return
+    logoToDataUrl(brand.photo).then(d => { if (!off) setPhotoData(d) })
+    return () => { off = true }
+  }, [brand.photo, photoPending])
+
   // What is on the page right now, to know if there is anything to save
-  const snap = JSON.stringify([displayName, handle, bio, country, favoriteClub, favoritePlayer, identity, brand, !!pending])
+  const snap = JSON.stringify([displayName, handle, bio, country, favoriteClub, favoritePlayer, identity, brand, !!pending, !!photoPending])
   useEffect(() => { if (loaded && !savedSnap.current) savedSnap.current = snap }, [loaded])
   const dirty = loaded && savedSnap.current !== "" && snap !== savedSnap.current
 
@@ -98,15 +137,21 @@ export default function ProfilePage() {
     setSaving(true); setHandleError(""); setSaveMsg(null)
     const cleanHandle = normalizeHandle(handle)
     setHandle(cleanHandle)
-    if (cleanHandle.length < 3) { setHandleError("Use at least 3 letters, numbers or underscores."); setSaving(false); go("Name"); return }
+    if (cleanHandle.length < 3) { setHandleError("Use at least 3 letters, numbers or underscores."); setSaving(false); toHandle(); return }
     let next = brand
+    if (photoPending) {
+      const path = `${userId}/photo-${Date.now()}.jpg`
+      const up = await supabase.storage.from(LOGO_BUCKET).upload(path, photoPending.blob, { contentType: "image/jpeg", cacheControl: "31536000" })
+      if (up.error) { setSaving(false); setSaveMsg("error"); setPhotoMsg("The photo didn't upload. Try again."); return }
+      next = { ...next, photo: supabase.storage.from(LOGO_BUCKET).getPublicUrl(path).data.publicUrl }
+    }
     if (pending) {
       const path = `${userId}/logo-${Date.now()}.png`
       const up = await supabase.storage.from(LOGO_BUCKET).upload(path, pending.blob, { contentType: "image/png", cacheControl: "31536000" })
       if (up.error) { setSaving(false); setSaveMsg("error"); setLogoMsg("The logo didn't upload. Try again."); return }
-      next = { ...brand, logo: supabase.storage.from(LOGO_BUCKET).getPublicUrl(path).data.publicUrl }
+      next = { ...next, logo: supabase.storage.from(LOGO_BUCKET).getPublicUrl(path).data.publicUrl }
     }
-    const sendBrand = touched || !!pending
+    const sendBrand = touched || !!pending || !!photoPending
     const { error } = await (supabase as any).from("profiles").update({
       display_name: displayName, handle: cleanHandle, bio, country,
       favorite_club: favoriteClub, favorite_player: favoritePlayer, identity: identity || null,
@@ -114,7 +159,7 @@ export default function ProfilePage() {
     }).eq("id", userId)
     setSaving(false)
     if (error) {
-      if ((error as any).code === "23505") { setHandleError("That handle's already taken. Try another."); go("Name") }
+      if ((error as any).code === "23505") { setHandleError("That handle's already taken. Try another."); toHandle() }
       else { setSaveMsg("error"); setTimeout(() => setSaveMsg(null), 3000) }
       return
     }
@@ -123,13 +168,22 @@ export default function ProfilePage() {
       const old = savedLogo.slice(LOGO_PREFIX.length)
       if (old.startsWith(userId + "/")) supabase.storage.from(LOGO_BUCKET).remove([old]).catch(() => {})
     }
+    // the old photo too, once it's replaced or removed
+    const savedPhoto = savedLogoPhoto.current
+    if (sendBrand && savedPhoto && savedPhoto !== next.photo && savedPhoto.startsWith(LOGO_PREFIX)) {
+      const old = savedPhoto.slice(LOGO_PREFIX.length)
+      if (old.startsWith(userId + "/")) supabase.storage.from(LOGO_BUCKET).remove([old]).catch(() => {})
+    }
     if (sendBrand) {
       if (pending) setLogoData(pending.data)
-      setBrand(next); setSavedLogo(next.logo); setPending(null); setHadBrand(true); setTouched(false)
+      if (photoPending) setPhotoData(photoPending.data)
+      savedLogoPhoto.current = next.photo
+      setBrand(next); setSavedLogo(next.logo); setPending(null); setPhotoPending(null); setHadBrand(true); setTouched(false); setCropping(false)
     }
-    savedSnap.current = JSON.stringify([displayName, cleanHandle, bio, country, favoriteClub, favoritePlayer, identity, next, false])
+    savedSnap.current = JSON.stringify([displayName, cleanHandle, bio, country, favoriteClub, favoritePlayer, identity, next, false, false])
     setSaveMsg("saved")
     ;(window as any).posthog?.capture("profile_updated", sendBrand ? { card: true } : undefined)
+    if (welcome) { navigate("/", { replace: true }); return }
     setTimeout(() => setSaveMsg(null), 2000)
   }
 
@@ -147,23 +201,75 @@ export default function ProfilePage() {
   }
   const removeLogo = () => { setPending(null); edit({ logo: null }); setLogoMsg("") }
 
+  /* ── your photo ── */
+  const pickPhoto = async (file: File | undefined) => {
+    setPhotoMsg("")
+    if (!file) return
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 15 * 1024 * 1024) { setPhotoMsg("Pick a PNG, JPG or WebP photo under 15 MB."); return }
+    try {
+      const { blob, ar } = await shrinkPhoto(file)
+      const data = await new Promise<string>((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result)); fr.onerror = () => no(new Error("read")); fr.readAsDataURL(blob) })
+      setPhotoPending({ blob, data }); edit({ photoPos: { ...DEFAULT_POS, ar } }); setCropping(true)
+    } catch { setPhotoMsg("That photo couldn't be used. Try another one.") }
+  }
+  const removePhoto = () => { setPhotoPending(null); setPhotoData(null); edit({ photo: null, photoPos: DEFAULT_POS }); setCropping(false); setPhotoMsg("") }
+  const shownPhoto = photoPending ? photoPending.data : brand.photo ? (photoData ?? brand.photo) : null
+  // drag to crop: the frame is 298 by 262 of the card's 330 by 470
+  const cropDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    cropDrag.current = { x: e.clientX, y: e.clientY, px: brand.photoPos.x, py: brand.photoPos.y, w: r.width * (298 / 330), h: r.width * (262 / 330) }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const cropMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = cropDrag.current
+    if (!d) return
+    const p = brand.photoPos, iw = Math.max(d.w, d.h * p.ar) * p.zoom, ih = iw / p.ar
+    const ox = iw - d.w, oy = ih - d.h
+    edit({ photoPos: { ...p, x: ox > 1 ? Math.min(1, Math.max(0, d.px - (e.clientX - d.x) / ox)) : 0.5, y: oy > 1 ? Math.min(1, Math.max(0, d.py - (e.clientY - d.y) / oy)) : 0.5 } })
+  }
+
+  /* ── the card tilts toward the pointer (not on touch, not with reduced motion) ── */
+  const still = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  const tiltMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "touch" || still || cropping) return
+    const r = e.currentTarget.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height
+    setTilt({ ry: (x - 0.5) * 22, rx: (0.5 - y) * 18, x, y })
+  }
+
+  /* ── sharing ── */
+  const postText = post ?? postFor(studioNo, normalizeHandle(handle))
+  const cardPng = async () => {
+    const fontEmbedCSS = await getFontEmbedCSS(document.body).catch(() => "")
+    return toPng(exportRef.current!, { pixelRatio: 3, fontEmbedCSS, width: 330, height: 470 })
+  }
+  const save = (url: string, file: string) => { const a = document.createElement("a"); a.href = url; a.download = file; a.click() }
+  const copyPost = async () => { try { await navigator.clipboard.writeText(postText); return true } catch { return false } }
+  const shareX = () => { window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`, "_blank", "noopener"); (window as any).posthog?.capture("card_shared", { to: "x" }) }
+  const shareImage = async (kind: "story" | "card") => {
+    if (!exportRef.current || downloading) return
+    setDownloading(true); setShareMsg("")
+    try {
+      const card = await cardPng(), who = normalizeHandle(handle) || "creator"
+      const url = kind === "story" ? await cardOnBackground(card, 1080, 1920, 860, who) : await cardOnBackground(card, 1080, 1350, 760, who)
+      save(url, kind === "story" ? `${who}-story.png` : `${who}-card.png`)
+      if (kind === "story") setShareMsg((await copyPost()) ? "Story image saved, and the post is copied. Paste it in Instagram." : "Story image saved.")
+      ;(window as any).posthog?.capture(kind === "story" ? "card_shared" : "creator_card_downloaded", kind === "story" ? { to: "instagram" } : undefined)
+    } catch (e) { console.error(e); setShareMsg("The image couldn't be made. Try again.") }
+    setDownloading(false)
+  }
+  const shareLinkedIn = async () => {
+    window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(`${SITE}/c/${normalizeHandle(handle)}`)}`, "_blank", "noopener")
+    setShareMsg((await copyPost()) ? "The post is copied. Paste it in LinkedIn." : "")
+    ;(window as any).posthog?.capture("card_shared", { to: "linkedin" })
+  }
+
   const surprise = () => {
     edit({ color: pick(COLOURS), crest: pick(CREST_IDS), title: pick(TITLES) }) // a chosen logo stays; the crest behind it changes
   }
 
-  const downloadCard = async () => {
-    if (!cardRef.current || downloading) return
-    setDownloading(true)
-    try {
-      const fontEmbedCSS = await getFontEmbedCSS(document.body).catch(() => "")
-      const url = await toPng(cardRef.current, { pixelRatio: 3, fontEmbedCSS, width: 330, height: 470, style: { width: "330px", height: "470px", transform: "none" } }) // always the same size, wherever it is on the page
-      const a = document.createElement("a"); a.href = url; a.download = `${normalizeHandle(handle) || "creator"}-card.png`; a.click()
-      ;(window as any).posthog?.capture("creator_card_downloaded")
-    } catch (e) { console.error(e); setSaveMsg("error"); setTimeout(() => setSaveMsg(null), 3000) }
-    setDownloading(false)
-  }
+  const downloadCard = () => shareImage("card")
 
-  const go = (s: Step) => { setStep(s); setSeen(v => (v.includes(s) ? v : [...v, s])) }
+  const toHandle = () => document.getElementById("handle")?.focus()
 
   if (!loaded) return <div style={{ width: "100vw", height: "100vh", background: SURFACE_BASE }} />
 
@@ -172,7 +278,6 @@ export default function ProfilePage() {
   const chosen = handle && strippedName === handle ? normalizeHandle(handle) : "" // only a handle you picked yourself signs exports
   const idLabel = IDENTITY_OPTIONS.find(o => o.value === identity)?.label
   const shownLogo = pending ? pending.data : brand.logo ? logoData : null
-  const cc = cardColours(brand)
   const field = (id: string, label: string, value: string, set: (v: string) => void, extra?: { prefix?: string; max?: number; err?: string; rows?: number; hint?: string }) => (
     <div className="pf-field">
       <label htmlFor={id} className="pf-label">{label}</label>
@@ -191,7 +296,6 @@ export default function ProfilePage() {
       <button className={!value ? "on" : ""} aria-pressed={!value} onClick={() => set(false)}>{offText}</button>
     </div>
   )
-  const next = STEPS[STEPS.indexOf(step) + 1]
 
   return (
     <div className="pf" style={{ minHeight: "100vh", background: SURFACE_BASE, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
@@ -248,6 +352,22 @@ export default function ProfilePage() {
         .pf-bar > div { max-width: 1080px; margin: 0 auto; padding: 12px 32px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
         .pf-save { height: 46px; padding: 0 28px; border-radius: 999px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font-weight: 600; font-size: 15px; border: none; cursor: pointer; font-family: inherit; }
         .pf-save:disabled { opacity: .5; cursor: default; }
+        .pf-wrap2 { max-width: 1240px; margin: 0 auto; padding: 32px 32px 130px; display: grid; grid-template-columns: 560px minmax(0, 1fr); gap: 48px; }
+        .pf-stage { position: sticky; top: 20px; align-self: start; display: flex; flex-direction: column; gap: 14px; }
+        .pf-card3d { perspective: 1100px; }
+        .pf-card3d > div { width: min(100%, 440px); margin: 0 auto; transition: transform .35s cubic-bezier(.2,.8,.2,1); filter: drop-shadow(0 30px 40px rgba(0,0,0,.45)); touch-action: none; }
+        .pf-styles { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+        .pf-crop { position: absolute; left: 4.85%; top: 3.4%; width: 90.3%; height: 55.7%; border-radius: 14px; cursor: grab; outline: 2px dashed rgba(255,255,255,.85); display: grid; place-items: end center; padding-bottom: 10px; }
+        .pf-crop span { background: rgba(0,0,0,.65); color: #fff; font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; }
+        .pf-welcome { background: ${ACCENT_SOFT}; border-bottom: 1px solid ${DS_BORDER}; }
+        .pf-welcome > div { max-width: 1240px; margin: 0 auto; padding: 12px 32px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 14px; }
+        .pf-welcome b { color: ${ACCENT_TEXT}; }
+        .pf-h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
+        .pf-share textarea { width: 100%; min-height: 96px; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; border: 1px solid ${DS_BORDER}; border-radius: 12px; padding: 12px; font: 400 14px/1.5 'Inter', sans-serif; resize: vertical; }
+        .pf-share .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+        .pf-share .row .pf-btn { padding: 0 10px; font-size: 13px; }
+        .pf-more { width: 100%; display: flex; align-items: center; justify-content: space-between; background: none; border: none; color: ${TEXT_PRIMARY}; font: 700 14px 'Inter', sans-serif; padding: 16px 0; cursor: pointer; border-top: 1px solid ${DS_BORDER}; }
+        @media (max-width: 1080px) { .pf-wrap2 { grid-template-columns: 1fr; padding: 20px 18px 130px; gap: 24px; } .pf-stage { position: static; } .pf-share .row { grid-template-columns: 1fr 1fr; } .pf-welcome > div { padding: 10px 18px; } }
         @media (max-width: 860px) {
           .pf-top { padding: 0 16px; }
           .pf-wrap { grid-template-columns: 1fr; gap: 24px; padding: 20px 20px 130px; }
@@ -264,6 +384,12 @@ export default function ProfilePage() {
         }
       `}</style>
 
+      {welcome && (
+        <div className="pf-welcome" role="status"><div>
+          <span style={{ flex: 1 }}><b>Welcome to the studio.</b> Make your card first: it signs everything you export.</span>
+          <button className="pf-btn" style={{ height: 36 }} onClick={() => { try { sessionStorage.setItem("ps-card-later", "1") } catch { /* private mode */ } navigate("/", { replace: true }) }}>Skip for now</button>
+        </div></div>
+      )}
       <div className="pf-top">
         <button className="pf-back" onClick={() => navigate("/")}><ArrowLeft size={16} /> Home</button>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -272,16 +398,26 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      <div className="pf-wrap">
-        <aside className="pf-left">
-          <div className="pf-tilt" data-card="preview">
-            <div className="pf-cardwrap">
+      <div className="pf-wrap2">
+        <aside className="pf-stage">
+          <div className="pf-card3d" data-card="preview" onPointerMove={tiltMove} onPointerLeave={() => setTilt(null)}>
+            <div style={{ transform: tilt ? `rotateX(${tilt.rx.toFixed(2)}deg) rotateY(${tilt.ry.toFixed(2)}deg)` : "none", position: "relative" }}>
               <div ref={cardRef} className="pf-cardbox">
-                <CreatorCard brand={brand} handle={chosen} name={name} since={since} logo={shownLogo} unfinished={!hadBrand} />
+                <CreatorCard brand={brand} handle={chosen} name={name} since={sinceLabel(openedAt)} logo={shownLogo} unfinished={!hadBrand} photo={shownPhoto} studio={studioNo}
+                  title={idLabel ?? brand.title} sheen={tilt ? { x: tilt.x, y: tilt.y } : null} />
               </div>
+              {cropping && shownPhoto && <div className="pf-crop" onPointerDown={cropDown} onPointerMove={cropMove} onPointerUp={() => { cropDrag.current = null }} aria-label="Drag to crop your photo"><span>Drag to crop</span></div>}
             </div>
           </div>
-          <button className="pf-btn pri" onClick={downloadCard} disabled={downloading}><Download size={16} /> {downloading ? "Making your card…" : "Download my card"}</button>
+          <div aria-hidden="true" style={{ position: "fixed", left: -10000, top: 0, width: 330, height: 470, pointerEvents: "none" }}>
+            <div ref={exportRef} style={{ width: 330, height: 470, borderRadius: 22, overflow: "hidden" }}>
+              <CreatorCard brand={brand} handle={chosen} name={name} since={sinceLabel(openedAt)} logo={shownLogo} unfinished={!hadBrand} photo={shownPhoto} studio={studioNo} title={idLabel ?? brand.title} />
+            </div>
+          </div>
+          <div className="pf-styles" role="group" aria-label="Card style">
+            {CARD_STYLES.map(st => <button key={st.id} className={`pf-chip${brand.style === st.id ? " on" : ""}`} style={{ margin: 0 }} aria-pressed={brand.style === st.id} onClick={() => edit({ style: st.id })}>{st.name}</button>)}
+          </div>
+          <p className="pf-hint" style={{ textAlign: "center", margin: 0 }}>Move your mouse over the card.</p>
           <div className="pf-panel">
             <p className="pf-cap">YOUR EXPORT SIGNATURE</p>
             <div className="pf-pitch" data-card="signature">
@@ -293,63 +429,97 @@ export default function ProfilePage() {
               Signs every image, GIF and video you export.{!chosen ? " Choose your own handle to put your name on it." : ""}
             </p>
           </div>
-          <div className="pf-panel">
-            <p className="pf-cap">APPEARANCE</p>
-            <div className="pf-seg" role="group" aria-label="Appearance">
-              {(["auto", "night", "day"] as const).map(c => (
-                <button key={c} className={choice === c ? "on" : ""} aria-pressed={choice === c} onClick={() => setChoice(c)}>{c === "auto" ? "Auto" : c === "night" ? "Night" : "Day"}</button>
-              ))}
-            </div>
-            <div style={{ height: 1, background: DS_BORDER, margin: "16px 0" }} />
-            <button className="pf-out" onClick={signOut}><LogOut size={14} /> Sign out</button>
-          </div>
         </aside>
 
         <main style={{ minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 14, margin: "0 0 4px" }}>
-            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>Build your Creator Card</h1>
-            <button className="pf-btn pri" onClick={surprise} style={{ height: 40 }}><Dices size={16} /> Surprise me</button>
+          <h1 className="pf-h1">Your card is your stamp.</h1>
+          <p style={{ margin: "8px 0 24px", fontSize: 15, color: TEXT_MUTED, lineHeight: 1.55 }}>It signs every image, clip and report you export, and it is the page people land on.</p>
+
+          <div className="pf-panel" style={{ marginBottom: 16 }}>
+            <p className="pf-cap">YOUR PHOTO</p>
+            <div className="cc-row">
+              <input ref={photoRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => { pickPhoto(e.target.files?.[0]); e.target.value = "" }} />
+              <button className="pf-btn pri" onClick={() => photoRef.current?.click()}><ImagePlus size={15} /> {shownPhoto ? "Change photo" : "Upload your photo"}</button>
+              {shownPhoto && <button className="pf-btn" onClick={() => setCropping(v => !v)}>{cropping ? "Done cropping" : "Crop"}</button>}
+              {shownPhoto && <button className="pf-btn" onClick={removePhoto}><Trash2 size={14} /> Remove photo</button>}
+            </div>
+            {shownPhoto && cropping && <div style={{ marginTop: 14 }}>
+              <label className="pf-label" htmlFor="pf-zoom">Zoom</label>
+              <input id="pf-zoom" type="range" min={1} max={3} step={0.01} value={brand.photoPos.zoom} onChange={e => edit({ photoPos: { ...brand.photoPos, zoom: +e.target.value } })} style={{ width: "100%", accentColor: ACCENT_SOLID }} />
+            </div>}
+            {photoMsg ? <p className="pf-err" style={{ margin: "8px 0 0" }}>{photoMsg}</p> : <p className="pf-hint" style={{ margin: "8px 0 0" }}>It fills the top of your card. Drag it in the frame to crop.</p>}
           </div>
-          <p style={{ margin: "0 0 20px", fontSize: 14, color: TEXT_MUTED, lineHeight: 1.5 }}>
-            {hadBrand ? "Your identity in the studio. It signs every export." : "You start with a starter card. Change anything, then save: it signs every export you make."}
-          </p>
 
-          <div className="cc-steps" role="tablist" aria-label="Card steps">
-            {STEPS.map((s, i) => (
-              <button key={s} role="tab" aria-selected={step === s} className={`cc-step${step === s ? " on" : ""}`} onClick={() => go(s)}>
-                <span>{i + 1}</span>
-                <b>{s}{seen.includes(s) && step !== s ? <Check size={13} color={ACCENT_TEXT} aria-label="seen" /> : null}</b>
-              </button>
-            ))}
+          <div className="pf-g2" style={{ marginBottom: 16 }}>
+            {field("handle", "Handle", handle, setHandle, { prefix: "@", max: 30, err: handleError })}
+            {field("motto", "Tagline", brand.motto, v => edit({ motto: v }), { max: MOTTO_MAX, hint: `${brand.motto.length}/${MOTTO_MAX}` })}
           </div>
 
-          <div className="pf-panel" role="tabpanel" aria-label={step}>
-            {step === "Start" && (<>
-              <p className="pf-cap">START FROM A PACK, OR SKIP</p>
-              <div className="cc-packs">
-                {PACKS.map(p => {
-                  const c = cardColours({ ...brand, color: p.color })
-                  const on = brand.color === p.color && brand.crest === p.crest && brand.title === p.title
-                  return (
-                    <button key={p.id} className={`cc-pack${on ? " on" : ""}`} aria-pressed={on} onClick={() => edit({ color: p.color, crest: p.crest, title: p.title })}
-                      style={{ background: `linear-gradient(160deg, ${c.top}, ${c.bottom})`, color: c.text }}>
-                      <b>{p.title}</b><span>{p.note}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </>)}
+          <p className="pf-sec" style={{ marginTop: 22 }}>I AM A</p>
+          <div>
+            {IDENTITY_OPTIONS.map(o => {
+              const active = identity === o.value
+              return <button key={o.value} className={`pf-chip${active ? " on" : ""}`} aria-pressed={active} onClick={() => setIdentity(active ? "" : o.value)}>{o.label}</button>
+            })}
+          </div>
 
-            {step === "Colours" && (<>
-              <p className="pf-cap">CARD COLOUR</p>
-              <div className="cc-row">
-                {COLOURS.map(c => <button key={c} className={`cc-sw${brand.color === c ? " on" : ""}`} aria-label={`Colour ${c}`} aria-pressed={brand.color === c} style={{ background: c }} onClick={() => edit({ color: c })} />)}
-                <input type="color" className="cc-color" aria-label="Pick any colour" value={brand.color} onChange={e => edit({ color: e.target.value.toLowerCase() })} />
-              </div>
-            </>)}
+          <p className="pf-sec" style={{ marginTop: 22 }}>MY COLOURS</p>
+          <div className="cc-row" style={{ marginBottom: 12 }}>
+            {COLOURS.map(c => <button key={c} className={`cc-sw${brand.color === c ? " on" : ""}`} aria-label={`Colour ${c}`} aria-pressed={brand.color === c} style={{ background: c }} onClick={() => edit({ color: c })} />)}
+            <input type="color" className="cc-color" aria-label="Pick any colour" value={brand.color} onChange={e => edit({ color: e.target.value.toLowerCase() })} />
+          </div>
+          <div className="cc-packs" style={{ marginBottom: 26 }}>
+            {PACKS.map(p => {
+              const c = cardColours({ ...brand, color: p.color })
+              const on = brand.color === p.color && brand.crest === p.crest && brand.title === p.title
+              return (
+                <button key={p.id} className={`cc-pack${on ? " on" : ""}`} aria-pressed={on} onClick={() => edit({ color: p.color, crest: p.crest, title: p.title })}
+                  style={{ background: `linear-gradient(160deg, ${c.top}, ${c.bottom})`, color: c.text, height: 70 }}>
+                  <b>{p.title}</b><span>{p.note}</span>
+                </button>
+              )
+            })}
+          </div>
 
-            {step === "Crest" && (<>
-              <p className="pf-cap">CREST</p>
+          <div className="pf-panel pf-share" style={{ marginBottom: 22 }}>
+            <p className="pf-cap">SHARE THAT YOU'RE IN</p>
+            <textarea aria-label="Your post" value={postText} maxLength={280} onChange={e => setPost(e.target.value)} />
+            <div className="row">
+              <button className="pf-btn pri" onClick={shareX}>Post on X</button>
+              <button className="pf-btn" onClick={() => shareImage("story")} disabled={downloading}><Instagram size={15} /> Story 9:16</button>
+              <button className="pf-btn" onClick={shareLinkedIn}><Linkedin size={15} /> LinkedIn</button>
+              <button className="pf-btn" onClick={downloadCard} disabled={downloading}><Download size={15} /> {downloading ? "Making…" : "Download card"}</button>
+            </div>
+            <p className="pf-hint" style={{ margin: "10px 0 0" }} aria-live="polite">{shareMsg || "X opens with the text and link filled in. Instagram and LinkedIn: we copy the text and save the image, you paste."}</p>
+            {!hadBrand && <p className="pf-hint" style={{ margin: "6px 0 0" }}>Save your card first, so the link shows it.</p>}
+            <button className="pf-btn" style={{ height: 34, marginTop: 10 }} onClick={async () => setShareMsg((await copyPost()) ? "Copied." : "Couldn't copy. Select the text instead.")}><Copy size={13} /> Copy the post</button>
+          </div>
+
+          <button className="pf-more" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)}>More about you <ChevronDown size={18} style={{ transform: moreOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} /></button>
+          {moreOpen && <div style={{ display: "grid", gap: 22, paddingBottom: 10 }}>
+            <div className="pf-g2">
+              {field("displayName", "Display name", displayName, setDisplayName)}
+              {field("cardTitle", "Title (when you haven't picked a role)", brand.title, v => edit({ title: v }), { max: TITLE_MAX })}
+            </div>
+            {field("bio", "Bio", bio, setBio, { rows: 3, max: 160, hint: `${bio.length}/160` })}
+            <div className="pf-g3">
+              <div className="pf-field">
+                <label htmlFor="country" className="pf-label">Country</label>
+                <div className="pf-inp">
+                  <select id="country" value={country} onChange={e => setCountry(e.target.value)}>
+                    <option value="">Select country</option>
+                    {WORLD_COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              {field("favoriteClub", "Favourite club", favoriteClub, setFavoriteClub)}
+              {field("favoritePlayer", "Favourite player", favoritePlayer, setFavoritePlayer)}
+            </div>
+            <div className="pf-panel">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
+                <p className="pf-cap" style={{ margin: 0 }}>CREST</p>
+                <button className="pf-btn" style={{ height: 34 }} onClick={surprise}><Dices size={14} /> Surprise me</button>
+              </div>
               <div className="cc-row">
                 {CREST_IDS.map(id => <button key={id} className={`cc-cr${!shownLogo && brand.crest === id ? " on" : ""}`} aria-label={CREST_LABELS[id]} aria-pressed={!shownLogo && brand.crest === id} onClick={() => { setPending(null); edit({ crest: id, logo: null }); setLogoMsg("") }}><CrestIcon id={id} size={26} /></button>)}
               </div>
@@ -359,62 +529,26 @@ export default function ProfilePage() {
                 {shownLogo && <button className="pf-btn" onClick={removeLogo}>Remove logo</button>}
               </div>
               {logoMsg ? <p className="pf-err" style={{ margin: "8px 0 0" }}>{logoMsg}</p> : <p className="pf-hint" style={{ margin: "8px 0 0" }}>PNG, JPG or WebP. We crop it square.</p>}
-            </>)}
-
-            {step === "Name" && (
-              <div style={{ display: "grid", gap: 14 }}>
-                {field("handle", "Tagname (your handle)", handle, setHandle, { prefix: "@", max: 30, err: handleError })}
-                {field("motto", "Motto (one line under your name)", brand.motto, v => edit({ motto: v }), { max: MOTTO_MAX, hint: `${brand.motto.length}/${MOTTO_MAX}` })}
-                {field("cardTitle", "Title (the line at the bottom of your card)", brand.title, v => edit({ title: v }), { max: TITLE_MAX })}
-              </div>
-            )}
-
-            {step === "You" && (<>
-              <p className="pf-cap">FACE</p>
+              <p className="pf-cap" style={{ marginTop: 18 }}>THE DRAWN YOU (WHEN THERE'S NO PHOTO)</p>
               <div className="cc-row">
-                {SKINS.map((s, i) => <button key={s} className={`cc-skin${brand.skin === s ? " on" : ""}`} aria-label={SKIN_LABELS[i]} aria-pressed={brand.skin === s} style={{ background: s }} onClick={() => edit({ skin: s })} />)}
+                {SKINS.map((sk, i) => <button key={sk} className={`cc-skin${brand.skin === sk ? " on" : ""}`} aria-label={SKIN_LABELS[i]} aria-pressed={brand.skin === sk} style={{ background: sk }} onClick={() => edit({ skin: sk })} />)}
               </div>
-              <p className="pf-cap" style={{ marginTop: 18 }}>HAIR</p>
-              {seg("Hair", brand.hair, "Spiky punk", "No hair", v => edit({ hair: v }))}
+              <div style={{ marginTop: 12 }}>{seg("Hair", brand.hair, "Spiky punk", "No hair", v => edit({ hair: v }))}</div>
               <p className="pf-cap" style={{ marginTop: 18 }}>“MADE WITH PITCHSTUDIO” ON YOUR EXPORTS</p>
               {seg("PitchStudio on exports", brand.madeWith, "On", "Off", v => edit({ madeWith: v }))}
-              <p className="pf-hint" style={{ margin: "8px 0 0" }}>Your crest and handle always lead. This is the small, light “made with PitchStudio” after them.</p>
-            </>)}
-
-            {next && <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}><button className="pf-btn" onClick={() => go(next)}>Next: {next}</button></div>}
-          </div>
-
-          <p className="pf-sec" style={{ marginTop: 40 }}>ACCOUNT</p>
-          <div className="pf-g2">
-            {field("displayName", "Display name", displayName, setDisplayName)}
-            <div className="pf-field"><span className="pf-label">Handle</span><div style={{ fontSize: 14, color: TEXT_MUTED, lineHeight: "48px" }}>{handle ? `@${handle}` : "No handle yet"}{idLabel ? ` · ${idLabel}` : ""} <span style={{ fontSize: 12 }}>(change it in the Name step)</span></div></div>
-          </div>
-          <div style={{ marginTop: 14 }}>{field("bio", "Bio", bio, setBio, { rows: 3, max: 160, hint: `${bio.length}/160` })}</div>
-
-          <p className="pf-sec" style={{ marginTop: 34 }}>FOOTBALL</p>
-          <div className="pf-g3">
-            <div className="pf-field">
-              <label htmlFor="country" className="pf-label">Country</label>
-              <div className="pf-inp">
-                <select id="country" value={country} onChange={e => setCountry(e.target.value)}>
-                  <option value="">Select country</option>
-                  {WORLD_COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
             </div>
-            {field("favoriteClub", "Favourite club", favoriteClub, setFavoriteClub)}
-            {field("favoritePlayer", "Favourite player", favoritePlayer, setFavoritePlayer)}
-          </div>
-
-          <p className="pf-sec" style={{ marginTop: 34 }}>YOU ARE A</p>
-          <div>
-            {IDENTITY_OPTIONS.map(o => {
-              const active = identity === o.value
-              return <button key={o.value} className={`pf-chip${active ? " on" : ""}`} aria-pressed={active} onClick={() => setIdentity(active ? "" : o.value)}>{o.label}</button>
-            })}
-          </div>
-
-          <AccountData userId={userId} email={email} />
+            <div className="pf-panel">
+              <p className="pf-cap">APPEARANCE</p>
+              <div className="pf-seg" role="group" aria-label="Appearance">
+                {(["auto", "night", "day"] as const).map(c => (
+                  <button key={c} className={choice === c ? "on" : ""} aria-pressed={choice === c} onClick={() => setChoice(c)}>{c === "auto" ? "Auto" : c === "night" ? "Night" : "Day"}</button>
+                ))}
+              </div>
+              <div style={{ height: 1, background: DS_BORDER, margin: "16px 0" }} />
+              <button className="pf-out" onClick={signOut}><LogOut size={14} /> Sign out</button>
+            </div>
+            <AccountData userId={userId} email={email} />
+          </div>}
         </main>
       </div>
 

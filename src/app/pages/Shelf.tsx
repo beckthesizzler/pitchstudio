@@ -21,8 +21,8 @@ import { ACCENT_SOLID, ACCENT_INK, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFA
 
 type Kind = "board" | "analysis" | "report" | "tree"
 type Piece = { key: string; kind: Kind; id: string; name: string; no: number; updated: string; thumb: React.ReactNode; href: string }
-const KINDS: { id: Kind | "all"; label: string }[] = [{ id: "all", label: "Everything" }, { id: "board", label: "Boards" }, { id: "analysis", label: "Analyses" }, { id: "report", label: "Reports" }, { id: "tree", label: "Trees" }]
-const KIND_NAME: Record<Kind, string> = { board: "Board", analysis: "Analysis", report: "Report", tree: "Tree" }
+const KINDS: { id: Kind | "all"; label: string }[] = [{ id: "all", label: "Everything" }, { id: "board", label: "Boards" }, { id: "analysis", label: "Analyses" }, { id: "report", label: "Reports" }, { id: "tree", label: "Piles" }]
+const KIND_NAME: Record<Kind, string> = { board: "Board", analysis: "Analysis", report: "Report", tree: "Pile" }
 const KIND_ICON: Record<Kind, React.ReactNode> = { board: <LayoutDashboard size={12} />, analysis: <ImageIcon size={12} />, report: <FileText size={12} />, tree: <Sprout size={12} /> }
 const TREE_COLORS: Record<string, string> = { yellow: "#f7e36a", pink: "#f58cb4", peach: "#f9b27e", orange: "#f6a04a", lime: "#c8e86c", aqua: "#88dde0", teal: "#5ec6cb", lilac: "#c6b6fb" }
 
@@ -112,7 +112,7 @@ export default function ShelfPage() {
       for (const t of notes.filter(x => x.kind === "tree" && !x.parent_id)) {
         const kids = notes.filter(x => x.parent_id === t.id).sort((x, y) => x.pos - y.pos)
         const latest = [t, ...kids].map(x => x.updated_at).sort().pop() ?? t.updated_at
-        out.push({ key: "tree:" + t.id, kind: "tree", id: t.id, name: t.title?.trim() || "Name this tree", no: 0, updated: latest, href: `/braindump?tree=${t.id}`, thumb: <TreeThumb name={t.title?.trim() || "Name this tree"} color={t.color} ideas={kids.map(k => k.title?.trim() || plainText(k.first) || "New idea")} /> })
+        out.push({ key: "tree:" + t.id, kind: "tree", id: t.id, name: t.title?.trim() || "Name this pile", no: 0, updated: latest, href: `/braindump?tree=${t.id}`, thumb: <TreeThumb name={t.title?.trim() || "Name this pile"} color={t.color} ideas={kids.map(k => k.title?.trim() || plainText(k.first) || "New idea")} /> })
       }
       const saved: string[] = Array.isArray(prof.data?.shelf) ? prof.data.shelf.filter((k: unknown) => typeof k === "string") : []
       setOrder(saved)
@@ -253,7 +253,7 @@ export default function ShelfPage() {
         ) : total === 0 ? (
           <div className="sh-empty">
             <b>Your shelf is waiting</b>
-            Every board, analysis, report and tree you make lands here, ready to put in your order.
+            Every board, analysis, report and pile you make lands here, ready to put in your order.
             <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 20, flexWrap: "wrap" }}>
               <button className="sh-btn pri" onClick={() => navigate("/board")}>Make a board</button>
               <button className="sh-btn" onClick={() => navigate("/report")}>Start a report</button>

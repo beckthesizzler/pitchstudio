@@ -41,6 +41,7 @@ const AnalysisPage = lazy(() => import("./pages/Analysis")) // only downloaded w
 const ReportPage = lazy(() => import("./pages/Report")) // only downloaded when someone opens Match Report
 const BrainDumpPage = lazy(() => import("./pages/BrainDump")) // only downloaded when someone opens Brain Dump
 const ShelfPage = lazy(() => import("./pages/Shelf")) // only downloaded when someone opens their shelf
+const PublicCardPage = lazy(() => import("./pages/PublicCard")) // a creator's public card, open to anyone
 import Tour, { TOUR_KEY } from "./Tour"
 
 /* ─────────────────────────── Types ─────────────────────────── */
@@ -4714,7 +4715,7 @@ function TacticsBoard() {
                   { label: "Redo", icon: <RotateCw size={13} />, run: redo, narrow: true },
                   ...(authUser ? [
                     { label: "New board", icon: <Plus size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/board") } },
-                    { label: "Braindump", icon: <Pencil size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/braindump") } },
+                    { label: "Dump & Arrange", icon: <Pencil size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/braindump") } },
                     { label: "Creator profile", icon: <Settings size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/profile") } },
                   ] : []),
                   { label: theme === "night" ? "Day mode" : "Night mode", icon: theme === "night" ? <Sun size={13} /> : <Moon size={13} />, run: toggleTheme },
@@ -7538,6 +7539,7 @@ export default function Root() {
           <Route path="/reset" element={<AuthPage mode="reset" />} />
           <Route path="/goodbye" element={<GoodbyePage />} />
           <Route path="/profile" element={authUser ? <ProfilePage /> : <Navigate to="/" replace />} />
+          <Route path="/c/:handle" element={<Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><PublicCardPage /></Suspense>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

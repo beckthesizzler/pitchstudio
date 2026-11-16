@@ -13,10 +13,18 @@ export type Brand = {
   hair: boolean       // the Spiky punk hair
   madeWith: boolean   // sign exports with "PITCHSTUDIO" as well as your handle
   logo: string | null // public address of the uploaded logo in the brand-logos bucket
+  photo: string | null // public address of your photo (same bucket), which fills the card's frame
+  photoPos: PhotoPos  // how the photo is cropped in the frame
+  style: CardStyle    // foil, matte, sticker or paper
 }
+/** x and y: where the photo sits in the frame (0 to 1, 0.5 centred); zoom: 1 to 3; ar: the photo's width over its height */
+export type PhotoPos = { x: number; y: number; zoom: number; ar: number }
+export type CardStyle = "foil" | "matte" | "sticker" | "paper"
+export const CARD_STYLES: { id: CardStyle; name: string }[] = [{ id: "foil", name: "Foil" }, { id: "matte", name: "Matte" }, { id: "sticker", name: "Sticker" }, { id: "paper", name: "Paper" }]
+export const DEFAULT_POS: PhotoPos = { x: 0.5, y: 0.5, zoom: 1, ar: 1 }
 
 /** The card everyone starts with: charcoal, a ball crest, a studio-green face. */
-export const DEFAULT_BRAND: Brand = { color: "#2b2d33", crest: "ball", title: "The Creator", motto: "", skin: PS_VOLT, hair: true, madeWith: true, logo: null }
+export const DEFAULT_BRAND: Brand = { color: "#2b2d33", crest: "ball", title: "The Creator", motto: "", skin: PS_VOLT, hair: true, madeWith: true, logo: null, photo: null, photoPos: DEFAULT_POS, style: "foil" }
 
 export const COLOURS = ["#e53935", "#3b6cf0", "#2b2d33", "#f5b70a", "#8b5cf6", "#10b981", "#f472b6", "#f2f0ea"]
 export const SKINS = [PS_VOLT, "#f1c9a5", "#e0ac7e", "#c68642", "#8d5524", "#5c3a21", "#3a2416"]
@@ -40,7 +48,10 @@ const clean = (v: unknown, max: number) => (typeof v === "string" ? v.split("").
 export function readBrand(raw: unknown): Brand {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
   const d = DEFAULT_BRAND
-  const logo = typeof r.logo === "string" && r.logo.startsWith(LOGO_PREFIX) && r.logo.length < 300 && /^[A-Za-z0-9:/._%~-]+$/.test(r.logo) ? r.logo : null
+  const ours = (v: unknown) => (typeof v === "string" && v.startsWith(LOGO_PREFIX) && v.length < 300 && /^[A-Za-z0-9:/._%~-]+$/.test(v) ? v : null)
+  const logo = ours(r.logo), photo = ours(r.photo)
+  const pp = (r.photoPos && typeof r.photoPos === "object" ? r.photoPos : {}) as Record<string, unknown>
+  const n = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d)
   return {
     color: typeof r.color === "string" && HEX.test(r.color) ? r.color.toLowerCase() : d.color,
     crest: CREST_IDS.includes(r.crest as CrestId) ? (r.crest as CrestId) : d.crest,
@@ -49,7 +60,9 @@ export function readBrand(raw: unknown): Brand {
     skin: typeof r.skin === "string" && HEX.test(r.skin) ? r.skin.toLowerCase() : d.skin,
     hair: typeof r.hair === "boolean" ? r.hair : d.hair,
     madeWith: typeof r.madeWith === "boolean" ? r.madeWith : d.madeWith,
-    logo,
+    logo, photo,
+    photoPos: { x: n(pp.x, 0, 1, 0.5), y: n(pp.y, 0, 1, 0.5), zoom: n(pp.zoom, 1, 3, 1), ar: n(pp.ar, 0.2, 5, 1) },
+    style: CARD_STYLES.some(x => x.id === r.style) ? (r.style as CardStyle) : "foil",
   }
 }
 
@@ -90,6 +103,24 @@ export async function logoToDataUrl(url: string): Promise<string | null> {
     const blob = await res.blob()
     return await new Promise<string | null>(resolve => { const fr = new FileReader(); fr.onload = () => resolve(typeof fr.result === "string" ? fr.result : null); fr.onerror = () => resolve(null); fr.readAsDataURL(blob) })
   } catch { return null }
+}
+
+/** Shrinks a photo to at most 900px on its long side, as a JPEG under 1 MB (the bucket's limit). ar: its width over its height. */
+export async function shrinkPhoto(file: File): Promise<{ blob: Blob; ar: number }> {
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise<HTMLImageElement>((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error("not an image")); i.src = url })
+    const w0 = img.naturalWidth, h0 = img.naturalHeight
+    if (!w0 || !h0) throw new Error("empty image")
+    const k = Math.min(1, 900 / Math.max(w0, h0)), w = Math.round(w0 * k), h = Math.round(h0 * k)
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h
+    cv.getContext("2d")!.drawImage(img, 0, 0, w, h)
+    const at = (q: number) => new Promise<Blob>((ok, no) => cv.toBlob(b => (b ? ok(b) : no(new Error("could not make the picture"))), "image/jpeg", q))
+    let blob = await at(0.82)
+    if (blob.size > 1024 * 1024) blob = await at(0.7)
+    if (blob.size > 1024 * 1024) throw new Error("too big")
+    return { blob, ar: w / h }
+  } finally { URL.revokeObjectURL(url) }
 }
 
 /** Crops a picked image to a square and shrinks it to 256 by 256 (a small png). */
