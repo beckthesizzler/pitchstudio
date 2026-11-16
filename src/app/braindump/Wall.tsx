@@ -33,9 +33,9 @@ export function layoutColumn(roots: Note[], kids: (id: string) => Note[], seen: 
   return { rows, height: Math.max(0, y - GAP) }
 }
 
-/** Every thread in a pile grows its plant, from seed to tree */
-const STAGES = [{ min: 6, id: "tree", label: "Tree" }, { min: 3, id: "sapling", label: "Sapling" }, { min: 1, id: "sprout", label: "Sprout" }, { min: 0, id: "seed", label: "Seed" }] as const
-export const plantStage = (threads: number) => STAGES.find(s => threads >= s.min) ?? STAGES[STAGES.length - 1]
+/** Every tie in a pile grows its plant: 0 seed, 1 sprout, 2 or 3 sapling, 4 or more tree. rank: higher is bigger. */
+const STAGES = [{ min: 4, id: "tree", label: "Tree", rank: 3 }, { min: 2, id: "sapling", label: "Sapling", rank: 2 }, { min: 1, id: "sprout", label: "Sprout", rank: 1 }, { min: 0, id: "seed", label: "Seed", rank: 0 }] as const
+export const plantStage = (ties: number) => STAGES.find(s => ties >= s.min) ?? STAGES[STAGES.length - 1]
 
 /** A red thread from one pin to another, hanging a little slack */
 function threadPath(a: { x: number; y: number }, b: { x: number; y: number }) {

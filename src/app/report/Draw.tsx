@@ -5,12 +5,16 @@ import { cardColours, inkFor, lum, shade, type Brand } from "../brand/brand"
 import {
   MODES, SIZES, ctrlFor, markUnit, pitchBox, projector, type Block, type Mark, type Pass, type PhotoBlock, type PitchBlock, type Player,
   type KitPat, type Pt, type Report, type StatsBlock, type StoryBlock, type TextBlock, type Zone,
+  type SeriesBlock, type TimelineBlock, type IdeaBlock, type DialBlock, type CardsBlock, type LinesBlock, type SpineBlock, type ShapeBlock,
 } from "./model"
 
 /* How a report is drawn: one svg, the same in the editor, in the export and in the list of reports.
    k is the report's width over 1600, so lines and type keep their weight at every format. */
 
 const COND = "'Barlow Condensed', 'Inter', sans-serif"
+const ANTON = "'Anton', 'Barlow Condensed', sans-serif"
+const HANDF = "'Kalam', 'Comic Sans MS', cursive"
+const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const SANS = "'Inter', sans-serif"
 const NL = String.fromCharCode(10)
 const clean = (s: string) => s.split("").filter(ch => /[a-zA-Z0-9]/.test(ch)).join("")
@@ -58,14 +62,21 @@ export function useFontsReady() {
 }
 
 /* ── the palette: the mode's colours and the story colour ── */
-export type Pal = (typeof MODES)["night"] & { story: string; storyInk: string; cased: boolean; bright: boolean }
-export function palette(r: Report, brand: Brand): Pal {
+export type Pal = (typeof MODES)["night"] & { story: string; storyInk: string; cased: boolean; bright: boolean
+  pa: string; pb: string; pc: string; roles: Map<string, string>; acts: { ours: string; theirs: string } | null; issue: string; handle: string }
+export function palette(r: Report, brand: Brand, issue = "", handle = ""): Pal {
+  const base = palette0(r, brand), pal = r.palette
+  const story = pal ? pal.a : base.story
+  return { ...base, story, storyInk: inkFor(story), cased: r.mode === "bright" && lum(story) > 0.45,
+    pa: pal?.a ?? story, pb: pal?.b ?? base.muted, pc: pal?.c ?? "#e9b949", roles: new Map((r.roles ?? []).map(x => [x.id, x.color])), acts: r.actions ?? null, issue, handle }
+}
+function palette0(r: Report, brand: Brand) {
   // your own colour tells the story; on the bright page a pale one (like studio lime), yours or picked, gives way to the editorial crimson,
   // which reads on paper: no highlighter band behind the words, ever
   const pick = r.story ?? cardColours(brand).disc, m = MODES[r.mode], story = r.mode === "bright" && lum(pick) > 0.45 ? "#b3123f" : pick
   // a page colour that fights its mode (a dark paper in Bright, say) is ignored, so the words always read
   const bg = r.paper && (r.mode === "bright" ? lum(r.paper) > 0.6 : lum(r.paper) < 0.2) ? r.paper : m.bg
-  return { ...m, bg, story, storyInk: inkFor(story), cased: r.mode === "bright" && lum(story) > 0.45, bright: r.mode === "bright" }
+  return { ...m, bg, story, bright: r.mode === "bright" }
 }
 /** A kit as a circle at (x, y): the main colour, with the second laid over it in the kit's pattern */
 export function KitFill({ id, x = 0, y = 0, r, pat, c1, c2 }: { id: string; x?: number; y?: number; r: number; pat: KitPat; c1: string; c2: string }) {
@@ -87,7 +98,9 @@ export function KitFill({ id, x = 0, y = 0, r, pat, c1, c2 }: { id: string; x?: 
     </g>
   )
 }
-const colourOf = (c: string, p: Pal) => (c === "ink" ? p.ink : c === "story" ? p.story : c === "muted" ? p.muted : c)
+const colourOf = (c: string, p: Pal) => (c === "ink" ? p.ink : c === "story" ? p.story : c === "muted" ? p.muted : c === "a" ? p.pa : c === "b" ? p.pb : c === "c" ? p.pc : c)
+/** The series line's words: @HANDLE becomes your handle, {n} the issue number */
+export const seriesText = (t: string, p: Pick<Pal, "issue" | "handle">) => t.replace(/@HANDLE/g, p.handle ? "@" + p.handle : "@YOU").replace(/[{]n[}]/g, p.issue || "—").toUpperCase()
 
 /* ── text ── */
 export const TEXT_STYLES = {
@@ -95,13 +108,29 @@ export const TEXT_STYLES = {
   text: { weight: 400, family: "Inter", css: SANS, lh: 1.42, upper: false, sp: 0 },
   label: { weight: 600, family: "Inter", css: SANS, lh: 1.32, upper: true, sp: 0.14 },
 }
-export function textLines(t: TextBlock) {
+/** A text block's look: its style, written by hand (Kalam) when its font says so */
+export function styleOf(t: TextBlock) {
   const st = TEXT_STYLES[t.style]
-  return wrap(st.upper ? t.text.toUpperCase() : t.text, `${st.weight} ${t.size}px "${st.family}"`, t.w, t.size * st.sp)
+  return t.font === "hand" ? { weight: t.style === "text" ? 400 : 700, family: "Kalam", css: HANDF, lh: t.style === "title" ? 1.05 : 1.3, upper: st.upper, sp: t.style === "label" ? 0.06 : 0 } : st
 }
-export const textHeight = (t: TextBlock) => Math.max(1, textLines(t).length) * t.size * TEXT_STYLES[t.style].lh
-function TextView({ t, p }: { t: TextBlock; p: Pal }) {
-  const st = TEXT_STYLES[t.style], lines = textLines(t), lh = t.size * st.lh, font = `${st.weight} ${t.size}px "${st.family}"`
+/** The size a fitted line is drawn at: as set, or smaller until the line fits the width */
+export function fitSize(t: TextBlock) {
+  if (!t.fit) return t.size
+  const st = styleOf(t), line = (st.upper ? t.text.toUpperCase() : t.text).split(NL).join(" ")
+  const at = (sz: number) => textWidth(line, `${st.weight} ${sz}px "${st.family}"`, sz * st.sp)
+  const w = at(t.size)
+  return w <= t.w || w <= 0 ? t.size : Math.max(8, Math.floor(t.size * (t.w / w) * 100) / 100)
+}
+export function textLines(t: TextBlock) {
+  const st = styleOf(t), size = fitSize(t), words = st.upper ? t.text.toUpperCase() : t.text
+  if (t.fit) return [words.split(NL).join(" ")]
+  return wrap(words, `${st.weight} ${size}px "${st.family}"`, t.w, size * st.sp)
+}
+const ruleH = (t: TextBlock) => (t.under === "thin" ? 12 + 1 : t.under === "thick" ? 12 + 4 : 0) * (t.size / Math.max(1, t.size))
+export const textHeight = (t: TextBlock) => Math.max(1, textLines(t).length) * fitSize(t) * styleOf(t).lh + ruleH(t)
+function TextView({ t: t0, p }: { t: TextBlock; p: Pal }) {
+  const t = { ...t0, size: fitSize(t0) }
+  const st = styleOf(t), lines = textLines(t0), lh = t.size * st.lh, font = `${st.weight} ${t.size}px "${st.family}"`
   const ax = t.align === "center" ? t.x + t.w / 2 : t.align === "right" ? t.x + t.w : t.x
   // a plate: a bar of colour hugging each line. Words too dark for a dark plate turn white.
   const plate = t.plate ? (t.plate === "dark" ? p.plate : t.plate === "story" ? p.story : t.plate) : null
@@ -109,7 +138,7 @@ function TextView({ t, p }: { t: TextBlock; p: Pal }) {
   if (plate && lum(fill) < 0.18 && lum(plate) < 0.18) fill = "#ffffff"
   // the story colour on the bright page: the words in ink on a band of the colour, like a highlighter
   const marker = !plate && t.color === "story" && p.cased
-  const h = textHeight(t), cx = t.x + t.w / 2, cy = t.y + h / 2, title = t.style === "title"
+  const h = textHeight(t0), cx = t.x + t.w / 2, cy = t.y + h / 2, title = t.style === "title", ruleY = t.y + lines.length * lh + 12
   const spans = (o: { top: number; bottom: number; padX: number }, col: string, tag: string) => lines.map((l, i) => {
     if (!l.trim()) return null
     const lw = textWidth(l, font, t.size * st.sp), x0 = t.align === "center" ? ax - lw / 2 : t.align === "right" ? ax - lw : ax, base = t.y + t.size * 0.88 + i * lh
@@ -127,6 +156,8 @@ function TextView({ t, p }: { t: TextBlock; p: Pal }) {
         style={{ fontFamily: st.css, letterSpacing: t.size * st.sp }}>
         {lines.map((l, i) => <tspan key={i} x={ax} dy={i === 0 ? t.size * 0.88 : lh}>{l || " "}</tspan>)}
       </text>
+      {t.under === "thin" && <rect x={t.x} y={ruleY} width={t.w} height={1} fill={p.ink} fillOpacity={0.2} />}
+      {t.under === "thick" && <rect x={t.x} y={ruleY} width={t.w} height={4} fill={p.ink} />}
       <rect x={t.x} y={t.y} width={t.w} height={h} fill="transparent" />
     </g>
   )
@@ -147,11 +178,11 @@ export function passGround(m: Pass) {
 }
 
 function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: number; brand: Brand; logo: string | null; scope: string }) {
-  const pr = projector(b), box = pitchBox(b), L = b.view === "full" ? 105 : 52.5, std = b.look === "stadium"
+  const pr = projector(b), box = pitchBox(b), L = b.view === "full" ? 105 : 52.5, std = b.look === "stadium", turf = b.look === "grass"
   const pu = markUnit(b) // the size of one mark unit here
   const M = (X: number, Y: number): Pt => { const q = pr.fwd(X / 68, Y / L); return [q[0], q[1]] }
   const ring = (cx: number, cy: number, r: number, a0 = 0, a1 = Math.PI * 2, n = 72): Pt[] => Array.from({ length: n + 1 }, (_, i) => { const a = a0 + (a1 - a0) * i / n; return M(cx + r * Math.cos(a), cy + r * Math.sin(a)) })
-  const lineCol = std ? "rgba(255,255,255,0.85)" : p.lines, lw = (std ? 2.6 : 2.4) * k
+  const lineCol = std ? "rgba(255,255,255,0.85)" : turf ? "rgba(255,255,255,0.75)" : p.lines, lw = (std ? 2.6 : 2.4) * k
   const end = (gy: number, dir: 1 | -1) => {
     const y = (m: number) => gy + dir * m, a = Math.atan2(5.5, Math.sqrt(9.15 * 9.15 - 5.5 * 5.5))
     return <g>
@@ -190,6 +221,15 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
       <ellipse cx={far[0]} cy={far[1] + (near[1] - far[1]) * 0.4} rx={b.w * 0.55} ry={(near[1] - far[1]) * 0.7} fill={`url(#${gid}l)`} />
     </g>
   })() : null
+  // grass: mowing stripes in two greens, a little beyond the lines
+  const lawn = turf ? (() => {
+    const bands = Math.round(L / 5.25), out: ReactNode[] = []
+    for (let i = 0; i < bands; i++) {
+      const y0 = i === 0 ? -3 : i * L / bands, y1 = i === bands - 1 ? L + 3 : (i + 1) * L / bands
+      out.push(<path key={i} d={pathOf([M(-3, y0), M(71, y0), M(71, y1), M(-3, y1)], true)} fill={i % 2 ? "#38723F" : "#3E7C46"} />)
+    }
+    return <g>{out}</g>
+  })() : null
   const fade = std ? (() => { const near = pr.fwd(0.5, 1), far = pr.fwd(0.5, 0), d = near[1] - far[1]; return (
     <g style={{ pointerEvents: "none" }}><defs><linearGradient id={gid + "f"} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={p.bg} stopOpacity={0} /><stop offset="0.16" stopColor={p.bg} stopOpacity={0.75} /><stop offset="0.3" stopColor={p.bg} stopOpacity={0.95} /></linearGradient></defs>
       <rect x={b.x - b.w} y={near[1] - d * 0.18} width={b.w * 3} height={d * 0.18 + 1400} fill={`url(#${gid}f)`} /></g>) })() : null
@@ -197,8 +237,9 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
   const P = (q: Pt) => pr.fwd(q[0], q[1])
   const sz = (s: number) => pu * (std ? 0.45 + 0.75 * s : 1) // marks shrink with distance in the stadium
   const t0 = b.teams[0].color ?? p.story
-  const teamCol = (pl: Player) => (pl.team === 0 ? t0 : b.teams[1].color ?? (pl.hi ? p.ink : p.ring))
-  const halo = p.bg
+  const roleCol = (pl: Player) => (pl.role ? p.roles.get(pl.role) ?? null : null)
+  const teamCol = (pl: Player) => roleCol(pl) ?? (pl.team === 0 ? t0 : b.teams[1].color ?? (pl.hi ? p.ink : p.ring))
+  const halo = turf ? "rgba(0,0,0,0.42)" : p.bg, ground = turf ? "#2f6538" : p.bg
 
   const pass = (m: Pass) => {
     const ground = passGround(m)
@@ -210,12 +251,13 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
     const lift = std && m.air ? span * 0.42 : 0
     const pts: Pt[] = []
     for (let i = 0; i <= 40; i++) { const t = t0x + (t1x - t0x) * i / 40, q = P(ground(t)); pts.push([q[0], q[1] - lift * 4 * t * (1 - t)]) }
-    const col = m.hi ? p.story : p.ctx, w = [0, 2.6, 4.8, 8][m.weight] * u
+    const act = p.acts && (m.team === 0 || m.team === 1) ? (m.team === 0 ? p.acts.ours : p.acts.theirs) : null
+    const col = act ?? (m.hi ? p.story : turf ? "rgba(255,255,255,0.7)" : p.ctx), w = [0, 2.6, 4.8, 8][m.weight] * u
     const d = pathOf(pts), tip = pts[pts.length - 1], back = pts[Math.max(0, pts.length - 5)]
     const tail = pts[0], tail2 = pts[4]
     const len = 12 * u + w * 1.7, wid = 10 * u + w * 1.5
     const dash = m.run ? `${12 * u} ${9 * u}` : undefined
-    const casing = m.hi && p.cased && !std
+    const casing = m.hi && p.cased && !std && !act && !turf
     return (
       <g key={m.id} data-mid={m.id}>
         {lift > 0 && <path d={pathOf(Array.from({ length: 21 }, (_, i) => { const q = P(ground(t0x + (t1x - t0x) * i / 20)); return [q[0], q[1]] as Pt }))} fill="none" stroke="#000" strokeOpacity={0.3} strokeWidth={Math.max(1.5, w * 0.8)} strokeDasharray={`${3 * u} ${7 * u}`} strokeLinecap="round" />}
@@ -246,6 +288,7 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
   }
   const player = (m: Player) => {
     const [x, y, s] = P(m.p), u = sz(s), r = 17 * u
+    if (roleCol(m) && !std) m = { ...m, hi: true } // a player with a role is drawn in its colour
     // a pale colour as a quiet outline on the bright page would vanish: it is drawn deeper there
     const col = !m.hi && p.bright && lum(teamCol(m)) > 0.45 ? shade(teamCol(m), -0.5) : teamCol(m)
     const fs = (m.hi ? 18 : 15.5) * u
@@ -267,7 +310,9 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
     }
     const off = r + (kitted && m.hi ? 10 : 6) * u
     const pos = m.side === "below" ? [x, y + off + fs * 0.8, "middle"] : m.side === "above" ? [x, y - off, "middle"] : m.side === "left" ? [x - off, y + fs * 0.35, "end"] : [x + off, y + fs * 0.35, "start"]
-    const edge = p.bright ? (lum(col) > 0.45 ? p.ink : p.bg) : p.bg
+    const edge = turf ? "#ffffff" : p.bright ? (lum(col) > 0.45 ? p.ink : p.bg) : p.bg
+    const tag = m.tag ? m.tag.toUpperCase() : "", tfs = 11.5 * u, tw = tag ? textWidth(tag, `700 ${tfs}px "Inter"`, tfs * 0.08) + 14 * u : 0
+    const nameBottom = m.side === "below" ? (pos[1] as number) + fs * 0.35 : y + off + fs * 0.4
     return (
       <g key={m.id} data-mid={m.id}>
         {kitted ? <>
@@ -279,11 +324,16 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
             stroke={lum(T.num ?? inkFor(col)) > 0.5 ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.8)"} strokeWidth={3 * u} paintOrder="stroke" strokeLinejoin="round" style={{ fontFamily: COND }}>{m.num}</text>}
         </> : <>
           {m.hi ? <circle cx={x} cy={y} r={r} fill={col} stroke={edge} strokeWidth={(p.bright && lum(col) > 0.45 ? 2 : 3) * u} />
-            : <circle cx={x} cy={y} r={r - 1.6 * u} fill={p.bg} stroke={col} strokeOpacity={m.team === 0 ? 0.6 : 1} strokeWidth={3.2 * u} />}
+            : <circle cx={x} cy={y} r={r - 1.6 * u} fill={ground} stroke={col} strokeOpacity={m.team === 0 ? 0.6 : 1} strokeWidth={3.2 * u} />}
           {m.num && <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fill={m.hi ? inkFor(col) : col} fillOpacity={m.hi || m.team === 1 ? 1 : 0.8} fontSize={15 * u} fontWeight={700} style={{ fontFamily: COND }}>{m.num}</text>}
         </>}
-        {m.name && <text x={pos[0] as number} y={pos[1] as number} textAnchor={pos[2] as "middle"} fill={m.hi ? p.ink : p.muted} fontSize={fs} fontWeight={m.hi ? 700 : 600}
+        {m.ring && <circle cx={x} cy={y} r={r + 6 * u} fill="none" stroke={p.pc} strokeWidth={4 * u} />}
+        {m.name && <text x={pos[0] as number} y={pos[1] as number} textAnchor={pos[2] as "middle"} fill={turf ? "#ffffff" : m.hi ? p.ink : p.muted} fontSize={fs} fontWeight={m.hi ? 700 : 600}
           stroke={halo} strokeWidth={5 * u} paintOrder="stroke" strokeLinejoin="round" style={{ fontFamily: SANS }}>{m.name}</text>}
+        {tag && <g>
+          <rect x={x - tw / 2} y={nameBottom + 4 * u} width={tw} height={tfs * 1.55} rx={tfs * 0.78} fill={p.pc} />
+          <text x={x} y={nameBottom + 4 * u + tfs * 0.78} textAnchor="middle" dominantBaseline="central" fill={inkFor(p.pc)} fontSize={tfs} fontWeight={700} style={{ fontFamily: SANS, letterSpacing: tfs * 0.08 }}>{tag}</text>
+        </g>}
       </g>
     )
   }
@@ -333,7 +383,8 @@ function PitchView({ b, p, k, brand, logo, scope }: { b: PitchBlock; p: Pal; k: 
     <g data-bid={b.id}>
       <rect x={b.x} y={b.y} width={box.w} height={box.h} fill="transparent" />
       {grass}
-      {mk > 0 && <g opacity={p.bright ? 0.035 : 0.045}>
+      {lawn}
+      {mk > 0 && !turf && <g opacity={p.bright ? 0.035 : 0.045}>
         {logo ? <image href={logo} x={mcx - mk / 2} y={mcy - mk / 2} width={mk} height={mk} preserveAspectRatio="xMidYMid meet" />
           : <g transform={`translate(${mcx - mk / 2},${mcy - mk / 2}) scale(${mk / 24})`}><Glyph id={brand.crest} color={p.ink} /></g>}
       </g>}
@@ -456,7 +507,7 @@ function PhotoView({ b, p, k, src, editing, scope }: { b: PhotoBlock; p: Pal; k:
         </filter>}
       </defs>
       {!cut && (bd > 0 || b.shadow) && b.edge === "hard" && shape(bd, { fill: b.border === "story" ? p.story : b.border === "white" ? "#ffffff" : p.bg, filter: b.shadow ? `url(#${uid}s)` : undefined })}
-      <g filter={cut && (bd > 0 || b.shadow) ? `url(#${uid}f)` : !cut && b.shadow && b.edge !== "hard" ? `url(#${uid}s)` : undefined}>
+      <g opacity={b.opacity ?? 1} filter={cut && (bd > 0 || b.shadow) ? `url(#${uid}f)` : !cut && b.shadow && b.edge !== "hard" ? `url(#${uid}s)` : undefined}>
         <g clipPath={`url(#${uid}c)`} mask={b.edge !== "hard" ? `url(#${uid}m)` : undefined}>
           <image href={src} x={b.x + b.ix} y={b.y + b.iy} width={b.iw} height={ih} preserveAspectRatio="none"
             transform={b.flip ? `translate(${2 * (b.x + b.ix) + b.iw} 0) scale(-1 1)` : undefined} />
@@ -467,6 +518,204 @@ function PhotoView({ b, p, k, src, editing, scope }: { b: PhotoBlock; p: Pal; k:
   )
 }
 
+
+/* ── the series line ── */
+export const seriesHeight = (b: SeriesBlock) => b.size * 1.2
+function SeriesView({ b, p }: { b: SeriesBlock; p: Pal }) {
+  return <g data-bid={b.id}>
+    <text x={b.x} y={b.y + b.size * 0.92} fill={colourOf(b.color, p)} fontSize={b.size} fontWeight={700} style={{ fontFamily: SANS, letterSpacing: b.size * 0.18 }}>{seriesText(b.text, p)}</text>
+    <rect x={b.x} y={b.y} width={b.w} height={seriesHeight(b)} fill="transparent" />
+  </g>
+}
+
+/* ── the game state: 0' to 90' (or 120'), half-time, and what changed the game ── */
+export const timelineHeight = (b: TimelineBlock) => 150 * b.s
+export const timelineEnd = (b: TimelineBlock) => (b.events.some(e => e.min > 90) ? 120 : 90)
+function TimelineView({ b, p }: { b: TimelineBlock; p: Pal }) {
+  const s = b.s, end = timelineEnd(b), ly = b.y + 82 * s, X = (m: number) => b.x + (Math.min(end, Math.max(0, m)) / end) * b.w
+  const ev = b.events.slice().sort((a, c) => a.min - c.min), lfs = 17 * s
+  const col = (k: string) => (k === "goal" ? p.pa : k === "red" ? "#d7261e" : null)
+  return <g data-bid={b.id}>
+    <rect x={b.x} y={b.y} width={b.w} height={timelineHeight(b)} fill="transparent" />
+    <text x={b.x} y={b.y + 14 * s} fill={p.muted} fontSize={14 * s} fontWeight={600} style={{ fontFamily: SANS, letterSpacing: 14 * s * 0.16 }}>GAME STATE</text>
+    <rect x={b.x} y={ly - 1.5 * s} width={b.w} height={3 * s} fill={p.ink} fillOpacity={0.85} />
+    <text x={b.x} y={ly + 34 * s} fill={p.muted} fontSize={13 * s} fontWeight={600} style={{ fontFamily: MONO }}>0'</text>
+    <text x={b.x + b.w} y={ly + 34 * s} textAnchor="end" fill={p.muted} fontSize={13 * s} fontWeight={600} style={{ fontFamily: MONO }}>{end}'</text>
+    <g transform={`translate(${X(45)} ${ly}) rotate(45)`}><rect x={-7 * s} y={-7 * s} width={14 * s} height={14 * s} fill={p.bg} stroke={p.ink} strokeWidth={2.4 * s} /></g>
+    {!ev.some(e => e.min === 45 && e.kind !== "goal") && <text x={X(45)} y={ly + 34 * s} textAnchor="middle" fill={p.muted} fontSize={13 * s} fontWeight={700} style={{ fontFamily: MONO }}>HT</text>}
+    {(() => { const last = { up: -1e9, down: -1e9 }; return ev.map(e => {
+      const x = X(e.min), c = col(e.kind), ht = e.min === 45 && e.kind !== "goal", label = `${ht ? "HT" : e.min + "'"} ${e.label}`.trim()
+      const lw = textWidth(label, `600 ${lfs}px "Inter"`), lx = Math.min(b.x + b.w - lw / 2, Math.max(b.x + lw / 2, x))
+      let up = e.kind === "goal" || e.kind === "red"
+      if (lx - lw / 2 < (up ? last.up : last.down) + 14 * s) up = !up
+      if (up) last.up = lx + lw / 2; else last.down = lx + lw / 2
+      return { e, x, c, label, lx, up }
+    }) })().map(({ e, x, c, label, lx, up }, i) => {
+      return <g key={i}>
+        <line x1={x} y1={ly} x2={x} y2={up ? ly - 22 * s : ly + 22 * s} stroke={p.ink} strokeOpacity={0.35} strokeWidth={1.4 * s} />
+        {e.min === 45 && e.kind !== "goal" ? <g transform={`translate(${x} ${ly}) rotate(45)`}><rect x={-8 * s} y={-8 * s} width={16 * s} height={16 * s} fill={c ?? p.bg} stroke={c ?? p.ink} strokeWidth={2.4 * s} /></g>
+          : <circle cx={x} cy={ly} r={9 * s} fill={c ?? p.bg} stroke={c ?? p.ink} strokeWidth={2.4 * s} />}
+        <text x={lx} y={up ? ly - 28 * s : ly + 30 * s + lfs * 0.8} textAnchor="middle" fill={p.ink} fontSize={lfs} fontWeight={600} style={{ fontFamily: SANS }}>{label}</text>
+      </g>
+    })}
+  </g>
+}
+
+/* ── the idea: the game model in words, the key situations and the Point of Difference ── */
+function ideaLayout(b: IdeaBlock) {
+  const s = b.s, bfs = 19 * s, tfs = 18 * s, rows: { kind: "sec" | "sit" | "pod" | "cap"; y: number; lines: string[]; i: number }[] = []
+  let y = b.y + (b.title ? 44 * s : 0)
+  b.sections.forEach((q, i) => {
+    const lines = wrap(q.body, `400 ${bfs}px "Inter"`, b.w)
+    rows.push({ kind: "sec", y, lines, i }); y += 26 * s + lines.length * bfs * 1.4 + 18 * s
+  })
+  if (b.situations.length) { rows.push({ kind: "cap", y, lines: ["KEY SITUATIONS"], i: 0 }); y += 34 * s }
+  b.situations.forEach((q, i) => {
+    const lines = wrap(q.text, `400 ${tfs}px "Inter"`, b.w - 40 * s)
+    rows.push({ kind: "sit", y, lines, i }); y += 24 * s + lines.length * tfs * 1.38 + 14 * s
+  })
+  if (b.pod || b.podLine) {
+    const lines = wrap(b.podLine, `400 ${tfs}px "Inter"`, b.w)
+    rows.push({ kind: "pod", y, lines, i: 0 }); y += 34 * s + 34 * s + lines.length * tfs * 1.38
+  }
+  return { rows, h: Math.max(40 * s, y - b.y), bfs, tfs }
+}
+export const ideaHeight = (b: IdeaBlock) => ideaLayout(b).h
+function IdeaView({ b, p }: { b: IdeaBlock; p: Pal }) {
+  const s = b.s, L = ideaLayout(b), cap = (y: number, t: string, c = p.muted) => <text x={b.x} y={y + 14 * s} fill={c} fontSize={14 * s} fontWeight={700} style={{ fontFamily: SANS, letterSpacing: 14 * s * 0.16 }}>{t}</text>
+  let pinNo = 0
+  return <g data-bid={b.id}>
+    <rect x={b.x} y={b.y} width={b.w} height={L.h} fill="transparent" />
+    {b.title && <>{cap(b.y, b.title.toUpperCase())}<rect x={b.x} y={b.y + 24 * s} width={36 * s} height={4 * s} fill={p.pa} /></>}
+    {L.rows.map(r => {
+      if (r.kind === "cap") return <g key="cap">{cap(r.y, "KEY SITUATIONS")}</g>
+      if (r.kind === "sec") { const q = b.sections[r.i]; return <g key={"s" + r.i}>
+        {cap(r.y, q.heading.toUpperCase(), p.pa)}
+        <text x={b.x} y={r.y + 26 * s} fill={p.ink} fontSize={L.bfs} style={{ fontFamily: SANS }}>{r.lines.map((l, j) => <tspan key={j} x={b.x} dy={j === 0 ? L.bfs * 1.05 : L.bfs * 1.4}>{l}</tspan>)}</text>
+      </g> }
+      if (r.kind === "sit") {
+        const q = b.situations[r.i], n = q.pin ? ++pinNo : 0, tx = b.x + 40 * s
+        return <g key={"t" + r.i}>
+          {n > 0 && <><circle cx={b.x + 14 * s} cy={r.y + 12 * s} r={14 * s} fill={p.ink} /><text x={b.x + 14 * s} y={r.y + 12.5 * s} textAnchor="middle" dominantBaseline="central" fill={p.bg} fontSize={16 * s} fontWeight={800} style={{ fontFamily: COND }}>{n}</text></>}
+          <text x={tx} y={r.y + 17 * s} fill={p.pa} fontSize={15 * s} fontWeight={800} style={{ fontFamily: SANS, letterSpacing: 15 * s * 0.1 }}>{q.tag.toUpperCase()}</text>
+          <text x={tx} y={r.y + 24 * s} fill={p.ink} fontSize={L.tfs} style={{ fontFamily: SANS }}>{r.lines.map((l, j) => <tspan key={j} x={tx} dy={j === 0 ? L.tfs * 1.05 : L.tfs * 1.38}>{l}</tspan>)}</text>
+        </g>
+      }
+      const pw = b.pod ? textWidth(b.pod.toUpperCase(), `800 ${17 * s}px "Inter"`, 17 * s * 0.06) + 26 * s : 0
+      return <g key="pod">
+        {cap(r.y, "POINT OF DIFFERENCE")}
+        {b.pod && <><rect x={b.x} y={r.y + 30 * s} width={pw} height={30 * s} rx={15 * s} fill="none" stroke={p.pc} strokeWidth={3 * s} />
+          <text x={b.x + pw / 2} y={r.y + 45.5 * s} textAnchor="middle" dominantBaseline="central" fill={p.ink} fontSize={17 * s} fontWeight={800} style={{ fontFamily: SANS, letterSpacing: 17 * s * 0.06 }}>{b.pod.toUpperCase()}</text></>}
+        <text x={b.x} y={r.y + 68 * s} fill={p.ink} fontSize={L.tfs} style={{ fontFamily: SANS }}>{r.lines.map((l, j) => <tspan key={j} x={b.x} dy={j === 0 ? L.tfs * 1.05 : L.tfs * 1.38}>{l}</tspan>)}</text>
+      </g>
+    })}
+  </g>
+}
+
+/* ── the balance dial ── */
+export const dialScore = (v: number) => 10 - Math.abs(Math.round(v))
+export const dialTilt = (b: Pick<DialBlock, "value" | "left" | "right">) => (b.value > 0 ? `TILT · ${b.right}` : b.value < 0 ? `TILT · ${b.left}` : "BALANCED")
+const dialLines = (b: DialBlock) => (b.line ? wrap(b.line, `400 ${18 * b.s}px "Inter"`, b.w).slice(0, 2) : [])
+export const dialHeight = (b: DialBlock) => 206 * b.s + dialLines(b).length * 25 * b.s
+/** Where the needle sits across the dial's bar (0 to 1) */
+export const dialAt = (v: number) => 0.5 + Math.max(-10, Math.min(10, v)) * 0.05
+function DialView({ b, p, scope }: { b: DialBlock; p: Pal; scope: string }) {
+  const s = b.s, gid = "dl" + scope + clean(b.id), by = b.y + 128 * s, bh = 18 * s, nx = b.x + dialAt(b.value) * b.w
+  return <g data-bid={b.id}>
+    <rect x={b.x} y={b.y} width={b.w} height={dialHeight(b)} fill="transparent" />
+    <defs><linearGradient id={gid} x1="0" x2="1" y1="0" y2="0"><stop offset="0" stopColor={p.pa} /><stop offset="1" stopColor={p.pb} /></linearGradient></defs>
+    <text x={b.x} y={b.y + 14 * s} fill={p.muted} fontSize={14 * s} fontWeight={700} style={{ fontFamily: SANS, letterSpacing: 14 * s * 0.16 }}>BALANCE RATING</text>
+    <text x={b.x} y={b.y + 104 * s} fill={p.ink} fontSize={84 * s} style={{ fontFamily: ANTON }}>{dialScore(b.value)}<tspan fontSize={40 * s} fill={p.muted}>/10</tspan></text>
+    <rect x={b.x} y={by} width={b.w} height={bh} rx={bh / 2} fill={`url(#${gid})`} />
+    <rect x={b.x + b.w / 2 - 1 * s} y={by - 6 * s} width={2 * s} height={bh + 12 * s} fill={p.ink} fillOpacity={0.5} />
+    <g data-needle={b.id} style={{ cursor: "ew-resize" }}>
+      <rect x={nx - 4 * s} y={by - 10 * s} width={8 * s} height={bh + 20 * s} rx={4 * s} fill="#ffffff" stroke={p.ink} strokeWidth={2 * s} />
+      <rect x={nx - 18 * s} y={by - 18 * s} width={36 * s} height={bh + 36 * s} fill="transparent" />
+    </g>
+    <text x={b.x} y={by + bh + 30 * s} fill={p.muted} fontSize={13 * s} fontWeight={700} style={{ fontFamily: MONO }}>{b.left.toUpperCase()}</text>
+    <text x={b.x + b.w / 2} y={by + bh + 30 * s} textAnchor="middle" fill={p.ink} fontSize={14 * s} fontWeight={800} style={{ fontFamily: SANS, letterSpacing: 14 * s * 0.12 }}>{dialTilt(b)}</text>
+    <text x={b.x + b.w} y={by + bh + 30 * s} textAnchor="end" fill={p.muted} fontSize={13 * s} fontWeight={700} style={{ fontFamily: MONO }}>{b.right.toUpperCase()}</text>
+    {dialLines(b).map((l, i) => <text key={i} x={b.x} y={by + bh + 62 * s + i * 25 * s} fill={p.ink} fontSize={18 * s} style={{ fontFamily: SANS }}>{l}</text>)}
+  </g>
+}
+
+/* ── a notebook's team sheet: player cards ── */
+const CARD_H = 112
+export const cardsHeight = (b: CardsBlock) => { const n = b.cards.length + (b.extra ? 1 : 0); return Math.max(1, Math.ceil(n / b.cols)) * (CARD_H + 12) * b.s - 12 * b.s }
+function CardsView({ b, p }: { b: CardsBlock; p: Pal }) {
+  const s = b.s, gap = 12 * s, cw = (b.w - gap * (b.cols - 1)) / b.cols, ch = CARD_H * s, ink = colourOf(b.ink, p)
+  const at = (i: number) => ({ x: b.x + (i % b.cols) * (cw + gap), y: b.y + Math.floor(i / b.cols) * (ch + gap) })
+  return <g data-bid={b.id}>
+    <rect x={b.x} y={b.y} width={b.w} height={cardsHeight(b)} fill="transparent" />
+    {b.cards.map((c, i) => { const { x, y } = at(i), nfs = Math.min(26 * s, cw / 7); return <g key={i}>
+      <rect x={x} y={y} width={cw} height={ch} rx={6 * s} fill={p.bright ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.04)"} stroke={ink} strokeOpacity={0.55} strokeWidth={1.6 * s} />
+      <circle cx={x + 20 * s} cy={y + 22 * s} r={13 * s} fill="none" stroke={ink} strokeWidth={2 * s} />
+      <text x={x + 20 * s} y={y + 22.5 * s} textAnchor="middle" dominantBaseline="central" fill={ink} fontSize={14 * s} fontWeight={700} style={{ fontFamily: HANDF }}>{c.no || "–"}</text>
+      <text x={x + cw - 10 * s} y={y + 26 * s} textAnchor="end" fill={p.muted} fontSize={12 * s} fontWeight={700} style={{ fontFamily: MONO }}>{c.pos.toUpperCase()}</text>
+      <text x={x + 12 * s} y={y + 62 * s} fill={ink} fontSize={nfs} fontWeight={700} style={{ fontFamily: HANDF }}>{c.name || "____"}</text>
+      {c.tag && <text x={x + 12 * s} y={y + 82 * s} fill={p.pa} fontSize={12 * s} fontWeight={700} style={{ fontFamily: SANS, letterSpacing: 12 * s * 0.1 }}>{c.tag.toUpperCase()}</text>}
+      <text x={x + 12 * s} y={y + ch - 12 * s} fill={p.muted} fontSize={14 * s} style={{ fontFamily: HANDF }}>{c.line || "G __  A __"}</text>
+    </g> })}
+    {b.extra && (() => { const { x, y } = at(b.cards.length); return <g>
+      <rect x={x} y={y} width={cw} height={ch} rx={6 * s} fill="none" stroke={ink} strokeOpacity={0.5} strokeWidth={1.6 * s} strokeDasharray={`${6 * s} ${5 * s}`} />
+      <text x={x + cw / 2} y={y + ch / 2} textAnchor="middle" dominantBaseline="central" fill={ink} fontSize={20 * s} fontWeight={700} style={{ fontFamily: HANDF }}>{b.extra}</text>
+    </g> })()}
+  </g>
+}
+
+/* ── a heading and ruled lines to write on ── */
+const LINE_GAP = 38
+export const linesHeight = (b: LinesBlock) => (b.heading ? 30 : 0) * b.s + Math.max(1, b.lines.length) * LINE_GAP * b.s
+function LinesView({ b, p }: { b: LinesBlock; p: Pal }) {
+  const s = b.s, ink = colourOf(b.ink, p), top = b.y + (b.heading ? 30 * s : 0), fs = 21 * s
+  return <g data-bid={b.id}>
+    <rect x={b.x} y={b.y} width={b.w} height={linesHeight(b)} fill="transparent" />
+    {b.heading && <text x={b.x} y={b.y + 16 * s} fill={ink} fontSize={13.5 * s} fontWeight={700} style={{ fontFamily: MONO, letterSpacing: 13.5 * s * 0.14 }}>{b.heading.toUpperCase()}</text>}
+    {(b.lines.length ? b.lines : [""]).map((l, i) => { const y = top + (i + 1) * LINE_GAP * s; return <g key={i}>
+      <rect x={b.x} y={y - 1 * s} width={b.w} height={1.2 * s} fill={p.muted} fillOpacity={0.35} />
+      <text x={b.x + 2 * s} y={y - 9 * s} fill={ink} fontSize={fs} style={{ fontFamily: HANDF }}>{wrap(l, `400 ${fs}px "Kalam"`, b.w - 4 * s)[0] ?? ""}</text>
+    </g> })}
+  </g>
+}
+
+/* ── the fold of a notebook spread ── */
+function SpineView({ b, p, scope }: { b: SpineBlock; p: Pal; scope: string }) {
+  const gid = "sp" + scope + clean(b.id)
+  return <g data-bid={b.id}>
+    <defs><linearGradient id={gid} x1="0" x2="1" y1="0" y2="0"><stop offset="0" stopColor="#000" stopOpacity={0} /><stop offset="0.5" stopColor="#000" stopOpacity={p.bright ? 0.16 : 0.4} /><stop offset="1" stopColor="#000" stopOpacity={0} /></linearGradient></defs>
+    <rect x={b.x} y={b.y} width={b.w} height={b.h} fill={`url(#${gid})`} />
+    <line x1={b.x + b.w / 2} y1={b.y} x2={b.x + b.w / 2} y2={b.y + b.h} stroke={p.ink} strokeOpacity={0.18} strokeWidth={1.2} strokeDasharray="10 8" />
+  </g>
+}
+
+/* ── drawn outlines: boxes, a shield, kit shirts, circles ── */
+const SHIELD = "M0.5 0 L1 0.12 L0.96 0.55 C0.9 0.8 0.72 0.92 0.5 1 C0.28 0.92 0.1 0.8 0.04 0.55 L0 0.12 Z"
+const SHIRT = "M0.3 0 L0.4 0.06 C0.45 0.1 0.55 0.1 0.6 0.06 L0.7 0 L1 0.16 L0.88 0.36 L0.78 0.3 L0.78 1 L0.22 1 L0.22 0.3 L0.12 0.36 L0 0.16 Z"
+function ShapeView({ b, p, scope }: { b: ShapeBlock; p: Pal; scope: string }) {
+  const stroke = colourOf(b.stroke, p), fill = b.fill ? colourOf(b.fill, p) : "none", gid = "sh" + scope + clean(b.id)
+  const sw = Math.max(1.5, Math.min(b.w, b.h) * 0.025), dash = b.dash ? `${sw * 3} ${sw * 2.5}` : undefined
+  const tf = `translate(${b.x} ${b.y}) scale(${b.w} ${b.h})`
+  const path = b.shape === "shield" ? SHIELD : b.shape === "shirt" ? SHIRT : null
+  return <g data-bid={b.id}>
+    {path ? <>
+      <clipPath id={gid}><path d={path} transform={tf} /></clipPath>
+      <path d={path} transform={tf} fill={fill} />
+      {b.c2 && b.pat !== "solid" && <g clipPath={`url(#${gid})`} fill={b.c2}>
+        {b.pat === "stripes" && [0.18, 0.42, 0.66].map(f => <rect key={f} x={b.x + f * b.w} y={b.y} width={b.w * 0.12} height={b.h} />)}
+        {b.pat === "hoops" && [0.3, 0.6].map(f => <rect key={f} x={b.x} y={b.y + f * b.h} width={b.w} height={b.h * 0.14} />)}
+        {b.pat === "halves" && <rect x={b.x + b.w / 2} y={b.y} width={b.w / 2} height={b.h} />}
+        {(b.pat === "sash" || b.pat === "band") && <rect x={b.x} y={b.y + b.h * 0.42} width={b.w} height={b.h * 0.16} />}
+        {b.pat === "sleeves" && <><rect x={b.x} y={b.y} width={b.w * 0.24} height={b.h} /><rect x={b.x + b.w * 0.76} y={b.y} width={b.w * 0.24} height={b.h} /></>}
+      </g>}
+      <path d={path} transform={tf} fill="none" stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" strokeDasharray={dash} strokeLinejoin="round" />
+    </> : b.shape === "circle"
+      ? <ellipse cx={b.x + b.w / 2} cy={b.y + b.h / 2} rx={b.w / 2} ry={b.h / 2} fill={fill} stroke={stroke} strokeWidth={sw} strokeDasharray={dash} />
+      : <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={Math.min(b.w, b.h) * 0.06} fill={fill} stroke={stroke} strokeWidth={sw} strokeDasharray={dash} />}
+    {b.label && <text x={b.x + b.w / 2} y={b.y + b.h * (b.shape === "shirt" ? 0.6 : 0.5)} textAnchor="middle" dominantBaseline="central" fill={b.fill && lum(colourOf(b.fill, p)) < 0.45 ? "#ffffff" : stroke} fontSize={b.size} fontWeight={700} style={{ fontFamily: HANDF }}>{b.label}</text>}
+    <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="transparent" />
+  </g>
+}
+
 /* ── where each block sits (for selecting, snapping and arranging) ── */
 export function blockBox(b: Block): { x: number; y: number; w: number; h: number; rot: number } {
   switch (b.kind) {
@@ -475,6 +724,13 @@ export function blockBox(b: Block): { x: number; y: number; w: number; h: number
     case "stats": return { x: b.x, y: b.y, w: b.w, h: statsHeight(b), rot: 0 }
     case "story": return { x: b.x, y: b.y, w: b.w, h: storyHeight(b), rot: 0 }
     case "photo": return { x: b.x, y: b.y, w: b.w, h: b.h, rot: b.rot }
+    case "series": return { x: b.x, y: b.y, w: b.w, h: seriesHeight(b), rot: 0 }
+    case "timeline": return { x: b.x, y: b.y, w: b.w, h: timelineHeight(b), rot: 0 }
+    case "idea": return { x: b.x, y: b.y, w: b.w, h: ideaHeight(b), rot: 0 }
+    case "dial": return { x: b.x, y: b.y, w: b.w, h: dialHeight(b), rot: 0 }
+    case "cards": return { x: b.x, y: b.y, w: b.w, h: cardsHeight(b), rot: 0 }
+    case "lines": return { x: b.x, y: b.y, w: b.w, h: linesHeight(b), rot: 0 }
+    case "spine": case "shape": return { x: b.x, y: b.y, w: b.w, h: b.h, rot: 0 }
   }
 }
 
@@ -489,16 +745,23 @@ function Seal({ brand, handle, logo, corner, W, H, k }: { brand: Brand; handle: 
 }
 
 /** The whole report. media: each photo's picture (by its storage path). editing: show empty photo slots. */
-export function ReportView({ report, brand, handle, logo, media, editing = false, svgRef, children, width = "100%" }: {
+/** "08": an issue number as the series line shows it after "Nº" */
+export const issueText = (n: number | null | undefined) => (n ? String(n).padStart(2, "0") : "")
+/** The whole report. issue: the number the series line shows (the report's own, or the one it would take next). */
+export function ReportView({ report, brand, handle, logo, media, editing = false, svgRef, children, width = "100%", issue }: {
   report: Report; brand: Brand; handle: string; logo: string | null; media: Record<string, string>; editing?: boolean
-  svgRef?: RefObject<SVGSVGElement | null>; children?: ReactNode; width?: string | number
+  svgRef?: RefObject<SVGSVGElement | null>; children?: ReactNode; width?: string | number; issue?: number | null
 }) {
   useFontsReady()
   const scope = clean(useId()) // ids inside this drawing stay unique when several reports are on the page
-  const [W, H] = SIZES[report.format], k = W / 1600, p = palette(report, brand)
+  const [W, H] = SIZES[report.format], k = W / 1600, p = palette(report, brand, issueText(report.issue ?? issue), handle)
+  const dot = 18 * k
   return (
     <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width={width} height="100%" style={{ display: "block" }} data-report={report.format} xmlns="http://www.w3.org/2000/svg">
       <rect width={W} height={H} fill={p.bg} />
+      {report.paperStyle === "dotted" && <><defs><pattern id={"pd" + scope} width={dot} height={dot} patternUnits="userSpaceOnUse"><circle cx={dot / 2} cy={dot / 2} r={1.1 * k} fill={p.muted} fillOpacity={0.45} /></pattern></defs><rect width={W} height={H} fill={`url(#pd${scope})`} /></>}
+      {report.paperStyle === "lined" && <><defs><pattern id={"pl" + scope} width={W} height={34 * k} patternUnits="userSpaceOnUse"><rect y={34 * k - 1.2 * k} width={W} height={1.2 * k} fill={p.muted} fillOpacity={0.3} /></pattern></defs><rect width={W} height={H} fill={`url(#pl${scope})`} /></>}
+      {report.stripe && <><rect x={0} y={0} width={12 * k} height={H} fill={p.pb} /><rect x={12 * k} y={0} width={12 * k} height={H} fill={p.pa} /></>}
       {report.glow && <g>
         <defs><radialGradient id={"rg" + scope} cx="0.5" cy="0.36" r="0.75"><stop offset="0" stopColor={p.story} stopOpacity={p.bright ? 0.22 : 0.2} /><stop offset="0.6" stopColor={p.story} stopOpacity={0.04} /><stop offset="1" stopColor={p.story} stopOpacity={0} /></radialGradient></defs>
         <rect width={W} height={H} fill={`url(#rg${scope})`} />
@@ -510,6 +773,14 @@ export function ReportView({ report, brand, handle, logo, media, editing = false
           case "stats": return <StatsView key={b.id} b={b} p={p} />
           case "story": return <StoryView key={b.id} b={b} p={p} />
           case "photo": return <PhotoView key={b.id} b={b} p={p} k={k} src={b.src ? media[b.src] : undefined} editing={editing} scope={scope} />
+          case "series": return <SeriesView key={b.id} b={b} p={p} />
+          case "timeline": return <TimelineView key={b.id} b={b} p={p} />
+          case "idea": return <IdeaView key={b.id} b={b} p={p} />
+          case "dial": return <DialView key={b.id} b={b} p={p} scope={scope} />
+          case "cards": return <CardsView key={b.id} b={b} p={p} />
+          case "lines": return <LinesView key={b.id} b={b} p={p} />
+          case "spine": return <SpineView key={b.id} b={b} p={p} scope={scope} />
+          case "shape": return <ShapeView key={b.id} b={b} p={p} scope={scope} />
         }
       })}
       <Seal brand={brand} handle={handle} logo={logo} corner={report.seal} W={W} H={H} k={k} />
