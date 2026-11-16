@@ -1,11 +1,13 @@
-import { useRef } from "react"
+import { Suspense, lazy, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { Play, FileText, BookOpen } from "lucide-react"
-import { BoardArt } from "./BoardArt"
 import { Mark } from "../brand/Mark"
-import { ThemeToggle, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT } from "../theme"
+import { ThemeToggle, TEXT_PRIMARY, SURFACE_BASE, ACCENT_SOLID } from "../theme"
+import { LANDING_CSS } from "./landingCss"
 
-/* The first page a visitor sees. Everything is drawn with code (no pictures to load), and every colour is a theme variable. */
+/* The first page a visitor sees. Everything is drawn with code (no pictures to load), and every colour is a theme variable,
+   except the things that have their own colours: the pitches, the felt wall and the paper. The template previews are drawn
+   by the real report engine, loaded only when that section comes near. */
+const TemplateThumb = lazy(() => import("../report/Thumb"))
 
 /** Goes to a page after a one-second ball animation (instantly if the person prefers less motion). */
 export function useKickTo() {
@@ -36,147 +38,214 @@ export function useKickTo() {
   }
 }
 
-const STEPS = [
-  { n: "01", t: "Set the shape", p: "Pick a formation for each team and say who has the ball. The lineups reshape themselves.", chips: ["23 kits", "4-3-3", "Names"] },
-  { n: "02", t: "Draw the idea", p: "Arrows, zones and text on a pitch that never gets in the way. Add steps to show the move unfolding.", chips: ["Arrows", "Zones", "Steps"] },
-  { n: "03", t: "Export and post", p: "One click to a GIF, MP4 or PDF in 16:9, 4:5, 1:1 or 9:16, signed with your handle.", chips: ["GIF", "MP4", "PDF", "9:16"] },
-]
-const SOON = [
-  { t: "Live Game Analysis", p: "Tag players, light them up and draw zones on real match shots.", ic: <Play size={18} />, live: true },
-  { t: "Match Report", p: "Tell the story of a match on one page, in your colour, signed with your seal.", ic: <FileText size={18} />, live: true },
-  { t: "Learn Football", p: "The best football threads, picked and credited.", ic: <BookOpen size={18} /> },
-]
+/** The board in the hero: each format reshapes its frame, and the line under it says where that format goes */
+const RATIOS = [
+  { id: "16:9", w: 560, h: 315, use: "YouTube, X video, the big screen" },
+  { id: "4:5", w: 344, h: 430, use: "Instagram posts and carousels, X images" },
+  { id: "1:1", w: 420, h: 420, use: "Anywhere, cropped for nothing" },
+  { id: "9:16", w: 242, h: 430, use: "TikTok, Reels and Shorts" },
+] as const
+const LINKS = [["ls-board", "Tactics Board"], ["ls-live", "Live Analysis"], ["ls-reports", "Match Reports"], ["ls-dump", "Dump & Arrange"]] as const
+const TEMPLATES = [
+  { id: "game", name: "Game Report", note: "The whole match on one card, with a balance rating people argue about" },
+  { id: "report", name: "Micro Breakdown", note: "One player, one pattern, zoomed all the way in" },
+  { id: "formation", name: "Formation Change", note: "The shape you want, and who fits where" },
+  { id: "journal", name: "Matchday Journal", note: "Your notebook, with room for every detail" },
+] as const
+const to = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
 
 export default function LandingPage() {
   const kick = useKickTo()
   const start = (e: React.MouseEvent<HTMLElement>) => kick("/signup", e.currentTarget)
   const signIn = () => kick("/signin", null)
+  const [ratio, setRatio] = useState<(typeof RATIOS)[number]>(RATIOS[0])
+  const [near, setNear] = useState(false) // the templates section is close: draw its previews
+  const root = useRef<HTMLDivElement>(null)
+
+  // sections rise in as they come into view (not with reduced motion)
+  useEffect(() => {
+    const els = [...(root.current?.querySelectorAll<HTMLElement>(".ls-rise") ?? [])]
+    if (typeof IntersectionObserver === "undefined") { els.forEach(e => e.classList.add("in")); setNear(true); return }
+    const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target) } }), { threshold: 0.2 })
+    els.forEach(e => io.observe(e))
+    const tpl = document.getElementById("ls-reports")
+    const io2 = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { setNear(true); io2.disconnect() } }, { rootMargin: "600px 0px" })
+    if (tpl) io2.observe(tpl)
+    return () => { io.disconnect(); io2.disconnect() }
+  }, [])
+
   return (
-    <div className="ls" style={{ background: SURFACE_BASE, color: TEXT_PRIMARY, minHeight: "100vh", fontFamily: "'Inter', sans-serif", overflowX: "hidden" }}>
-      <style>{`
-        .ls * { box-sizing: border-box; }
-        .ls-wrap { max-width: 1180px; margin: 0 auto; padding: 0 40px; }
-        .ls-nav { display: flex; align-items: center; justify-content: space-between; height: 72px; }
-        .ls-nav-r { display: flex; align-items: center; gap: 8px; }
-        .ls-link, .ls-btn { white-space: nowrap; }
-        .ls-link { background: none; border: none; color: ${TEXT_MUTED}; font-size: 14px; padding: 8px 12px; cursor: pointer; font-family: inherit; border-radius: 8px; }
-        .ls-link:hover { color: ${TEXT_PRIMARY}; }
-        .ls-btn { display: inline-flex; align-items: center; justify-content: center; height: 48px; padding: 0 28px; border-radius: 999px; font-weight: 600; font-size: 15px; border: 1px solid transparent; cursor: pointer; font-family: inherit; transition: transform .12s, filter .12s; }
-        .ls-btn:hover { transform: scale(1.03); }
-        .ls-btn.pri { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; }
-        .ls-btn.sec { background: transparent; color: ${TEXT_PRIMARY}; border-color: ${DS_BORDER}; }
-        .ls-btn.sm { height: 40px; padding: 0 20px; font-size: 14px; }
-        .ls-hero { text-align: center; position: relative; padding-top: 64px; }
-        .ls-glow { position: absolute; left: 50%; top: 90px; width: 900px; max-width: 120%; height: 520px; transform: translateX(-50%); background: radial-gradient(closest-side, var(--ps-glow), transparent); pointer-events: none; }
-        .ls-eyebrow { font-size: 12px; letter-spacing: .16em; font-weight: 600; color: ${ACCENT_TEXT}; position: relative; }
-        .ls-h1 { font-size: clamp(44px, 7.4vw, 88px); line-height: 1.02; letter-spacing: -.035em; font-weight: 700; margin: 18px auto 0; position: relative; max-width: 900px; }
-        .ls-h1 em { font-style: normal; color: ${ACCENT_TEXT}; }
-        .ls-sub { font-size: clamp(16px, 2vw, 20px); line-height: 1.5; color: ${TEXT_MUTED}; max-width: 640px; margin: 22px auto 0; position: relative; }
-        .ls-sub b { color: ${TEXT_PRIMARY}; font-weight: 500; }
-        .ls-cta { display: flex; gap: 12px; justify-content: center; margin-top: 32px; position: relative; }
-        .ls-fine { font-size: 13px; color: ${TEXT_MUTED}; margin-top: 14px; position: relative; }
-        .ls-shot { margin: 52px auto 0; max-width: 1060px; border-radius: 16px; border: 1px solid ${DS_BORDER}; overflow: hidden; box-shadow: 0 40px 120px rgba(0,0,0,.35); position: relative; background: #242529; }
-        .ls-sec { padding-top: 110px; }
-        .ls-eb2 { font-size: 12px; letter-spacing: .14em; font-weight: 600; color: ${ACCENT_TEXT}; }
-        .ls-h2 { font-size: clamp(30px, 4vw, 44px); letter-spacing: -.03em; line-height: 1.08; font-weight: 700; max-width: 620px; margin: 12px 0 0; }
-        .ls-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
-        .ls-card { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 18px; padding: 28px; }
-        .ls-card.soon { background: transparent; border-style: dashed; }
-        .ls-card h3 { font-size: 21px; letter-spacing: -.02em; margin: 14px 0 8px; font-weight: 600; }
-        .ls-card p { color: ${TEXT_MUTED}; line-height: 1.55; font-size: 15px; margin: 0; }
-        .ls-n { font-size: 13px; color: ${ACCENT_TEXT}; font-weight: 700; letter-spacing: .1em; }
-        .ls-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-        .ls-chips span { font-size: 12px; background: ${SURFACE_2}; border-radius: 999px; padding: 6px 11px; color: ${TEXT_PRIMARY}; }
-        .ls-top { display: flex; justify-content: space-between; align-items: center; }
-        .ls-ico { width: 40px; height: 40px; border-radius: 11px; background: ${SURFACE_2}; display: grid; place-items: center; color: ${TEXT_PRIMARY}; }
-        .ls-tag { font-size: 12px; letter-spacing: .12em; font-weight: 700; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; border-radius: 999px; padding: 4px 9px; }
-        .ls-band { margin-top: 110px; padding: 84px 0 80px; text-align: center; background: linear-gradient(180deg, transparent, var(--ps-accent-soft)); }
-        .ls-band .ls-h2 { margin: 0 auto; }
-        .ls-foot { padding: 30px 0 40px; text-align: center; font-size: 12px; color: ${TEXT_MUTED}; }
-        .ls-sticky { display: none; }
-        @media (max-width: 760px) {
-          .ls-wrap { padding: 0 20px; }
-          .ls-nav { height: 60px; }
-          .ls-nav-r { gap: 2px; }
-          .ls-logo { display: none; }
-          .ls-wrap { padding: 0 16px; }
-          .ls-link { padding: 8px 8px; }
-          .ls-hide { display: none; }
-          .ls-hero { padding-top: 36px; }
-          .ls-cta { flex-direction: column; padding: 0 4px; }
-          .ls-cta .sec { display: none; }
-          .ls-btn { height: 52px; }
-          .ls-shot { margin-top: 34px; border-radius: 12px; height: 230px; }
-          .ls-shot svg { width: 210% !important; max-width: none !important; margin-left: -64%; margin-top: -26%; }
-          .ls-sec { padding-top: 72px; }
-          .ls-grid { grid-template-columns: 1fr; margin-top: 26px; }
-          .ls-card { padding: 22px; }
-          .ls-band { margin-top: 72px; padding-bottom: 110px; }
-          .ls-foot { padding-bottom: 96px; }
-          .ls-sticky { display: block; position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 20px 18px; background: linear-gradient(180deg, transparent, ${SURFACE_BASE} 45%); z-index: 20; }
-          .ls-sticky .ls-btn { width: 100%; }
-        }
-        @media (prefers-reduced-motion: reduce) { .ls-btn { transition: none; } .ls-btn:hover { transform: none; } }
-      `}</style>
-      <div className="ls-wrap">
-        <nav className="ls-nav" aria-label="Main">
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}><Mark size={30} color={ACCENT_SOLID} /><span className="ls-logo" style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", letterSpacing: "0.2em", fontSize: 19, fontWeight: 600 }}>PITCHSTUDIO</span></span>
-          <div className="ls-nav-r">
-            <button className="ls-link ls-hide" onClick={() => document.getElementById("ls-how")?.scrollIntoView({ behavior: "smooth" })}>How it works</button>
-            <button className="ls-link" onClick={signIn}>Sign in</button>
-            <ThemeToggle />
-            <button className="ls-btn pri sm" onClick={start}>Start creating</button>
-          </div>
+    <div className="ls" ref={root} style={{ background: SURFACE_BASE, color: TEXT_PRIMARY, minHeight: "100vh", fontFamily: "'Inter', sans-serif", overflowX: "hidden" }}>
+      <style>{LANDING_CSS}</style>
+
+      <div className="ls-w">
+        <nav className="ls-nav" aria-label="PitchStudio">
+          <button className="ls-brand" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} aria-label="PitchStudio, back to the top"><Mark size={28} color={ACCENT_SOLID} /><span>PITCHSTUDIO</span></button>
+          {LINKS.map(([id, t]) => <button key={id} className="ls-link ls-sec-link" onClick={() => to(id)}>{t}</button>)}
+          <button className="ls-link" onClick={signIn}>Sign in</button>
+          <ThemeToggle />
+          <button className="ls-btn pri sm" onClick={start}>Open your studio, free</button>
         </nav>
 
         <header className="ls-hero">
-          <div className="ls-glow" />
-          <div className="ls-eyebrow">THE TACTICS STUDIO FOR FOOTBALL THINKERS</div>
-          <h1 className="ls-h1">Enable your <em>creativity.</em></h1>
-          <p className="ls-sub">Where your genius comes to life. <b>Set a formation, draw the movements and export a clip people stop scrolling for.</b></p>
-          <div className="ls-cta">
-            <button className="ls-btn pri" onClick={start}>Start creating</button>
-            <button className="ls-btn sec" onClick={() => document.getElementById("ls-how")?.scrollIntoView({ behavior: "smooth" })}>See how it works</button>
+          <div className="ls-hero-l">
+            <span className="ls-cap">THE FOOTBALL STUDIO FOR CREATORS</span>
+            <h1 className="ls-h1">SEE THE GAME.<br />MAKE IT YOURS.</h1>
+            <p className="ls-lead">Draw tactics that move. Turn a match into a report that looks like a magazine page. Pin every idea until it grows into a post. Every piece carries your name, and every tool is free.</p>
+            <div className="ls-row">
+              <button className="ls-btn pri" onClick={start}>Open your studio</button>
+              <button className="ls-btn sec" onClick={() => to("ls-board")}>See what you can make</button>
+            </div>
+            <span className="ls-small">No card. No trial. Every tool unlocked from day one.</span>
           </div>
-          <div className="ls-fine">Free for every creator.</div>
-          <div className="ls-shot"><BoardArt /></div>
+          <div className="ls-hero-r">
+            <div className="ls-panel ls-stage">
+              <div className="ls-frame" style={{ width: `min(${ratio.w}px, 92%)`, aspectRatio: `${ratio.w} / ${ratio.h}` }}>
+                <svg viewBox="0 0 480 320" preserveAspectRatio="xMidYMid slice" role="img" aria-label="An animated tactics board: three players rotate and the ball moves between them">
+                  <rect x="0" y="0" width="480" height="320" fill="#1d5a2c" />
+                  <path d="M0 0 h60 v320 h-60 Z M120 0 h60 v320 h-60 Z M240 0 h60 v320 h-60 Z M360 0 h60 v320 h-60 Z" fill="#20622f" />
+                  <rect x="14" y="14" width="452" height="292" fill="none" stroke="rgba(255,255,255,.6)" strokeWidth="2" />
+                  <line x1="240" y1="14" x2="240" y2="306" stroke="rgba(255,255,255,.6)" strokeWidth="2" />
+                  <circle cx="240" cy="160" r="40" fill="none" stroke="rgba(255,255,255,.6)" strokeWidth="2" />
+                  <rect x="386" y="90" width="80" height="140" fill="none" stroke="rgba(255,255,255,.6)" strokeWidth="2" />
+                  <path className="lp-dash" d="M170 220 C 220 190 260 170 290 150" stroke="#d7ff3c" strokeWidth="3" fill="none" />
+                  <path className="lp-dash" d="M290 150 C 300 110 280 80 230 42" stroke="#d7ff3c" strokeWidth="3" fill="none" />
+                  <polygon points="300,60 400,60 420,140 320,150" fill="rgba(215,255,60,.18)" stroke="#d7ff3c" strokeWidth="1.5" strokeDasharray="4 4" />
+                  {[[330, 120], [360, 190], [300, 230]].map(([x, y]) => <circle key={x} cx={x} cy={y} r="10" fill="#e9f0ff" stroke="#121316" strokeWidth="1.5" />)}
+                  <g className="lp-a"><circle cx="170" cy="220" r="11" fill="#a11d48" stroke="#fff" strokeWidth="2" /></g>
+                  <g className="lp-b"><circle cx="290" cy="150" r="11" fill="#a11d48" stroke="#fff" strokeWidth="2" /></g>
+                  <g className="lp-c"><circle cx="230" cy="42" r="11" fill="#1f4ba0" stroke="#fff" strokeWidth="2" /></g>
+                  <g className="lp-ball"><circle cx="172" cy="236" r="5" fill="#fff" stroke="#121316" strokeWidth="1.5" /></g>
+                </svg>
+                <span className="ls-tag" style={{ right: 10, bottom: 10 }}>@yourname <i>made with PitchStudio</i></span>
+                <span className="ls-tag" style={{ left: 10, top: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: ".1em", fontWeight: 500 }}><span className="lp-rec" style={{ width: 7, height: 7, borderRadius: 99, background: "#e53935" }} />EXPORTING MP4</span>
+              </div>
+            </div>
+            <div className="ls-row" style={{ justifyContent: "center", alignItems: "center", gap: 8 }} role="group" aria-label="Try a format">
+              <span className="ls-small" style={{ marginRight: 4 }}>Try a format</span>
+              {RATIOS.map(r => <button key={r.id} className="ls-fmt" aria-pressed={ratio.id === r.id} onClick={() => setRatio(r)}>{r.id}</button>)}
+            </div>
+            <span style={{ fontSize: 13 }} aria-live="polite">{ratio.id} · {ratio.use}</span>
+          </div>
         </header>
+      </div>
 
-        <section className="ls-sec" id="ls-how">
-          <div className="ls-eb2">HOW IT WORKS</div>
-          <h2 className="ls-h2">From idea to post in three steps.</h2>
-          <div className="ls-grid">
-            {STEPS.map(s => (
-              <div className="ls-card" key={s.n}>
-                <div className="ls-n">{s.n}</div><h3>{s.t}</h3><p>{s.p}</p>
-                <div className="ls-chips">{s.chips.map(c => <span key={c}>{c}</span>)}</div>
-              </div>
-            ))}
+      <section className="ls-strip" aria-label="What you get">
+        <div className="ls-w"><span>MP4 · GIF · PNG</span><span>16:9 · 4:5 · 1:1 · 9:16</span><span>5 REPORT TEMPLATES</span><span>YOUR NAME ON EVERY EXPORT</span><span>FREE, ALL OF IT</span></div>
+      </section>
+
+      <div className="ls-w">
+        <section id="ls-board" className="ls-sec ls-rise">
+          <div className="ls-txt">
+            <span className="ls-cap">01 · TACTICS BOARD</span>
+            <h2 className="ls-h2">Draw the move once. Post it everywhere.</h2>
+            <p className="ls-p">Place players, draw passes, runs and zones, then add frames and press play. Export the same move as a 16:9 video for YouTube, a 9:16 clip for TikTok or a 4:5 still for a carousel.</p>
+            <ul className="ls-list">
+              <li><span>→</span>Frames that animate between positions</li>
+              <li><span>→</span>Passes, runs, shots, zones, notes on the pitch</li>
+              <li><span>→</span>MP4, GIF or PNG, in any of four ratios</li>
+            </ul>
+          </div>
+          <div className="ls-panel ls-art" aria-hidden="true">
+            <div className="ls-frames">
+              <div className="ls-fr on"><b>FRAME 1</b><i style={{ left: "30%", top: "60%" }} /><i style={{ left: "55%", top: "45%" }} /></div>
+              <div className="ls-fr"><b>FRAME 2</b><i style={{ left: "50%", top: "40%" }} /><i style={{ left: "45%", top: "18%" }} /></div>
+              <div className="ls-fr"><b>FRAME 3</b><i style={{ left: "70%", top: "30%" }} /><i className="blue" style={{ left: "40%", top: "12%" }} /></div>
+            </div>
+            <div className="ls-bar"><span /></div>
+            <div className="ls-row" style={{ gap: 8 }}>{["16:9 · YouTube", "4:5 · Instagram, X", "1:1 · Anywhere", "9:16 · TikTok, Reels, Shorts"].map(c => <span key={c} className="ls-chip">{c}</span>)}</div>
           </div>
         </section>
 
-        <section className="ls-sec">
-          <div className="ls-eb2">NEW AND NEXT</div>
-          <h2 className="ls-h2">More ways to explain the game.</h2>
-          <div className="ls-grid">
-            {SOON.map(s => (
-              <div className={`ls-card${"live" in s ? "" : " soon"}`} key={s.t}>
-                <div className="ls-top"><div className="ls-ico">{s.ic}</div><span className="ls-tag">{"live" in s ? "NEW" : "SOON"}</span></div>
-                <h3>{s.t}</h3><p>{s.p}</p>
-              </div>
-            ))}
+        <section id="ls-live" className="ls-sec rev ls-rise">
+          <div className="ls-panel ls-live" aria-hidden="true">
+            <div className="ls-screen">
+              <div style={{ position: "absolute", inset: "14% 10%", border: "2px solid rgba(255,255,255,.25)" }} />
+              <span className="ls-tag" style={{ left: 12, top: 12, background: "#e53935" }}><span className="lp-rec" style={{ width: 7, height: 7, borderRadius: 99, background: "#fff" }} />LIVE · 63'</span>
+              <svg viewBox="0 0 320 180" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}><path className="lp-dash" d="M80 130 C 140 110 190 90 250 60" stroke="#d7ff3c" strokeWidth="3" fill="none" /><circle cx="80" cy="130" r="7" fill="#a11d48" stroke="#fff" strokeWidth="2" /><circle cx="250" cy="60" r="7" fill="#a11d48" stroke="#fff" strokeWidth="2" /></svg>
+            </div>
+            <div className="ls-moments">
+              <span>MOMENTS KEPT</span>
+              <span className="ls-mo"><b>7'</b>Steal from the press</span>
+              <span className="ls-mo"><b>52'</b>Pedri and Fermín combine</span>
+              <span className="ls-mo now"><b>63'</b>Marking now…</span>
+            </div>
           </div>
+          <div className="ls-txt">
+            <span className="ls-cap">02 · LIVE GAME ANALYSIS</span>
+            <h2 className="ls-h2">Catch it while the match is still on.</h2>
+            <p className="ls-p">Grab the moment, draw over it and keep it with its minute. By full time your report has half written itself.</p>
+          </div>
+        </section>
+
+        <section id="ls-reports" className="ls-rise" style={{ padding: "96px 0 40px", display: "flex", flexDirection: "column", gap: 28 }}>
+          <div className="ls-head">
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }}>
+              <span className="ls-cap">03 · MATCH REPORTS</span>
+              <h2 className="ls-h2">Fill a form. The page designs itself.</h2>
+              <p className="ls-p">Type the score, the moments and your take. The card lays itself out, then every word, dot and arrow stays yours to move.</p>
+            </div>
+            <button className="ls-more" onClick={start}>Start a report →</button>
+          </div>
+          <div className="ls-tpls">
+            {TEMPLATES.map(t => (
+              <figure key={t.id} className="ls-tpl">
+                <div className="th">
+                  {t.id === "journal"
+                    ? <div className="ls-journal" aria-hidden="true"><small>MATCHDAY JOURNAL</small><b style={{ fontSize: 24, lineHeight: 1, color: "#1f3e8c", border: "none" }}>Barça v <em style={{ color: "#6e1e3a", fontStyle: "normal" }}>Villa</em></b><span><b>7'</b> Yamal, the steal</span><span><b>52'</b> Raphinha</span><span><b>64'</b> Raphinha</span><span style={{ color: "#2e7d32", border: "none" }}>→ keep the press</span></div>
+                    : near && <Suspense fallback={null}><TemplateThumb id={t.id} /></Suspense>}
+                </div>
+                <figcaption><b>{t.name}</b><br /><span>{t.note}</span></figcaption>
+              </figure>
+            ))}
+            <figure className="ls-tpl">
+              <button className="th ls-own" onClick={start} aria-label="Start your own report"><b>+</b>Blank page, every tool</button>
+              <figcaption><b>Your own</b><br /><span>Text, tables, pitches, photos, fonts. Build your own format</span></figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section id="ls-dump" className="ls-sec ls-rise">
+          <div className="ls-txt">
+            <span className="ls-cap">04 · DUMP &amp; ARRANGE</span>
+            <h2 className="ls-h2">Every idea gets a pin. The good ones grow.</h2>
+            <p className="ls-p">Pin a thought the second you have it. Tie related notes together with thread, and watch the pile grow from a seed into a tree: your question, your points, and what you made from them.</p>
+          </div>
+          <div className="ls-wall" aria-hidden="true">
+            <span className="ls-slip" style={{ left: "8%", top: "18%", width: "34%", height: 64, background: "#f6e27a", transform: "rotate(-2deg)" }}>Jump the first loose pass</span>
+            <span className="ls-slip" style={{ left: "14%", top: "48%", width: "30%", height: 58, background: "#faf6ec", transform: "rotate(1deg)", fontSize: 15 }}>Gomes always plays across</span>
+            <span className="ls-slip" style={{ left: "54%", top: "22%", width: "34%", height: 64, background: "#9fd4e8", transform: "rotate(2deg)" }}>Pedri free between the lines</span>
+            <span className="ls-slip" style={{ left: "58%", top: "56%", width: "30%", height: 58, background: "#ee9ab8", transform: "rotate(-1deg)", fontSize: 15 }}>Thread: why it worked</span>
+            <svg viewBox="0 0 560 320" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}><path d="M140 64 Q120 120 160 160" stroke="#b3261e" strokeWidth="2" fill="none" /></svg>
+            <svg className="lp-sway" width="44" height="50" viewBox="0 0 30 34" style={{ position: "absolute", left: "40%", bottom: 14 }}><path d="M15 33 V12 M15 24 L8 18 M15 18 L22 12" stroke="#5e4e38" strokeWidth="2.5" fill="none" strokeLinecap="round" /><path d="M8 18 C4 18 2 15 3 12 C6 12 9 15 8 18 Z M22 12 C26 12 28 9 27 6 C24 6 21 9 22 12 Z M15 12 C11 10 11 6 15 3 C19 6 19 10 15 12 Z" fill="#4f7a1f" /></svg>
+          </div>
+        </section>
+
+        <section className="ls-sec rev ls-rise">
+          <div className="ls-cards" aria-hidden="true">
+            <div className="ls-card" style={{ background: "#15161a", border: "1px solid rgba(255,255,255,.18)", transform: "rotate(-4deg)", color: "#f5f5f7" }}>
+              <div style={{ left: "7%", right: "7%", top: "12%", height: "50%", background: "#a11d48" }} /><b style={{ left: "7%", bottom: "18%" }}>@YOURNAME</b><small style={{ left: "7%", bottom: "8%", color: "#a3a3ad" }}>STUDIO Nº 001</small>
+            </div>
+            <div className="ls-card" style={{ background: "#f4efe2", border: "8px solid #f4efe2", outline: "2px solid #1d5a2c", transform: "rotate(5deg)", color: "#1d5a2c" }}>
+              <div style={{ left: "3%", right: "3%", top: "9%", height: "50%", background: "#1d5a2c", borderRadius: 8 }} /><b style={{ left: "4%", bottom: "16%" }}>@THEIRNAME</b><small style={{ left: "4%", bottom: "6%", color: "#3a3b40" }}>STUDIO Nº 214</small>
+            </div>
+          </div>
+          <div className="ls-txt">
+            <span className="ls-cap">05 · YOUR CARD</span>
+            <h2 className="ls-h2">Your face. Your colours. Your number.</h2>
+            <p className="ls-p">Every creator gets a studio number and a card with their own photo and tagline. It signs every export you make and it is the page people find you on.</p>
+          </div>
+        </section>
+
+        <section className="ls-end ls-rise">
+          <h2>YOUR STUDIO IS WAITING.</h2>
+          <p className="ls-lead" style={{ maxWidth: 620 }}>Every tool, every format, every template, free. Open it, make your card, and post your first piece today.</p>
+          <button className="ls-btn pri" style={{ height: 56, padding: "0 30px", fontSize: 17 }} onClick={start}>Open your studio</button>
         </section>
       </div>
 
-      <div className="ls-band">
-        <div className="ls-wrap">
-          <h2 className="ls-h2">Your next breakdown starts on a blank pitch.</h2>
-          <div className="ls-cta"><button className="ls-btn pri" onClick={start}>Start creating</button></div>
-        </div>
-      </div>
-      <footer className="ls-foot">PitchStudio is not affiliated with any club, league or player.</footer>
-      <div className="ls-sticky"><button className="ls-btn pri" onClick={start}>Start creating</button></div>
+      <footer className="ls-foot"><div className="ls-w"><span>PitchStudio, the football studio for creators</span><span>Free for every fan</span></div></footer>
+      <div className="ls-sticky"><button className="ls-btn pri" onClick={start}>Open your studio, free</button></div>
     </div>
   )
 }

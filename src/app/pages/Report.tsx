@@ -573,7 +573,7 @@ export default function ReportPage() {
   }
   const shownIssue = report.issue ?? nextIssue
 
-  if (phase === "loading") return <div className="rp-page" style={{ minHeight: "100vh", background: SURFACE_BASE }} />
+  if (phase === "loading") return <div className="rp-page" role="status" style={{ minHeight: "100vh", background: SURFACE_BASE, color: TEXT_MUTED, display: "grid", placeItems: "center", fontSize: 14 }}>Opening your report…</div>
 
   return (
     <div className="rp-page">
@@ -699,7 +699,12 @@ export default function ReportPage() {
         .rp-spin { animation: rpSpin 1s linear infinite; } @keyframes rpSpin { to { transform: rotate(360deg); } }
         @media (prefers-reduced-motion: reduce) { .rp-spin { animation: none; } .rp-tpl { transition: none; } }
         @media (max-width: 1100px) { .rp-body { grid-template-columns: 76px 1fr 270px; } .rp-hide-md { display: none; } }
-        @media (max-width: 700px) { .rp-fill-form { padding: 0; } }
+        @media (max-width: 700px) {
+          .rp-fill-form { padding: 0; }
+          .rp-top .rp-icon, .rp-top .rp-home { width: 42px; height: 42px; } .rp-top .rp-btn { min-height: 42px; } .rp-fd button { min-height: 38px; }
+          .rp-chip { min-height: 40px; padding: 8px 14px; } .ff-prev .rp-btn { min-height: 40px; }
+          .rp-page input, .rp-page textarea, .rp-page select { font-size: 16px; }
+        }
         @media (max-width: 860px) {
           .rp-page { height: auto; min-height: 100vh; overflow: visible; grid-template-rows: auto auto; }
           .rp-top { flex-wrap: wrap; padding: 8px 12px; row-gap: 8px; } .rp-title { flex: 1 1 0; min-width: 0; } .rp-top .rp-sp { flex: 0 0 100%; height: 0; }

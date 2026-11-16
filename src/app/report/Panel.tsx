@@ -390,7 +390,7 @@ export function TimelineEdit({ events, set, big = false, chips = false }: { even
       onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addIt() } }} /></Row>
     <p className="rp-note">{bad ? "Start with the minute (or HT), then the name: 7 Yamal goal." : "The minute first, then the name. Goal, sub, off, on, injury or red sets the kind. Press Enter."}</p>
     <div className="rp-cols" style={{ marginBottom: 12 }}>
-      {events.map((e, i) => <span key={i} className="rp-chip on" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{eventText(e)}
+      {events.map((e, i) => <span key={i} className="rp-chip" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{eventText(e)}
         <button aria-label={`Remove ${eventText(e)}`} onClick={() => set(events.filter((_, j) => j !== i))} style={{ border: "none", background: "none", color: "inherit", cursor: "pointer", padding: 0, display: "grid" }}><Trash2 size={12} /></button></span>)}
     </div>
   </>

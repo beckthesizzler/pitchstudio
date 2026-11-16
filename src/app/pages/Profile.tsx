@@ -316,6 +316,13 @@ export default function ProfilePage() {
         .pf-btn:disabled { opacity: .55; cursor: default; }
         .pf-panel { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 16px; padding: 18px; }
         .pf-pitch { height: 74px; border-radius: 8px; border: 1.5px solid rgba(255,255,255,.5); background: repeating-linear-gradient(90deg,#1f6a31 0 26px,#1a5c2a 26px 52px); overflow: hidden; }
+        .pf-photo { border-style: dashed; border-color: var(--ps-bd2); display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+        .pf-photo > .cc-row { margin: 0; }
+        .pf-photo-row { flex: 1 1 280px; display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .pf-photo-row b { display: block; font-size: 15px; } .pf-photo-row div > span { display: block; font-size: 13px; color: ${TEXT_MUTED}; margin-top: 2px; line-height: 1.4; }
+        .pf-photo-ico { width: 46px; height: 46px; flex: none; border-radius: 12px; display: grid; place-items: center; background: ${SURFACE_2}; color: ${ACCENT_TEXT}; }
+        .pf-photo > p { flex-basis: 100%; }
+        @media (hover: none) { .pf-tilt-hint { display: none; } }
         .pf-cap { font-size: 12px; letter-spacing: .12em; font-weight: 600; color: ${TEXT_MUTED}; margin: 0 0 10px; }
         .pf-sec { margin: 0 0 14px; font-size: 12px; letter-spacing: .12em; font-weight: 600; color: ${TEXT_MUTED}; }
         .pf-g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -367,6 +374,10 @@ export default function ProfilePage() {
         .pf-share .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
         .pf-share .row .pf-btn { padding: 0 10px; font-size: 13px; }
         .pf-more { width: 100%; display: flex; align-items: center; justify-content: space-between; background: none; border: none; color: ${TEXT_PRIMARY}; font: 700 14px 'Inter', sans-serif; padding: 16px 0; cursor: pointer; border-top: 1px solid ${DS_BORDER}; }
+        @media (max-width: 700px) {
+          .pf-wrap2 .pf-chip, .pf-wrap2 .pf-btn, .pf-back { min-height: 44px; } .pf-wrap2 .cc-sw { width: 40px; height: 40px; }
+          .pf-wrap2 input:not([type=range]), .pf-wrap2 textarea, .pf-wrap2 select { font-size: 16px; }
+        }
         @media (max-width: 1080px) { .pf-wrap2 { grid-template-columns: 1fr; padding: 20px 18px 130px; gap: 24px; } .pf-stage { position: static; } .pf-share .row { grid-template-columns: 1fr 1fr; } .pf-welcome > div { padding: 10px 18px; } }
         @media (max-width: 860px) {
           .pf-top { padding: 0 16px; }
@@ -417,7 +428,7 @@ export default function ProfilePage() {
           <div className="pf-styles" role="group" aria-label="Card style">
             {CARD_STYLES.map(st => <button key={st.id} className={`pf-chip${brand.style === st.id ? " on" : ""}`} style={{ margin: 0 }} aria-pressed={brand.style === st.id} onClick={() => edit({ style: st.id })}>{st.name}</button>)}
           </div>
-          <p className="pf-hint" style={{ textAlign: "center", margin: 0 }}>Move your mouse over the card.</p>
+          <p className="pf-hint pf-tilt-hint" style={{ textAlign: "center", margin: 0 }}>Move your mouse over the card.</p>
           <div className="pf-panel">
             <p className="pf-cap">YOUR EXPORT SIGNATURE</p>
             <div className="pf-pitch" data-card="signature">
@@ -435,19 +446,22 @@ export default function ProfilePage() {
           <h1 className="pf-h1">Your card is your stamp.</h1>
           <p style={{ margin: "8px 0 24px", fontSize: 15, color: TEXT_MUTED, lineHeight: 1.55 }}>It signs every image, clip and report you export, and it is the page people land on.</p>
 
-          <div className="pf-panel" style={{ marginBottom: 16 }}>
-            <p className="pf-cap">YOUR PHOTO</p>
+          <div className="pf-panel pf-photo" style={{ marginBottom: 16 }}>
+            <div className="pf-photo-row">
+              <span className="pf-photo-ico" aria-hidden="true"><ImagePlus size={18} /></span>
+              <div style={{ flex: 1, minWidth: 0 }}><b>{shownPhoto ? "Your photo" : "Upload your photo"}</b><span>Any photo. Drag it in the frame to crop. Yours to remove any time.</span></div>
+            </div>
             <div className="cc-row">
               <input ref={photoRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => { pickPhoto(e.target.files?.[0]); e.target.value = "" }} />
-              <button className="pf-btn pri" onClick={() => photoRef.current?.click()}><ImagePlus size={15} /> {shownPhoto ? "Change photo" : "Upload your photo"}</button>
+              <button className="pf-btn pri" onClick={() => photoRef.current?.click()}><ImagePlus size={15} /> {shownPhoto ? "Change photo" : "Choose photo"}</button>
               {shownPhoto && <button className="pf-btn" onClick={() => setCropping(v => !v)}>{cropping ? "Done cropping" : "Crop"}</button>}
               {shownPhoto && <button className="pf-btn" onClick={removePhoto}><Trash2 size={14} /> Remove photo</button>}
             </div>
-            {shownPhoto && cropping && <div style={{ marginTop: 14 }}>
+            {shownPhoto && cropping && <div style={{ flexBasis: "100%" }}>
               <label className="pf-label" htmlFor="pf-zoom">Zoom</label>
               <input id="pf-zoom" type="range" min={1} max={3} step={0.01} value={brand.photoPos.zoom} onChange={e => edit({ photoPos: { ...brand.photoPos, zoom: +e.target.value } })} style={{ width: "100%", accentColor: ACCENT_SOLID }} />
             </div>}
-            {photoMsg ? <p className="pf-err" style={{ margin: "8px 0 0" }}>{photoMsg}</p> : <p className="pf-hint" style={{ margin: "8px 0 0" }}>It fills the top of your card. Drag it in the frame to crop.</p>}
+            {photoMsg && <p className="pf-err" style={{ margin: "8px 0 0" }}>{photoMsg}</p>}
           </div>
 
           <div className="pf-g2" style={{ marginBottom: 16 }}>

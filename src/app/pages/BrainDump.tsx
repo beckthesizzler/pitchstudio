@@ -445,8 +445,9 @@ export default function BrainDumpPage() {
         .bd-pin-in:focus { box-shadow: 0 0 0 3px ${ACCENT_SOLID}; }
         .bd-pin-in::placeholder { color: rgba(27,26,23,.45); }
         .bd-hint { font-size: 11.5px; color: ${TEXT_MUTED}; margin-top: 6px; }
-        .bd-how { border: 1px solid ${DS_BORDER}; border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; }
-        .bd-how div { display: grid; grid-template-columns: 18px 1fr; gap: 6px; font-size: 12.5px; line-height: 1.4; color: ${TEXT_MUTED}; }
+        .bd-how { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 12px; padding: 12px 14px; display: grid; gap: 9px; }
+        .bd-how .bd-cap { color: ${ACCENT_SOLID}; }
+        .bd-how > div:not(.bd-cap) { display: grid; grid-template-columns: 18px 1fr; gap: 6px; font-size: 12.5px; line-height: 1.4; color: ${TEXT_MUTED}; }
         .bd-how i { font: 700 12px 'JetBrains Mono', monospace; font-style: normal; color: ${ACCENT_SOLID}; }
         .bd-search { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 10px; background: ${SURFACE_BASE}; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
         .bd-search input { flex: 1; min-width: 0; border: none; outline: none; background: none; color: ${TEXT_PRIMARY}; font: 500 13px 'Inter', sans-serif; }
@@ -555,6 +556,7 @@ export default function BrainDumpPage() {
         .bd-phone-only { display: none; }
         .bd-live { position: fixed; left: 0; bottom: 0; width: 0; height: 0; }
         @media (max-width: 700px) {
+          .bd-icon { width: 44px; height: 44px; } .bd-tag-name { min-height: 40px; } .bd-tag-more { width: 40px; height: 40px; }
           .bd { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
           .bd-side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-right: none; border-bottom: 1px solid ${DS_BORDER}; overflow: visible; }
           .bd-side-top { flex-shrink: 0; } .bd-side-top b { display: none; }
