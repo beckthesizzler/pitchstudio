@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ArrowLeft, Bold, Check, GitFork, Heading, Highlighter, Italic, Link2, List, ListOrdered, Loader2, MoreHorizontal, PenLine, Plus, Search, Trash2, Type, Unlink, X } from "lucide-react"
+import { ArrowLeft, Bold, Check, GitFork, Heading, Highlighter, Italic, Link2, List, ListOrdered, Loader2, MoreHorizontal, PenLine, Plus, Search, Sprout, Trash2, Type, Unlink, X } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { reportError, track } from "../lib/telemetry"
 import { listName, type PieceKind } from "../lib/names"
@@ -8,9 +8,10 @@ import { Mark as PSMark } from "../brand/Mark"
 import { MindMap, newMap } from "../braindump/MindMap"
 import { Diagram, newDiagram } from "../braindump/Diagram"
 import { HAND, loadHand } from "../braindump/sketch"
-import { COLORS, COLS, STATUSES, clean, col, hex, madeLabel, nameOf, newText, nid, plain, readNote, type Block, type Color, type Kind, type Note, type Status, type TextBlock } from "../braindump/notes"
+import { COLORS, COLS, STATUSES, clean, col, firstLine, hex, madeLabel, nameOf, newText, nid, plain, readNote, type Block, type Color, type Kind, type Note, type Status, type TextBlock } from "../braindump/notes"
 import { Banner, PIN, Popover, STACK_W, THREAD, TILTS, Threads, layoutColumn, plantStage, type Row } from "../braindump/Wall"
 import { PLANT_CSS, Plant, TreeView, type Stage } from "../braindump/Plant"
+import { GROW_CSS, GrowPanel } from "../braindump/Grow"
 import { ACCENT_SOLID, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR } from "../theme"
 
 /* Dump & Arrange ("/braindump"): your wall of ideas. Pin a note as fast as it comes; it lands in "Just pinned". Piles are
@@ -52,6 +53,8 @@ export default function BrainDumpPage() {
   const [toast, setToast] = useState("")
   const [quick, setQuick] = useState("")
   const [menu, setMenu] = useState<Menu | null>(null)
+  const [growing, setGrowing] = useState(true) // "Grow this idea" beside the tree (closed until the next tree once you close it)
+  const [makingFor, setMakingFor] = useState<string | null>(null) // the pile a report is being made from
   const [renaming, setRenaming] = useState<string | null>(null) // a pile whose name tag is being typed into
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; over: string | null } | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
@@ -268,6 +271,34 @@ export default function BrainDumpPage() {
     setToast(p ? `“${n ? nameOf(n) : "That note"}” became a ${p.kind}.` : "Link removed.")
     if (p) track("note_made", { kind: p.kind })
   }
+  /** A pile's question is the first line of its page */
+  const setQuestion = (id: string, q: string) => change(id, n => {
+    const html = q.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    const i = n.body.findIndex(b => b.type === "text")
+    if (i < 0) return { ...n, body: [{ ...newText(), html } as TextBlock, ...n.body] }
+    return { ...n, body: n.body.map((b, j) => (j === i ? { ...(b as TextBlock), html } : b)) }
+  })
+  /** The fruit: a match report made from the idea (its question as the headline, its points as the story), linked to the pile and opened */
+  const makeReport = async (pileId: string) => {
+    const p = byId.get(pileId)
+    if (!p || !user || makingFor) return
+    setMakingFor(pileId)
+    try {
+      const { makeShape } = await import("../report/templates")
+      const { pieceName } = await import("../lib/names")
+      const q = firstLine(p).trim(), pts = kids(pileId).filter(n => n.kind === "note" && n.title.trim()).slice(0, 5).map(n => n.title.trim())
+      const base = makeShape("story")
+      const headline = (q || nameOf(p)).toUpperCase().slice(0, 90)
+      const report = { ...base, blocks: base.blocks.map((b: any, i: number) => (i === 0 && b.kind === "text" ? { ...b, text: headline } : b.kind === "story" ? { ...b, title: "The points", points: pts.length ? pts : b.points } : b)) }
+      const id = crypto.randomUUID()
+      const { error } = await (supabase as any).from("reports").insert({ id, user_id: user.id, title: pieceName("Report", "", headline, new Date().toISOString()), data: report })
+      if (error) { setToast(/limit/.test(error.message || "") ? "You have 500 reports. Delete a few to make another." : "Couldn't make the report. Try again."); return }
+      change(pileId, n => ({ ...n, made_ref: `report:${id}`, status: "making" }), 0)
+      track("pile_made_report", { points: pts.length })
+      navigate(`/report?open=${id}`)
+    } catch (e) { reportError(e, "pile_make_report"); setToast("Couldn't make the report. Try again.") }
+    finally { setMakingFor(null) }
+  }
   /** Your 20 most recent boards, reports and analyses, asked for once, when you first link a note to one */
   const loadPieces = async () => {
     if (pieces || !user) return
@@ -397,6 +428,7 @@ export default function BrainDumpPage() {
     const drop = p ? `pile:${p.id}` : "pinned"
     return (
       <section key={c.id} className={`bd-col${over ? " over" : ""}${flash === c.id ? " flash" : ""}`} data-col={c.id} aria-label={p ? nameOf(p) : "Just pinned"}>
+        <div className="bd-head">
         <div className="bd-tag" data-drop={drop} style={{ ["--dot" as any]: p ? col(p.color).root : "#8a8378" }}
           onContextMenu={e => { if (!p) return; e.preventDefault(); setMenu({ kind: "pile", id: p.id, x: e.clientX, y: e.clientY }) }}>
           <span className="bd-tag-pin" aria-hidden="true" />
@@ -410,11 +442,12 @@ export default function BrainDumpPage() {
           {p && <button className="bd-tag-more" aria-label={`More for ${nameOf(p)}`} onClick={e => { const b = e.currentTarget.getBoundingClientRect(); setMenu({ kind: "pile", id: p.id, x: b.left, y: b.bottom + 4 }) }}><MoreHorizontal size={15} /></button>}
         </div>
         {p && (
-          <button className="bd-grow" onClick={() => navigate(`/braindump?tree=${p.id}&view=tree`)} aria-label={`${st.label}, ${c.ties} tie${c.ties === 1 ? "" : "s"}. Open the tree`}>
+          <button className="bd-grow" onClick={() => { setGrowing(true); navigate(`/braindump?tree=${p.id}&view=tree`) }} aria-label={`${st.label}, ${c.ties} tie${c.ties === 1 ? "" : "s"}. Grow this idea`} title="Grow this idea">
             <Plant stage={st.id as Stage} pop={popped.has(c.id)} />
-            <span><b>{st.label}</b><small>{c.ties} tie{c.ties === 1 ? "" : "s"} · open</small></span>
+            <span><b>{st.label}</b><small>{c.ties} tie{c.ties === 1 ? "" : "s"}</small></span>
           </button>
         )}
+        </div>
         <div className="bd-col-body" data-drop={drop}>
           {c.rows.length === 0
             ? <div className="bd-empty" data-drop={drop}>{p ? "Drop a note here" : notes === null ? "Loading…" : "Pin a note. It lands here."}</div>
@@ -483,10 +516,15 @@ export default function BrainDumpPage() {
         input.bd-tag-name { cursor: text; border-bottom: 1.5px dashed rgba(27,26,23,.4); }
         .bd-tag-more { width: 28px; height: 28px; border-radius: 7px; border: none; background: none; color: #1b1a17; display: grid; place-items: center; cursor: pointer; opacity: .6; }
         .bd-tag-more:hover { opacity: 1; background: rgba(27,26,23,.08); }
-        .bd-grow { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; padding: 3px 8px 3px 4px; border: none; border-radius: 8px; background: none; color: #1b1a17; cursor: pointer; text-align: left; align-self: flex-start; }
-        .bd-grow:hover { background: rgba(255,255,255,.3); }
-        .bd-grow b { display: block; font: 700 11px 'JetBrains Mono', monospace; letter-spacing: .12em; text-transform: uppercase; }
-        .bd-grow small { font: 500 11.5px 'Inter', sans-serif; opacity: .65; }
+        .bd-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .bd-head .bd-tag { flex: 1; min-width: 0; height: auto; min-height: 42px; padding-top: 4px; padding-bottom: 4px; }
+        .bd-head button.bd-tag-name { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.15; font-size: 16.5px; overflow-wrap: anywhere; }
+        .bd-head .bd-tag-more { width: 24px; flex-shrink: 0; }
+        .bd-grow { flex-shrink: 0; display: flex; align-items: center; gap: 6px; height: 42px; padding: 0 9px 0 2px; border: none; border-radius: 9px; background: #1d1e22; color: #fff; cursor: pointer; text-align: left; box-shadow: 0 6px 14px -8px rgba(0,0,0,.55); transition: transform .14s, background .14s; }
+        .bd-grow:hover { background: #2a2b31; transform: translateY(-1px); }
+        .bd-grow:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
+        .bd-grow b { display: block; font: 700 12.5px 'Inter', sans-serif; line-height: 1.1; }
+        .bd-grow small { display: block; font: 500 10.5px 'Inter', sans-serif; opacity: .62; white-space: nowrap; }
         .bd-col-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 14px 0 20px 2px; scrollbar-width: thin; }
         .bd-stack { position: relative; }
         .bd-threads { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; overflow: visible; }
@@ -516,6 +554,7 @@ export default function BrainDumpPage() {
         .bd-menu .warn { font-size: 12.5px; color: ${TEXT_MUTED}; padding: 4px 8px 8px; line-height: 1.45; }
         .bd-menu .del { color: ${DS_ERROR}; }
         ${PLANT_CSS}
+        ${GROW_CSS}
         @keyframes bd-in { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
         .bd-sheet { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bd-paper); color: #1b1a17; animation: bd-in .32s cubic-bezier(.2,.8,.2,1) both; }
         .bd-sheet .bd-swatch[aria-pressed="true"] { border-color: #1b1a17; box-shadow: 0 0 0 2px var(--bd-paper), 0 0 0 4px #1b1a17; }
@@ -593,7 +632,7 @@ export default function BrainDumpPage() {
           <div className="bd-cap" style={{ margin: 0 }}><span>How it grows</span></div>
           <div><i>1</i><span>Drag a note onto another. A red thread ties them.</span></div>
           <div><i>2</i><span>Every thread grows the pile's plant, from seed to tree.</span></div>
-          <div><i>3</i><span>Tap the plant to see the tree: your question, your points, what you made.</span></div>
+          <div><i>3</i><span>Tap the plant to grow the idea: your question, your points, then a report made from it.</span></div>
         </div>
         <div className="bd-piles-box">
           <div className="bd-cap"><span>Piles</span><span>{piles.length || ""}</span></div>
@@ -617,7 +656,12 @@ export default function BrainDumpPage() {
         {loadFailed && <div className="bd-failed" role="alert"><b>Your notes didn't load.</b><span>Nothing is lost. They're kept in your account.</span><button className="bd-btn" onClick={() => setTries(t => t + 1)}>Try again</button></div>}
         {tvPile && tvPile.kind === "tree" && tvCol
           ? <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
-              <TreeView pile={tvPile} kids={kids} under={under} stage={stageOf(tvCol).id as Stage} onBack={() => navigate("/braindump")} onOpen={setOpen} onNavigate={to => navigate(to)} />
+              <TreeView pile={tvPile} kids={kids} under={under} stage={stageOf(tvCol).id as Stage} onBack={() => navigate("/braindump")} onOpen={setOpen} onNavigate={to => navigate(to)}
+                onGrow={growing ? undefined : () => setGrowing(true)}
+                aside={growing ? <GrowPanel key={tvPile.id} pile={tvPile} kids={kids} making={makingFor === tvPile.id}
+                  onQuestion={t => setQuestion(tvPile.id, t)} onAdd={parent => add("note", parent)} onTitle={(id, t) => change(id, n => ({ ...n, title: t }))}
+                  onRemove={remove} onMake={() => makeReport(tvPile.id)} onClose={() => setGrowing(false)}
+                  onLink={() => { loadPieces(); setMenu({ kind: "note", id: tvPile.id, x: 380, y: 160, sub: "made" }) }} /> : undefined} />
             </div>
           : <div className="bd-wall">
               <Banner />
@@ -669,7 +713,8 @@ export default function BrainDumpPage() {
           </> : <>
             <button className="bd-row" onClick={() => { setRenaming(mPile.id); setMenu(null) }}><Type size={14} /><span className="t">Rename</span></button>
             <button className="bd-row" onClick={() => { setOpen(mPile.id); setMenu(null) }}><PenLine size={14} /><span className="t">Write its question</span></button>
-            <button className="bd-row" onClick={() => { navigate(`/braindump?tree=${mPile.id}&view=tree`); setMenu(null) }}><GitFork size={14} /><span className="t">See the tree</span></button>
+            <button className="bd-row" onClick={() => { setGrowing(true); navigate(`/braindump?tree=${mPile.id}&view=tree`); setMenu(null) }}><Sprout size={14} /><span className="t">Grow this idea</span></button>
+            <button className="bd-row" onClick={() => { setGrowing(false); navigate(`/braindump?tree=${mPile.id}&view=tree`); setMenu(null) }}><GitFork size={14} /><span className="t">See the tree</span></button>
             <button className="bd-row" onClick={async () => { setMenu(null); const n = await add("note", mPile.id); if (n) setOpen(n.id) }}><Plus size={14} /><span className="t">New note in this pile</span></button>
             <p>Colour</p>
             <div className="bd-sw">{COLORS.map(c => <button key={c.id} className="bd-swatch" aria-label={`Pile colour ${c.id}`} aria-pressed={mPile.color === c.id} style={{ background: c.c }} onClick={() => change(mPile.id, n => ({ ...n, color: c.id }), 300)} />)}</div>

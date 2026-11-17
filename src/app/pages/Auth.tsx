@@ -307,6 +307,7 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
         .au-btn.sec { background: transparent; color: ${TEXT_PRIMARY}; border-color: ${DS_BORDER}; margin-top: 12px; }
         .au-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
         .au-tile { text-align: left; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 14px; padding: 13px 14px; color: ${TEXT_PRIMARY}; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; transition: border-color .12s, background .12s; }
+        .au-tile:last-child:nth-child(odd) { grid-column: 1 / -1; }
         .au-tile small { display: block; font-weight: 400; font-size: 12px; color: ${TEXT_MUTED}; margin-top: 3px; }
         .au-tile:hover { border-color: ${TEXT_MUTED}; }
         .au-tile.on { border-color: ${ACCENT_SOLID}; background: ${ACCENT_SOFT}; box-shadow: inset 0 0 0 1px ${ACCENT_SOLID}; }
@@ -320,7 +321,10 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
         .au-or { display: flex; align-items: center; gap: 12px; margin-top: 18px; font-size: 12px; color: ${TEXT_MUTED}; }
         .au-or::before, .au-or::after { content: ""; flex: 1; height: 1px; background: ${DS_BORDER}; }
         .au-right { background: radial-gradient(900px 520px at 30% 18%, var(--ps-glow), transparent), ${SURFACE_1}; display: flex; flex-direction: column; justify-content: center; padding: 56px 0 56px 56px; gap: 28px; overflow: hidden; border-left: 1px solid ${DS_BORDER}; }
-        .au-quote { font-size: clamp(26px, 2.6vw, 36px); letter-spacing: -.03em; line-height: 1.15; font-weight: 700; max-width: 520px; margin: 0; }
+        .au-quote { font: 400 clamp(44px, 4.6vw, 68px)/0.98 Anton, 'Barlow Condensed', sans-serif; letter-spacing: .005em; max-width: 560px; margin: 0; } /* the same voice as the landing page */
+        .au-chips { display: flex; flex-wrap: wrap; gap: 8px; padding-right: 56px; }
+        .au-chips span { font: 600 13px 'Inter', sans-serif; padding: 7px 12px; border-radius: 999px; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
+        .au-chips span.on { background: ${ACCENT_SOLID}; border-color: ${ACCENT_SOLID}; color: ${ACCENT_INK}; }
         .au-quote span { color: ${ACCENT_TEXT}; display: block; }
         .au-shot { width: 118%; border-radius: 14px 0 0 14px; overflow: hidden; border: 1px solid ${DS_BORDER}; box-shadow: 0 30px 90px rgba(0,0,0,.3); }
         .au-mail { width: 64px; height: 64px; border-radius: 18px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; display: grid; place-items: center; color: ${ACCENT_TEXT}; }
@@ -354,10 +358,10 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
                 {signup && step === 2 && (
                   <button className="au-back" onClick={() => { setStep(1); setError("") }}><ArrowLeft size={15} /> Back</button>
                 )}
-                <div className="au-eyebrow">{signup ? (step === 1 ? "STEP 1 OF 2" : "STEP 2 OF 2") : "WELCOME BACK"}</div>
+                <div className="au-eyebrow">{signup ? (step === 1 ? "STEP 1 OF 3" : "STEP 2 OF 3") : "WELCOME BACK"}</div>
                 <h1 className="au-h1">{!signup ? "Sign in" : step === 1 ? "Create your free account" : "Pick your name"}</h1>
                 <p className="au-p">{!signup ? "Pick up where you left off." : step === 1 ? "Save every board and sign your exports with your own name." : "It goes on every export, like a signature."}</p>
-                {signup && <div className="au-prog" aria-hidden="true"><i className="on" /><i className={step === 2 ? "on" : ""} /></div>}
+                {signup && <div className="au-prog" aria-hidden="true"><i className="on" /><i className={step === 2 ? "on" : ""} /><i /></div>}
                 {google && (!signup || step === 1) && <>
                   <button type="button" className="au-btn sec" style={{ marginTop: 22 }} onClick={withGoogle} disabled={loading}>Continue with Google</button>
                   <div className="au-or">or use your email</div>
@@ -413,8 +417,9 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
           </div>
         </div>
         <div className="au-right" aria-hidden="true">
-          <p className="au-quote">Enable your creativity.<span>Where your genius comes to life.</span></p>
+          <p className="au-quote">SEE THE GAME.<span>MAKE IT YOURS.</span></p>
           <div className="au-shot"><BoardArt /></div>
+          <div className="au-chips"><span className="on">Free, all of it</span><span>MP4 · GIF · PNG</span><span>16:9 · 4:5 · 1:1 · 9:16</span><span>Your name on every export</span></div>
         </div>
       </div>
     </div>

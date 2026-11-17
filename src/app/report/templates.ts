@@ -242,14 +242,18 @@ export function makeTemplate(id: TemplateId, handle = ""): Report {
       text(900, 74, 620, "Key 3 · Balance", "label", 19, "right", "story"),
       text(80, 62, 1100, "Who covers his post?", "title", 100),
       text(80, 186, 1100, "Inter 2–1 Napoli · Serie A · Matchday 12", "label", 17),
-      text(80, 268, 700, "1  Compact", "title", 50),
-      text(80, 330, 700, "Three reach the first man. His post is covered.", "text", 23, "left", "muted"),
-      pitch(80, 380, 700, "half", one, { teams, crest: false, legend: false, ms: 1.7 }),
-      text(820, 268, 700, "2  Spread out", "title", 50),
-      text(820, 330, 700, "He's alone, and his post is open.", "text", 23, "left", "muted"),
-      pitch(820, 380, 700, "half", two, { teams, crest: false, legend: true, ms: 1.7 }),
-      text(80, 1040, 1440, "Bastoni jumps into midfield and the ball is lost. Compact, and three of his team reach the first man while his post is already covered. Spread out, and he's alone: his post is open and the counter is on.", "text", 32),
-      { id: newId(), kind: "stats", x: 80, y: 1225, w: 1440, s: 1, type: "team", player: "", num: "", rows: [{ value: "3", label: "Reach the first man, compact" }, { value: "1", label: "Reaches him, spread out" }, { value: "4s", label: "Until the counter hits his post" }] },
+      // two pitches as big as the page allows, each with its own number and verdict under it, then one closing line
+      text(80, 262, 700, "1  Compact", "title", 50),
+      text(80, 324, 700, "Three reach the first man. His post is covered.", "text", 23, "left", "muted"),
+      pitch(80, 372, 700, "half", one, { teams, crest: false, legend: false, ms: 1.7 }),
+      text(820, 262, 700, "2  Spread out", "title", 50),
+      text(820, 324, 700, "He's alone, and his post is open.", "text", 23, "left", "muted"),
+      pitch(820, 372, 700, "half", two, { teams, crest: false, legend: true, ms: 1.7 }),
+      text(80, 975, 200, "3", "title", 170, "left", "story"),
+      text(230, 1055, 540, "of his team reach the first man", "text", 30),
+      text(820, 975, 200, "1", "title", 170, "left", "story"),
+      text(950, 1040, 570, "reaches him, and the counter hits his post in 4 seconds", "text", 30),
+      text(80, 1250, 1440, "Bastoni can jump only when the team is compact behind him. Spread out, the same jump hands the ball and his post to the counter.", "text", 38),
       text(80, 1490, 900, "Illustrative, not a match moment.", "label", 14),
     ] }
   }
@@ -284,13 +288,17 @@ export function makeTemplate(id: TemplateId, handle = ""): Report {
     pl(0, [0.9, 0.8], "23", "Koundé", false, "left"), pl(0, [0.08, 0.72], "3", "Balde", false, "right"),
     pin([0.53, 0.84], 1), pin([0.6, 0.62], 2), pin([0.8, 0.4], 3),
   ]
+  // one player, one pattern: the pitch is the hero, his number anchors the right, and the three steps on the pitch are the three points beside it
   return { v: 2, format: "1:1", mode: "bright", paper: null, story: null, glow: false, seal: "br", blocks: [
-    text(80, 74, 1440, "Match report · Barcelona 2–0 Athletic", "label", 16),
-    text(84, 108, 1440, "PEDRI, FREE BETWEEN THE LINES", "title", 108, "left", "story"),
-    text(80, 258, 1000, "Athletic's midfield jumps to De Jong. That one step leaves a pocket behind it, and Pedri lives there.", "text", 23),
-    pitch(80, 380, 1000, "half", marks, { legend: true }),
-    { id: newId(), kind: "story", x: 1140, y: 390, w: 380, s: 1, title: "The idea", points: ["De Jong drops in and draws the midfield.", "The pocket opens: Pedri gets the ball on the half-turn.", "One pass and Fermín is running at the back four."] },
-    slot(1130, 730, 400, 740),
-    { id: newId(), kind: "stats", x: 80, y: 1260, w: 1000, s: 1, type: "team", player: "", num: "", rows: [{ value: "94", label: "Pedri passes" }, { value: "17", label: "Between the lines" }, { value: "4", label: "Chances made" }] },
+    text(80, 70, 1440, "Micro breakdown · Barcelona 2–0 Athletic · LaLiga", "label", 17),
+    text(84, 104, 1440, "PEDRI, FREE BETWEEN THE LINES", "title", 104, "left", "story"),
+    text(80, 250, 1020, "Athletic's midfield jumps to De Jong. That one step leaves a pocket behind it, and Pedri lives there.", "text", 26),
+    pitch(80, 360, 1020, "half", marks, { legend: true }),
+    text(1160, 360, 360, "The player", "label", 16),
+    text(1150, 386, 370, "8", "title", 250, "left", "story"),
+    text(1160, 640, 360, "PEDRI", "title", 74),
+    { id: newId(), kind: "story", x: 1160, y: 770, w: 360, s: 1, title: "The pattern", points: ["De Jong drops in and draws the midfield.", "The pocket opens: Pedri takes it on the half-turn.", "One pass, and Fermín runs at the back four."] },
+    { id: newId(), kind: "stats", x: 80, y: 1210, w: 1440, s: 1, type: "team", player: "", num: "", rows: [{ value: "94", label: "Pedri passes" }, { value: "17", label: "Between the lines" }, { value: "4", label: "Chances made" }] },
+    text(80, 1420, 1200, "Leave the pocket open and he will live in it.", "title", 52),
   ] }
 }

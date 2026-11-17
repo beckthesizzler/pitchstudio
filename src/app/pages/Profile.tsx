@@ -10,7 +10,7 @@ import { Mark } from "../brand/Mark"
 import { CreatorCard } from "../brand/CardArt"
 import { CreatorSeal } from "../brand/Signature"
 import { CREST_IDS, CREST_LABELS, CrestIcon } from "../brand/crests"
-import { CARD_STYLES, COLOURS, DEFAULT_BRAND, DEFAULT_POS, LOGO_BUCKET, LOGO_PREFIX, MOTTO_MAX, PACKS, SKINS, SKIN_LABELS, TITLES, TITLE_MAX, brandForSave, cardColours, logoToDataUrl, readBrand, shrinkPhoto, squareLogo, type Brand } from "../brand/brand"
+import { CARD_STYLES, COLOURS, DEFAULT_BRAND, DEFAULT_POS, LOGO_BUCKET, LOGO_PREFIX, MOTTO_MAX, PAIRS, SKINS, SKIN_LABELS, TITLES, TITLE_MAX, brandForSave, logoToDataUrl, readBrand, shrinkPhoto, squareLogo, type Brand } from "../brand/brand"
 import { openStudio, sinceLabel, studioLabel } from "../lib/studio"
 
 const SITE = "https://pitchstudio-brown.vercel.app"
@@ -264,7 +264,7 @@ export default function ProfilePage() {
   }
 
   const surprise = () => {
-    edit({ color: pick(COLOURS), crest: pick(CREST_IDS), title: pick(TITLES) }) // a chosen logo stays; the crest behind it changes
+    edit({ color: pick(COLOURS), color2: null, crest: pick(CREST_IDS), title: pick(TITLES) }) // a chosen logo stays; the crest behind it changes
   }
 
   const downloadCard = () => shareImage("card")
@@ -316,6 +316,10 @@ export default function ProfilePage() {
         .pf-btn:disabled { opacity: .55; cursor: default; }
         .pf-panel { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 16px; padding: 18px; }
         .pf-pitch { height: 74px; border-radius: 8px; border: 1.5px solid rgba(255,255,255,.5); background: repeating-linear-gradient(90deg,#1f6a31 0 26px,#1a5c2a 26px 52px); overflow: hidden; }
+        .pf-pairs { gap: 10px; }
+        .pf-pair { display: inline-flex; gap: 3px; padding: 5px; border-radius: 10px; border: 2px solid transparent; background: ${SURFACE_2}; cursor: pointer; }
+        .pf-pair i { width: 18px; height: 26px; border-radius: 5px; display: block; box-shadow: inset 0 0 0 1px rgba(128,128,128,.25); }
+        .pf-pair.on { border-color: ${ACCENT_SOLID}; }
         .pf-photo { border-style: dashed; border-color: var(--ps-bd2); display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
         .pf-photo > .cc-row { margin: 0; }
         .pf-photo-row { flex: 1 1 280px; display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -478,21 +482,16 @@ export default function ProfilePage() {
           </div>
 
           <p className="pf-sec" style={{ marginTop: 22 }}>MY COLOURS</p>
-          <div className="cc-row" style={{ marginBottom: 12 }}>
-            {COLOURS.map(c => <button key={c} className={`cc-sw${brand.color === c ? " on" : ""}`} aria-label={`Colour ${c}`} aria-pressed={brand.color === c} style={{ background: c }} onClick={() => edit({ color: c })} />)}
-            <input type="color" className="cc-color" aria-label="Pick any colour" value={brand.color} onChange={e => edit({ color: e.target.value.toLowerCase() })} />
-          </div>
-          <div className="cc-packs" style={{ marginBottom: 26 }}>
-            {PACKS.map(p => {
-              const c = cardColours({ ...brand, color: p.color })
-              const on = brand.color === p.color && brand.crest === p.crest && brand.title === p.title
-              return (
-                <button key={p.id} className={`cc-pack${on ? " on" : ""}`} aria-pressed={on} onClick={() => edit({ color: p.color, crest: p.crest, title: p.title })}
-                  style={{ background: `linear-gradient(160deg, ${c.top}, ${c.bottom})`, color: c.text, height: 70 }}>
-                  <b>{p.title}</b><span>{p.note}</span>
-                </button>
-              )
+          <div className="cc-row pf-pairs" style={{ marginBottom: 12 }}>
+            {PAIRS.map(p => {
+              const on = brand.color === p.c1 && brand.color2 === p.c2
+              return <button key={p.name} className={`pf-pair${on ? " on" : ""}`} aria-label={p.name} aria-pressed={on} title={p.name} onClick={() => edit({ color: p.c1, color2: p.c2 })}><i style={{ background: p.c1 }} /><i style={{ background: p.c2 }} /></button>
             })}
+          </div>
+          <div className="cc-row" style={{ marginBottom: 26 }}>
+            <span className="pf-hint" style={{ margin: "0 4px 0 0" }}>Or one colour</span>
+            {COLOURS.map(c => <button key={c} className={`cc-sw${brand.color === c && !brand.color2 ? " on" : ""}`} aria-label={`Colour ${c}`} aria-pressed={brand.color === c && !brand.color2} style={{ background: c }} onClick={() => edit({ color: c, color2: null })} />)}
+            <input type="color" className="cc-color" aria-label="Pick any colour" value={brand.color} onChange={e => edit({ color: e.target.value.toLowerCase(), color2: null })} />
           </div>
 
           <div className="pf-panel pf-share" style={{ marginBottom: 22 }}>

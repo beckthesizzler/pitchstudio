@@ -30,8 +30,13 @@ export function Avatar({ skin, kit, hair, hairColor = "#101114" }: { skin: strin
   )
 }
 
-/** The four looks: background, text, and the two colour bars */
+/** The four looks: background, text, and the two colour bars (a chosen pair shows as the two bars) */
 function look(brand: Brand) {
+  const l = baseLook(brand), c2 = brand.color2
+  if (!c2) return l
+  return brand.style === "matte" ? { ...l, bar1: c2, bar2: inkFor(brand.color) } : { ...l, bar1: brand.color, bar2: c2 } // the pair, in club order (matte sits on the main colour, so it shows the second one and the ink)
+}
+function baseLook(brand: Brand) {
   const c = cardColours(brand), main = brand.color
   switch (brand.style) {
     case "matte": return { bg: main, bg2: shade(main, -0.25), text: inkFor(main), soft: inkFor(main), bar1: inkFor(main), bar2: shade(main, isDark(main) ? 0.35 : -0.35), edge: null as string | null, outline: null as string | null, frame: shade(main, -0.35) }

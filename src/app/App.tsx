@@ -42,6 +42,7 @@ const ReportPage = lazy(() => import("./pages/Report")) // only downloaded when 
 const BrainDumpPage = lazy(() => import("./pages/BrainDump")) // only downloaded when someone opens Brain Dump
 const ShelfPage = lazy(() => import("./pages/Shelf")) // only downloaded when someone opens their shelf
 const PublicCardPage = lazy(() => import("./pages/PublicCard")) // a creator's public card, open to anyone
+const WelcomePage = lazy(() => import("./pages/Welcome")) // "Your studio is open", once, after sign-up
 import Tour, { TOUR_KEY } from "./Tour"
 
 /* ─────────────────────────── Types ─────────────────────────── */
@@ -994,18 +995,20 @@ function readTeamNews(text: string): TeamNews {
   const fromLines = sizes.length >= 4 && sizes.length <= 6 && sizes[0] === 1 && sizes.reduce((a, b) => a + b, 0) === 11 ? sizes.slice(1).join("-") : ""
   return { team, formation: written && tens(written) ? written : fromLines, names: groups.flat().slice(0, 11) }
 }
-/** A saved squad: a team's name, kit, and players' names and numbers in team-sheet order. Kept in this browser, for any board. */
+/** A saved squad: a team's name, kit, and players' names and numbers in team-sheet order. Kept in your account (and in this browser, for speed), for any board on any device. */
 interface Squad { id: string; name: string; teamName: string; kit: { pat: KitPattern; c1: string; c2: string; num: string }; players: { name: string; num: string }[] }
 const SQUADS_KEY = "ps-squads"
+const goodSquads = (v: unknown): Squad[] => Array.isArray(v) ? v.filter((q: Squad) => q && typeof q.id === "string" && typeof q.name === "string" && Array.isArray(q.players) && q.kit && KIT_PATTERNS.includes(q.kit.pat)).slice(0, 100) : []
 const readSquads = (): Squad[] => {
-  try {
-    const v = JSON.parse(localStorage.getItem(SQUADS_KEY) || "[]")
-    return Array.isArray(v) ? v.filter((q: Squad) => q && typeof q.id === "string" && typeof q.name === "string" && Array.isArray(q.players) && q.kit && KIT_PATTERNS.includes(q.kit.pat)) : []
-  } catch { return [] }
+  try { return goodSquads(JSON.parse(localStorage.getItem(SQUADS_KEY) || "[]")) } catch { return [] }
 }
-const writeSquads = (list: Squad[]) => {
+const writeSquads = (list: Squad[], uid?: string) => {
   try { localStorage.setItem(SQUADS_KEY, JSON.stringify(list)) }
   catch { console.warn("Squads couldn't be kept on this device: browser storage is full") }
+  if (uid) {
+    try { void (supabase as any).from("squads").upsert({ user_id: uid, list }).then(({ error }: { error: unknown }) => { if (error) console.warn("Squads weren't saved to your account", error) }) }
+    catch (e) { console.warn("Squads weren't saved to your account", e) } // the browser copy above still holds them
+  }
 }
 
 /* ─────────────────────────── Helpers ────────────────────────── */
@@ -2424,6 +2427,8 @@ function TacticsBoard() {
   const [namesFor, setNamesFor] = useState<"home" | "away" | null>(null) // the team whose names are open
   const [pasteFor, setPasteFor] = useState<"home" | "away" | null>(null) // the "Paste the line-up" box is open for this team
   const [newsText, setNewsText] = useState("")
+  // "Make your first post" from the welcome opens the board on the line-up box
+  useEffect(() => { if (new URLSearchParams(window.location.search).get("start") === "lineup") { setNewsText(""); setPasteFor("home") } }, [])
   const [naming, setNaming] = useState<{ ids: string[]; i: number } | null>(null) // naming players on the pitch, one after another
   const [sheetHl, setSheetHl] = useState<string | null>(null) // the player whose team-sheet row you're in
   const [pasteOpen, setPasteOpen] = useState(false) // the team sheet's "paste a list" box
@@ -2512,6 +2517,15 @@ function TacticsBoard() {
         setCreatorBrand(readBrand((data as any)?.brand))
         peekIssue(authUser.id).then(n => { if (!cancelled) setNextIssue(n) })
       })
+    // your squads from your account; any kept only in this browser join them (the account's copy wins a name both have)
+    ;(supabase as any).from("squads").select("list").eq("user_id", authUser.id).maybeSingle().then(({ data, error }: { data: { list: unknown } | null; error: unknown }) => {
+      if (cancelled || error) return
+      const mine = goodSquads(data?.list), local = readSquads()
+      const merged = [...mine, ...local.filter(q => !mine.some(m => m.name === q.name))].slice(0, 100)
+      setSquads(merged)
+      if (merged.length !== mine.length) writeSquads(merged, authUser.id)
+      else try { localStorage.setItem(SQUADS_KEY, JSON.stringify(merged)) } catch { /* storage full */ }
+    })
     return () => { cancelled = true }
   }, [authUser?.id])
 
@@ -3776,7 +3790,7 @@ function TacticsBoard() {
               className="text-xs font-semibold text-left hover:underline" style={{ color: TEXT_MUTED, background: "transparent", border: "none", padding: 0 }}>
               Save {call} as a squad
             </button>
-            <p className="text-xs" style={{ color: TEXT_MUTED }}>A squad keeps the names, numbers and kit in this browser, for any board.</p>
+            <p className="text-xs" style={{ color: TEXT_MUTED }}>A squad keeps the names, numbers and kit in your account, for any board on any device.</p>
           </div>
         )}
       </div>
@@ -3934,7 +3948,7 @@ function TacticsBoard() {
     setExportNote(news.formation && !known ? `${news.formation} isn't one of the board's shapes yet, so they're in ${f.name}` : `${news.names.length} players in ${f.name}`)
     ;(window as any).posthog?.capture("lineup_pasted", { formation: f.name, players: news.names.length, read: !!news.formation })
   }
-  /** Keeps a team's names, numbers, kit and name as a squad in this browser, to use on any board. Saving under the same name replaces it. */
+  /** Keeps a team's names, numbers, kit and name as a squad in your account, to use on any board. Saving under the same name replaces it. */
   const saveSquad = (team: "home" | "away") => {
     const { f, shape } = formationOf(team)
     const order = lineupOf(players, team, f, shape)
@@ -3942,11 +3956,11 @@ function TacticsBoard() {
     const teamName = (team === "home" ? homeName : awayName).trim()
     const sq: Squad = { id: uid(), name: teamName || (team === "home" ? "Home squad" : "Away squad"), teamName, kit: kitOf(team), players: order.map(p => ({ name: p.name, num: p.num })) }
     const next = [...squads.filter(x => x.name !== sq.name), sq]
-    setSquads(next); writeSquads(next); setSquadId(sq.id)
+    setSquads(next); writeSquads(next, authUser?.id); setSquadId(sq.id)
   }
   const deleteSquad = (id: string) => {
     const next = squads.filter(x => x.id !== id)
-    setSquads(next); writeSquads(next); setSquadId("")
+    setSquads(next); writeSquads(next, authUser?.id); setSquadId("")
   }
   /** Players as the naming box and the team sheet see them: team-sheet order, home first */
   const sheetRows = (team: "home" | "away"): NameRunPlayer[] => {
@@ -7624,6 +7638,7 @@ export default function Root() {
           <Route path="/reset" element={<AuthPage mode="reset" />} />
           <Route path="/goodbye" element={<GoodbyePage />} />
           <Route path="/profile" element={authUser ? <ProfilePage /> : <Navigate to="/" replace />} />
+          <Route path="/welcome" element={authUser ? <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><WelcomePage /></Suspense> : <Navigate to="/" replace />} />
           <Route path="/c/:handle" element={<Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><PublicCardPage /></Suspense>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

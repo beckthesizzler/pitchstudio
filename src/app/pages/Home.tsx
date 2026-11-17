@@ -59,8 +59,10 @@ export default function HomePage() {
       if (off) return
       // new members make their card first, unless they chose to do it later this visit
       if (!profErr && (prof as any)?.brand == null) {
-        let later = false
-        try { later = !!sessionStorage.getItem("ps-card-later") } catch { /* storage blocked */ }
+        // the first time: "Your studio is open". After that, the card first, unless they chose to do it later this visit
+        let welcomed = true, later = false
+        try { welcomed = !!localStorage.getItem(`ps-welcomed-${u.id}`); later = !!sessionStorage.getItem("ps-card-later") } catch { /* storage blocked */ }
+        if (!welcomed) { navigate("/welcome", { replace: true }); return }
         if (!later) { navigate("/profile?welcome=1", { replace: true }); return }
       }
       const raw = (prof as any)?.display_name || (prof as any)?.handle || u.email?.split("@")[0] || ""

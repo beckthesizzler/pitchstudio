@@ -2,10 +2,11 @@
 export const normalizeHandle = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 30)
 
 export const IDENTITY_OPTIONS = [
-  { label: "Content creator", value: "creator", hint: "I post football breakdowns" },
   { label: "Analyst", value: "analyst", hint: "I study the game" },
   { label: "Coach", value: "coach", hint: "I coach a team" },
-  { label: "Just here to play", value: "fan", hint: "For fun" },
+  { label: "Creator", value: "creator", hint: "I post football breakdowns" },
+  { label: "Fan", value: "fan", hint: "Just here to play" },
+  { label: "Scout", value: "scout", hint: "I spot players" },
 ] as const
 
 /** Names the system made from the email look like email-name, underscore, first 4 of the user id (beckhamng07_826b): shown without the suffix. Names people chose (tiki_taka, messi_8f2a) are always shown in full. */

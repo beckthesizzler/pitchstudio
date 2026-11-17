@@ -6,6 +6,7 @@ import { CREST_IDS, type CrestId } from "./crests"
 
 export type Brand = {
   color: string       // the card's main colour
+  color2: string | null // a second colour (a club pair): the card's second bar. null: picked to suit the main colour
   crest: CrestId      // the icon on the crest (used when there is no logo)
   title: string       // the line at the bottom of the card ("The Tactician")
   motto: string       // one line under the name
@@ -24,9 +25,18 @@ export const CARD_STYLES: { id: CardStyle; name: string }[] = [{ id: "foil", nam
 export const DEFAULT_POS: PhotoPos = { x: 0.5, y: 0.5, zoom: 1, ar: 1 }
 
 /** The card everyone starts with: charcoal, a ball crest, a studio-green face. */
-export const DEFAULT_BRAND: Brand = { color: "#2b2d33", crest: "ball", title: "The Creator", motto: "", skin: PS_VOLT, hair: true, madeWith: true, logo: null, photo: null, photoPos: DEFAULT_POS, style: "foil" }
+export const DEFAULT_BRAND: Brand = { color: "#2b2d33", color2: null, crest: "ball", title: "The Creator", motto: "", skin: PS_VOLT, hair: true, madeWith: true, logo: null, photo: null, photoPos: DEFAULT_POS, style: "foil" }
 
 export const COLOURS = ["#e53935", "#3b6cf0", "#2b2d33", "#f5b70a", "#8b5cf6", "#10b981", "#f472b6", "#f2f0ea"]
+/** Two-colour pairs, the way clubs wear them: the card's main colour and its second bar */
+export const PAIRS: { name: string; c1: string; c2: string }[] = [
+  { name: "Garnet and blue", c1: "#a11d48", c2: "#1f4ba0" },
+  { name: "Claret and sky", c1: "#6e1e3a", c2: "#95bfe5" },
+  { name: "Green and white", c1: "#1d5a2c", c2: "#f2f0ea" },
+  { name: "Volt and black", c1: "#d7ff3c", c2: "#121316" },
+  { name: "Navy and gold", c1: "#1f3e8c", c2: "#f5b70a" },
+  { name: "Red and white", c1: "#e53935", c2: "#f2f0ea" },
+]
 export const SKINS = [PS_VOLT, "#f1c9a5", "#e0ac7e", "#c68642", "#8d5524", "#5c3a21", "#3a2416"]
 export const SKIN_LABELS = ["Studio green", "Light", "Fair", "Tan", "Brown", "Deep brown", "Dark"]
 export const PACKS: { id: string; title: string; note: string; color: string; crest: CrestId }[] = [
@@ -54,6 +64,7 @@ export function readBrand(raw: unknown): Brand {
   const n = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d)
   return {
     color: typeof r.color === "string" && HEX.test(r.color) ? r.color.toLowerCase() : d.color,
+    color2: typeof r.color2 === "string" && HEX.test(r.color2) ? r.color2.toLowerCase() : null,
     crest: CREST_IDS.includes(r.crest as CrestId) ? (r.crest as CrestId) : d.crest,
     title: clean(r.title, TITLE_MAX) || d.title,
     motto: clean(r.motto, MOTTO_MAX),

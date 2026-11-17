@@ -183,7 +183,7 @@ export default function ShelfPage() {
         .sh-icon:hover { background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; }
         .sh-wrap { max-width: 1240px; margin: 0 auto; padding: 40px 28px 80px; }
         .sh-kick { font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .2em; text-transform: uppercase; color: ${ACCENT_SOLID}; }
-        .sh-h1 { margin: 10px 0 0; font: 800 54px/1 'Barlow Condensed', sans-serif; letter-spacing: .01em; text-transform: uppercase; }
+        .sh-h1 { margin: 10px 0 0; font: 400 56px/1 Anton, 'Barlow Condensed', sans-serif; letter-spacing: .005em; text-transform: uppercase; }
         .sh-sub { margin: 12px 0 0; max-width: 640px; color: ${TEXT_MUTED}; font-size: 15px; line-height: 1.55; }
         .sh-tally { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
         .sh-tally span { font-size: 12.5px; padding: 6px 11px; border-radius: 999px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
@@ -217,7 +217,7 @@ export default function ShelfPage() {
         .sh-grip { position: absolute; top: 10px; left: 10px; width: 32px; height: 32px; border-radius: 10px; background: rgba(12,13,16,.78); color: #fff; display: grid; place-items: center; opacity: 0; transition: opacity .15s; pointer-events: none; }
         .sh-card:hover .sh-grip { opacity: 1; }
         .sh-empty { border: 2px dashed ${DS_BORDER}; border-radius: 22px; padding: 46px 30px; text-align: center; color: ${TEXT_MUTED}; }
-        .sh-empty b { display: block; color: ${TEXT_PRIMARY}; font: 800 30px 'Barlow Condensed', sans-serif; text-transform: uppercase; letter-spacing: .02em; margin-bottom: 8px; }
+        .sh-empty b { display: block; color: ${TEXT_PRIMARY}; font: 400 40px/1 Anton, 'Barlow Condensed', sans-serif; text-transform: uppercase; letter-spacing: .01em; margin-bottom: 10px; }
         .sh-btn { height: 40px; padding: 0 16px; border-radius: 12px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; font: 600 14px 'Inter', sans-serif; cursor: pointer; }
         .sh-btn.pri { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; border-color: transparent; }
         .sh-skel { aspect-ratio: 16 / 13; border-radius: 18px; background: ${SURFACE_1}; animation: sh-pulse 1.2s ease-in-out infinite alternate; }
@@ -255,7 +255,7 @@ export default function ShelfPage() {
             <b>Your shelf is waiting</b>
             Every board, analysis, report and pile you make lands here, ready to put in your order.
             <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 20, flexWrap: "wrap" }}>
-              <button className="sh-btn pri" onClick={() => navigate("/board")}>Make a board</button>
+              <button className="sh-btn pri" onClick={() => navigate("/board?start=lineup")}>Make your first post</button>
               <button className="sh-btn" onClick={() => navigate("/report")}>Start a report</button>
             </div>
           </div>

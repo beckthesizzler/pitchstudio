@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Leaf } from "lucide-react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { ArrowLeft, Leaf, Sprout } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { listName, type PieceKind } from "../lib/names"
 import { firstLine, hex, nameOf, type Note } from "./notes"
@@ -60,14 +60,15 @@ type LeafAt = { ref: string; x: number; y: number; w: number; i: number }
 
 function layoutTree(pile: Note, kids: (id: string) => Note[], under: (id: string) => Note[]) {
   const ideas = (id: string) => kids(id).filter(n => n.kind === "note")
-  const branches = ideas(pile.id).filter(n => ideas(n.id).length > 0 || !!n.made_ref)
+  const branches = ideas(pile.id) // every point is a branch, from the moment it's written
+  const crown = pile.made_ref ? LEAF_H + 30 : 0 // what the whole idea became sits at the top, as fruit
   const twigBlock = (t: Note) => TW.h + (t.made_ref ? LEAF_H + 4 : 0) + Math.min(6, under(t.id).filter(n => n.kind === "note").length) * (DEEP.h + 6) + 10
   const bands = branches.map(b => {
     const twigs = ideas(b.id)
     const twigH = twigs.reduce((s, t) => s + twigBlock(t), 0)
     return { b, twigs, h: Math.max(BR.h + (b.made_ref ? LEAF_H + 8 : 0) + 10, twigH) }
   })
-  const H = TOP_PAD + bands.reduce((s, x) => s + x.h + BAND_GAP, 0) + ROOT_ZONE
+  const H = TOP_PAD + crown + bands.reduce((s, x) => s + x.h + BAND_GAP, 0) + ROOT_ZONE
   const cx = W / 2, boxes: Box[] = [], lines: Line[] = [], leaves: LeafAt[] = []
   let acc = 0, n = 0
   bands.forEach(({ b, twigs, h }, i) => {
@@ -97,7 +98,7 @@ function layoutTree(pile: Note, kids: (id: string) => Note[], under: (id: string
     }
   })
   const trunkTop = bands.length ? Math.min(...boxes.filter(b => b.kind === "branch").map(b => b.y + b.h / 2)) - 16 : H - ROOT_ZONE - 40
-  return { H, cx, boxes, lines, leaves, trunkTop, empty: !branches.length }
+  return { H, cx, boxes, lines, leaves, trunkTop: pile.made_ref ? TOP_PAD + LEAF_H + 8 : trunkTop, fruit: pile.made_ref ? { ref: pile.made_ref, y: TOP_PAD - 6 } : null, empty: !branches.length }
 }
 
 const KIND: Record<string, { table: string; label: PieceKind; path: string }> = {
@@ -108,12 +109,14 @@ const KIND: Record<string, { table: string; label: PieceKind; path: string }> = 
 const STATUS_LABEL = { idea: "IDEA", making: "MAKING", made: "MADE" } as const
 
 /** The tree view of one pile: /braindump?tree=ID&view=tree */
-export function TreeView({ pile, kids, under, stage, onBack, onOpen, onNavigate }: {
+export function TreeView({ pile, kids, under, stage, onBack, onOpen, onNavigate, aside, onGrow }: {
   pile: Note; kids: (id: string) => Note[]; under: (id: string) => Note[]; stage: Stage
   onBack: () => void; onOpen: (id: string) => void; onNavigate: (to: string) => void
+  aside?: ReactNode // "Grow this idea", beside the tree
+  onGrow?: () => void // opens it again once closed
 }) {
   const L = useMemo(() => layoutTree(pile, kids, under), [pile, kids, under])
-  const refs = useMemo(() => L.leaves.map(l => l.ref), [L])
+  const refs = useMemo(() => [...L.leaves.map(l => l.ref), ...(L.fruit ? [L.fruit.ref] : [])], [L])
   // what each leaf is called: one select per kind of piece, for the ones shown only. undefined: still asking; null: gone
   const [titles, setTitles] = useState<Record<string, string | null>>({})
   const key = refs.slice().sort().join(",")
@@ -133,12 +136,20 @@ export function TreeView({ pile, kids, under, stage, onBack, onOpen, onNavigate 
   }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const scroller = useRef<HTMLDivElement>(null)
+  const [fit, setFit] = useState(1) // the whole width of the tree fits the space beside "Grow this idea", shrunk if it must (never below 0.6)
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(() => setFit(Math.max(0.6, Math.min(1, (el.clientWidth - 16) / W))))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   useLayoutEffect(() => { // start centred on the trunk, at the root
     const el = scroller.current
     if (!el) return
     el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2
     el.scrollTop = el.scrollHeight
-  }, [pile.id])
+  }, [pile.id, fit])
 
   const question = firstLine(pile).split(String.fromCharCode(10))[0].trim()
   const c = hex(pile.color)
@@ -147,10 +158,13 @@ export function TreeView({ pile, kids, under, stage, onBack, onOpen, onNavigate 
       <div className="bd-tv-top">
         <button className="bd-btn" onClick={onBack}><ArrowLeft size={15} /> Back to the wall</button>
         <div className="bd-tv-name"><span className="bd-dot" style={{ background: c }} /><b>{nameOf(pile)}</b><Plant stage={stage} /><em>{stage}</em></div>
+        {onGrow && <button className="bd-btn" onClick={onGrow}><Sprout size={15} /> Grow this idea</button>}
         <div className="bd-tv-legend" aria-label="How to read the tree">ROOT = THE QUESTION · BRANCHES = YOUR POINTS · <span>LEAVES = WHAT YOU MADE</span></div>
       </div>
+      <div className="bd-tv-body">
+      {aside}
       <div className="bd-tv-scroll" ref={scroller}>
-        <div className="bd-tv-canvas" style={{ width: W, height: L.H }}>
+        <div className="bd-tv-canvas" style={{ width: W, height: L.H, zoom: fit }}>
           <svg width={W} height={L.H} className="bd-tv-wood" aria-hidden="true">
             <path d={`M${L.cx} ${L.H - ROOT_ZONE + 70} L${L.cx} ${L.trunkTop}`} stroke="#8A7A62" strokeWidth="14" strokeLinecap="round" />
             <path d={`M${L.cx} ${L.H - ROOT_ZONE + 62} C${L.cx - 30} ${L.H - ROOT_ZONE + 80} ${L.cx - 70} ${L.H - ROOT_ZONE + 84} ${L.cx - 96} ${L.H - ROOT_ZONE + 96} M${L.cx} ${L.H - ROOT_ZONE + 62} C${L.cx + 30} ${L.H - ROOT_ZONE + 80} ${L.cx + 70} ${L.H - ROOT_ZONE + 84} ${L.cx + 96} ${L.H - ROOT_ZONE + 96}`} stroke="#8A7A62" strokeWidth="5" fill="none" strokeLinecap="round" opacity=".7" />
@@ -160,7 +174,13 @@ export function TreeView({ pile, kids, under, stage, onBack, onOpen, onNavigate 
             title={question ? "Open the pile's page" : "Write the pile's question"}>
             <small>THE QUESTION</small>{question || "What is this pile about?"}
           </button>
-          {L.empty && <p className="bd-tv-seed" style={{ left: L.cx, top: L.H - ROOT_ZONE - 120 }}>This pile is still a seed. Drag one note onto another on the wall and it starts to grow.</p>}
+          {L.empty && <p className="bd-tv-seed" style={{ left: L.cx, top: L.H - ROOT_ZONE - 120 }}>This pile is still a seed. Write a point in Grow this idea and it starts to grow.</p>}
+          {L.fruit && (() => {
+            const [k, id] = L.fruit.ref.split(":"), meta = KIND[k], t = titles[L.fruit.ref]
+            return meta && t !== null
+              ? <button className="bd-tv-fruit" style={{ left: L.cx, top: L.fruit.y }} onClick={() => onNavigate(`${meta.path}?open=${id}`)}><Leaf size={13} /> {meta.label}: {t ?? "…"}</button>
+              : null
+          })()}
           {L.boxes.map(b => (
             <button key={b.note.id} className={`bd-tv-slip ${b.kind}`} onClick={() => onOpen(b.note.id)}
               style={{ left: b.x, top: b.y, width: b.w, height: b.h, animationDelay: `${Math.min(b.i, 24) * 35}ms`, ["--paper" as any]: b.kind === "branch" ? hex(b.note.color) : CREAM }}>
@@ -176,6 +196,7 @@ export function TreeView({ pile, kids, under, stage, onBack, onOpen, onNavigate 
               : <button key={l.ref + l.i} className="bd-tv-leaf" style={{ left: l.x, top: l.y, maxWidth: l.w, animationDelay: `${Math.min(l.i, 24) * 35}ms` }} onClick={() => onNavigate(`${meta.path}?open=${id}`)} title={`Open ${label}`}><Leaf size={13} /> <span>{label}</span></button>
           })}
         </div>
+      </div>
       </div>
     </div>
   )
@@ -195,8 +216,8 @@ export const PLANT_CSS = `
   .bd-tv-name em { font: 600 11px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; font-style: normal; opacity: .6; }
   .bd-tv-legend { margin-left: auto; font: 600 11px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .12em; color: rgba(27,26,23,.62); }
   .bd-tv-legend span { color: ${INK}; background: ${LEAF}; padding: 2px 6px; border-radius: 4px; }
-  .bd-tv-scroll { flex: 1; overflow: auto; }
-  .bd-tv-canvas { position: relative; margin: 0 auto; }
+  .bd-tv-scroll { flex: 1; overflow: auto; display: flex; flex-direction: column; }
+  .bd-tv-canvas { position: relative; margin: auto auto 0; flex-shrink: 0; } /* a short tree stands on the ground, not hanging from the top */
   .bd-tv-wood { position: absolute; left: 0; top: 0; pointer-events: none; }
   .bd-tv-root { position: absolute; transform: translateX(-50%) rotate(-1deg); max-width: 380px; min-width: 220px; padding: 10px 18px 12px; border: none; border-radius: 4px; background: ${CREAM}; color: ${INK}; font: 700 19px/1.25 ${HAND}; text-align: center; cursor: pointer; box-shadow: 0 10px 22px -12px rgba(0,0,0,.55); }
   .bd-tv-root small { display: block; font: 600 10.5px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; opacity: .55; margin-bottom: 3px; }
