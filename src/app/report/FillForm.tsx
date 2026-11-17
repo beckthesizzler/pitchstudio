@@ -158,24 +158,24 @@ export function FillForm(P: FillFormProps) {
     .ff-sec:last-of-type { border-bottom: none; }
     .ff-sec h3 { margin: 0 0 12px; font: 600 12px 'JetBrains Mono', monospace; letter-spacing: .16em; text-transform: uppercase; color: var(--ps-mu, #9aa0aa); }
     .ff-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 2px 0 14px; font-size: 14px; color: var(--ps-mu, #9aa0aa); }
-    .ff-count { font: 700 11px 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ps-em, #d7ff3c); white-space: nowrap; }
+    .ff-count { font: 700 12px 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ps-em, #d7ff3c); white-space: nowrap; }
     .ff-lock { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(233,185,73,.14); color: #e9b949; font: 600 12.5px 'Inter', sans-serif; margin-bottom: 12px; }
-    .ff-seats { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: -4px 0 12px; font-size: 12px; color: var(--ps-mu, #9aa0aa); } .ff-seats b { font: 700 10.5px 'JetBrains Mono', monospace; margin-right: 4px; color: inherit; opacity: .8; }
-    .ff-rows { display: grid; gap: 6px; margin-bottom: 12px; } .ff-row { display: grid; grid-template-columns: 38px 1fr 1fr auto; gap: 8px; align-items: center; font-size: 13px; } .ff-row b { font: 700 11px 'JetBrains Mono', monospace; color: var(--ps-mu, #9aa0aa); } .ff-row .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ff-seats { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: -4px 0 12px; font-size: 12px; color: var(--ps-mu, #9aa0aa); } .ff-seats b { font: 700 12px 'JetBrains Mono', monospace; margin-right: 4px; color: inherit; opacity: .8; }
+    .ff-rows { display: grid; gap: 6px; margin-bottom: 12px; } .ff-row { display: grid; grid-template-columns: 38px 1fr 1fr auto; gap: 8px; align-items: center; font-size: 13px; } .ff-row b { font: 700 12px 'JetBrains Mono', monospace; color: var(--ps-mu, #9aa0aa); } .ff-row .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ff-row.three { grid-template-columns: 56px 1fr 70px; }
     .ff-sit { border-top: 1px dashed rgba(128,128,128,.25); padding-top: 10px; }
     .ff-dial { width: 100%; accent-color: var(--ps-accent, #d7ff3c); margin: 6px 0; }
-    .ff-dial-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font: 700 11px 'JetBrains Mono', monospace; letter-spacing: .1em; color: var(--ps-mu, #9aa0aa); margin-bottom: 14px; } .ff-dial-row b { color: inherit; font-family: 'Inter', sans-serif; font-size: 13px; letter-spacing: .06em; }
+    .ff-dial-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font: 700 12px 'JetBrains Mono', monospace; letter-spacing: .1em; color: var(--ps-mu, #9aa0aa); margin-bottom: 14px; } .ff-dial-row b { color: inherit; font-family: 'Inter', sans-serif; font-size: 13px; letter-spacing: .06em; }
     .ff-quick { margin-bottom: 10px; }
     .rp-inp.big, .ff-phone .rp-inp { min-height: 52px; font-size: 16px; }
     .ff-phone { display: flex; flex-direction: column; min-height: calc(100dvh - 56px); }
     .ff-prev { display: flex; gap: 12px; align-items: center; padding: 12px; border-bottom: 1px solid rgba(128,128,128,.2); }
     .ff-prev .card { width: 96px; flex: none; border-radius: 8px; overflow: hidden; box-shadow: 0 6px 16px rgba(0,0,0,.4); }
-    .ff-prev small { display: block; font: 700 10.5px 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ps-em, #d7ff3c); }
+    .ff-prev small { display: block; font: 700 12px 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ps-em, #d7ff3c); }
     .ff-prev p { margin: 4px 0 8px; font-size: 13px; color: var(--ps-mu, #9aa0aa); line-height: 1.4; }
     .ff-bar { display: grid; grid-auto-flow: column; gap: 4px; padding: 12px 16px 0; } .ff-bar i { height: 4px; border-radius: 2px; background: rgba(128,128,128,.25); } .ff-bar i.on { background: var(--ps-accent, #d7ff3c); }
     .ff-step { flex: 1; padding: 14px 16px 18px; overflow-y: auto; }
-    .ff-step small { font: 700 11px 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ps-mu, #9aa0aa); }
+    .ff-step small { font: 700 12px 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ps-mu, #9aa0aa); }
     .ff-step h2 { font-size: 24px; letter-spacing: -.02em; line-height: 1.2; margin: 6px 0 16px; }
     .ff-nav { position: sticky; bottom: 0; display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: inherit; border-top: 1px solid rgba(128,128,128,.2); }
     .ff-nav .rp-btn { height: 52px; font-size: 15px; }

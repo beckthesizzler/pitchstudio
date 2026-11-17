@@ -27,7 +27,7 @@ export const LANDING_CSS = `
 .ls-stage { width: 100%; height: 470px; display: flex; align-items: center; justify-content: center; }
 .ls-frame { position: relative; overflow: hidden; border-radius: 10px; background: #1d5a2c; transition: width .4s ease; }
 .ls-frame svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.ls-tag { position: absolute; border-radius: 999px; background: rgba(18,19,22,.8); color: #f5f5f7; padding: 5px 10px; font-size: 11px; font-weight: 700; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ls-tag { position: absolute; border-radius: 999px; background: rgba(18,19,22,.8); color: #f5f5f7; padding: 5px 10px; font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .ls-tag i { font-style: normal; font-weight: 400; color: #c7c7cc; }
 .ls-fmt { height: 40px; padding: 0 14px; border-radius: 999px; font: 600 13px 'Inter', sans-serif; cursor: pointer; background: transparent; color: ${TEXT_PRIMARY}; border: 1px solid ${DS_BORDER}; }
 .ls-fmt[aria-pressed="true"] { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; border-color: ${ACCENT_SOLID}; }
@@ -44,7 +44,7 @@ export const LANDING_CSS = `
 .ls-frames { display: flex; gap: 10px; }
 .ls-fr { flex: 1; aspect-ratio: 16 / 10; border-radius: 8px; background: #1d5a2c; position: relative; }
 .ls-fr.on { border: 2px solid #d7ff3c; }
-.ls-fr b { position: absolute; left: 8px; top: 6px; font: 500 10px 'JetBrains Mono', monospace; color: rgba(255,255,255,.7); }
+.ls-fr b { position: absolute; left: 8px; top: 6px; font: 500 12px 'JetBrains Mono', monospace; color: rgba(255,255,255,.7); }
 .ls-fr.on b { color: #d7ff3c; }
 .ls-fr i { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: #a11d48; border: 2px solid #fff; }
 .ls-fr i.blue { background: #1f4ba0; }
@@ -55,7 +55,7 @@ export const LANDING_CSS = `
 .ls-live { flex: 1 1 560px; min-width: 0; padding: 20px; display: flex; flex-wrap: wrap; gap: 16px; }
 .ls-screen { flex: 1 1 300px; aspect-ratio: 16 / 9; border-radius: 10px; background: #0e0f11; position: relative; overflow: hidden; }
 .ls-moments { flex: 1 1 180px; display: flex; flex-direction: column; gap: 8px; }
-.ls-moments > span:first-child { font: 500 11px 'JetBrains Mono', monospace; letter-spacing: .14em; color: ${TEXT_MUTED}; }
+.ls-moments > span:first-child { font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .14em; color: ${TEXT_MUTED}; }
 .ls-mo { background: ${SURFACE_2}; border-radius: 10px; padding: 10px 12px; font-size: 13px; display: flex; gap: 8px; border: 1px solid transparent; }
 .ls-mo b { color: ${ACCENT_TEXT}; } .ls-mo.now { border-color: ${ACCENT_SOLID}; }
 .ls-head { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-end; justify-content: space-between; }
@@ -66,7 +66,7 @@ export const LANDING_CSS = `
 .ls-tpl .th > svg, .ls-tpl .th > div { width: 100%; }
 .ls-tpl figcaption { font-size: 14px; line-height: 1.45; } .ls-tpl figcaption span { color: ${TEXT_MUTED}; }
 .ls-journal { width: 100%; height: 100%; background-color: #f7f3ea; background-image: radial-gradient(#d8d0bf 1px, transparent 1.2px); background-size: 14px 14px; color: #1f3e8c; padding: 18px; display: flex; flex-direction: column; gap: 8px; font-family: Kalam, cursive; }
-.ls-journal small { font: 500 9px 'JetBrains Mono', monospace; letter-spacing: .16em; color: #8a8172; }
+.ls-journal small { font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .16em; color: #8a8172; }
 .ls-journal > span { font-size: 15px; border-bottom: 1px solid #d8d0bf; } .ls-journal b { color: #b3261e; }
 .ls-own { border: 2px dashed var(--ps-bd2); background: transparent !important; flex-direction: column; gap: 10px; color: ${TEXT_MUTED}; cursor: pointer; font: 500 15px 'Inter', sans-serif; }
 .ls-own b { font-size: 40px; line-height: 1; color: ${ACCENT_TEXT}; font-weight: 400; }
@@ -76,7 +76,7 @@ export const LANDING_CSS = `
 .ls-card { width: 200px; height: 280px; border-radius: 16px; position: relative; overflow: hidden; }
 .ls-card div { position: absolute; border-radius: 10px; }
 .ls-card b { position: absolute; font: 400 22px Anton, sans-serif; }
-.ls-card small { position: absolute; font: 500 9px 'JetBrains Mono', monospace; letter-spacing: .16em; }
+.ls-card small { position: absolute; font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .16em; }
 .ls-end { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; padding: 110px 0 120px; }
 .ls-end h2 { margin: 0; font-family: Anton, 'Barlow Condensed', sans-serif; font-weight: 400; font-size: 76px; line-height: 1; }
 .ls-foot { border-top: 1px solid ${DS_BORDER}; }

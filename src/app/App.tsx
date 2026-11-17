@@ -975,7 +975,7 @@ function parseLineup(text: string): { name: string; num?: string }[] {
     return { name: t }
   }).filter(e => e.name).map(e => ({ ...e, name: e.name.slice(0, 30) })).slice(0, 30)
 }
-/** Team news as clubs and match reports write it, e.g. "Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; Pedri, De Jong, Fermín; Yamal, Lewandowski, Raphinha".
+/** Team news as clubs and match reports write it, e.g. "Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; Pedri, De Jong, Fermín; Yamal, Jesus, Raphinha".
  *  Semicolons (or new lines holding several names) separate the goalkeeper and each line, so their sizes give the formation; a formation written
  *  in the text wins. A team name before the colon is kept; substitutes after "Subs" and anything in brackets, like (c), are left out. */
 interface TeamNews { team: string; formation: string; names: { name: string; num?: string }[] }
@@ -6520,7 +6520,7 @@ function TacticsBoard() {
               <p className="text-sm" style={{ color: TEXT_MUTED, margin: 0 }}>Copy it from the club's post or a match report. Goalkeeper first, a semicolon between the lines, and the formation comes with it.</p>
               <Segmented label="Team" value={pasteFor} onChange={v => setPasteFor(v)} options={[["home", homeName.trim() || "Home"], ["away", awayName.trim() || "Away"]]} />
               <textarea autoFocus value={newsText} onChange={e => setNewsText(e.target.value)} rows={5} aria-label="Line-up"
-                placeholder={"Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; Pedri, De Jong, Fermín; Yamal, Lewandowski, Raphinha"}
+                placeholder={"Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; Pedri, De Jong, Fermín; Yamal, Jesus, Raphinha"}
                 className="rounded px-3 py-2 text-sm outline-none resize-y" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, fontSize: 16 }} />
               <p className="text-xs" aria-live="polite" style={{ color: news.names.length ? ACCENT_TEXT : TEXT_MUTED, margin: 0 }}>{read}</p>
               <div className="flex justify-end gap-2">

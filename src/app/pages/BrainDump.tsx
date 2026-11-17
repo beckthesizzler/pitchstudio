@@ -257,6 +257,12 @@ export default function BrainDumpPage() {
     if (treeView === id) navigate("/braindump", { replace: true })
     if (n.kind === "tree" && moved.length) setToast(`${moved.length} note${moved.length === 1 ? "" : "s"} back in Just pinned`)
   }
+  /** A pile you started but never named or filled goes away when you leave its name tag */
+  const doneNaming = (id: string) => {
+    setRenaming(null)
+    const p = notesRef.current.find(x => x.id === id)
+    if (p && p.kind === "tree" && !p.title.trim() && !kids(id).length && !firstLine(p)) remove(id)
+  }
   const close = () => {
     const n = notesRef.current.find(x => x.id === open)
     // a note left empty goes away
@@ -435,8 +441,8 @@ export default function BrainDumpPage() {
           {p
             ? renaming === p.id
               ? <input className="bd-tag-name" value={p.title} maxLength={120} autoFocus placeholder="Name this pile" aria-label="Pile name"
-                  onChange={e => change(p.id, y => ({ ...y, title: e.target.value }))} onBlur={() => setRenaming(null)}
-                  onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); setRenaming(null) } }} />
+                  onChange={e => change(p.id, y => ({ ...y, title: e.target.value }))} onBlur={() => doneNaming(p.id)}
+                  onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); doneNaming(p.id) } }} />
               : <button className="bd-tag-name" onClick={() => setRenaming(p.id)} title="Rename the pile">{nameOf(p)}</button>
             : <span className="bd-tag-name">Just pinned <em>{c.rows.length || ""}</em></span>}
           {p && <button className="bd-tag-more" aria-label={`More for ${nameOf(p)}`} onClick={e => { const b = e.currentTarget.getBoundingClientRect(); setMenu({ kind: "pile", id: p.id, x: b.left, y: b.bottom + 4 }) }}><MoreHorizontal size={15} /></button>}
@@ -473,11 +479,11 @@ export default function BrainDumpPage() {
         .bd-side-top b { font: 800 15px 'Barlow Condensed', sans-serif; letter-spacing: .14em; text-transform: uppercase; }
         .bd-icon { width: 34px; height: 34px; border-radius: 10px; border: none; background: none; color: ${TEXT_MUTED}; display: grid; place-items: center; cursor: pointer; flex-shrink: 0; }
         .bd-icon:hover { background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; }
-        .bd-cap { font: 600 11px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; color: ${TEXT_MUTED}; margin-bottom: 7px; display: flex; justify-content: space-between; }
+        .bd-cap { font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; color: ${TEXT_MUTED}; margin-bottom: 7px; display: flex; justify-content: space-between; }
         .bd-pin-in { width: 100%; height: 44px; border-radius: 4px; border: none; outline: none; padding: 0 12px; background: #F4EEDC; color: #1b1a17; font: 700 18px ${HAND}; box-shadow: 0 8px 16px -10px rgba(0,0,0,.6); }
         .bd-pin-in:focus { box-shadow: 0 0 0 3px ${ACCENT_SOLID}; }
         .bd-pin-in::placeholder { color: rgba(27,26,23,.45); }
-        .bd-hint { font-size: 11.5px; color: ${TEXT_MUTED}; margin-top: 6px; }
+        .bd-hint { font-size: 12px; color: ${TEXT_MUTED}; margin-top: 6px; }
         .bd-how { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 12px; padding: 12px 14px; display: grid; gap: 9px; }
         .bd-how .bd-cap { color: ${ACCENT_SOLID}; }
         .bd-how > div:not(.bd-cap) { display: grid; grid-template-columns: 18px 1fr; gap: 6px; font-size: 12.5px; line-height: 1.4; color: ${TEXT_MUTED}; }
@@ -489,12 +495,12 @@ export default function BrainDumpPage() {
         .bd-row:hover { background: ${SURFACE_2}; }
         .bd-row:disabled { opacity: .4; cursor: default; background: none; }
         .bd-row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .bd-row em { font-style: normal; font: 600 10.5px 'JetBrains Mono', monospace; letter-spacing: .08em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .bd-row em { font-style: normal; font: 600 12px 'JetBrains Mono', monospace; letter-spacing: .08em; text-transform: uppercase; color: ${TEXT_MUTED}; }
         .bd-row.add { color: ${ACCENT_SOLID}; font-weight: 600; }
         .bd-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
         .bd-none { margin: 2px 8px; font-size: 12.5px; color: ${TEXT_MUTED}; line-height: 1.5; }
-        .bd-foot { margin-top: auto; padding: 10px 2px 14px; border-top: 1px solid ${DS_BORDER}; font: 600 11px 'JetBrains Mono', monospace; letter-spacing: .08em; color: ${TEXT_MUTED}; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
-        .bd-saved { display: inline-flex; align-items: center; gap: 5px; text-transform: none; letter-spacing: 0; font: 500 11.5px 'Inter', sans-serif; }
+        .bd-foot { margin-top: auto; padding: 10px 2px 14px; border-top: 1px solid ${DS_BORDER}; font: 600 12px 'JetBrains Mono', monospace; letter-spacing: .08em; color: ${TEXT_MUTED}; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+        .bd-saved { display: inline-flex; align-items: center; gap: 5px; text-transform: none; letter-spacing: 0; font: 500 12px 'Inter', sans-serif; }
         .bd-retry { border: none; background: none; padding: 0; cursor: pointer; color: ${DS_ERROR}; font: 600 12px 'Inter', sans-serif; text-decoration: underline; text-underline-offset: 3px; }
         .bd-btn { height: 38px; border-radius: 11px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font: 600 13px 'Inter', sans-serif; cursor: pointer; padding: 0 12px; white-space: nowrap; }
         .bd-main { min-width: 0; min-height: 0; position: relative; padding: 14px; display: flex; flex-direction: column; }
@@ -512,7 +518,7 @@ export default function BrainDumpPage() {
         .bd-tag { position: relative; display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 6px 0 22px; border-radius: 3px; background: #F4EEDC; color: #1b1a17; box-shadow: 0 6px 12px -8px rgba(0,0,0,.6); }
         .bd-tag-pin { position: absolute; left: 7px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; background: var(--dot); box-shadow: inset -1.5px -1.5px 0 rgba(0,0,0,.25), 0 1px 2px rgba(0,0,0,.4); }
         .bd-tag-name { flex: 1; min-width: 0; border: none; background: none; padding: 0; color: #1b1a17; font: 700 18px ${HAND}; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; outline: none; }
-        .bd-tag-name em { font: 600 11px 'JetBrains Mono', monospace; font-style: normal; opacity: .55; margin-left: 4px; }
+        .bd-tag-name em { font: 600 12px 'JetBrains Mono', monospace; font-style: normal; opacity: .55; margin-left: 4px; }
         input.bd-tag-name { cursor: text; border-bottom: 1.5px dashed rgba(27,26,23,.4); }
         .bd-tag-more { width: 28px; height: 28px; border-radius: 7px; border: none; background: none; color: #1b1a17; display: grid; place-items: center; cursor: pointer; opacity: .6; }
         .bd-tag-more:hover { opacity: 1; background: rgba(27,26,23,.08); }
@@ -524,7 +530,7 @@ export default function BrainDumpPage() {
         .bd-grow:hover { background: #2a2b31; transform: translateY(-1px); }
         .bd-grow:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
         .bd-grow b { display: block; font: 700 12.5px 'Inter', sans-serif; line-height: 1.1; }
-        .bd-grow small { display: block; font: 500 10.5px 'Inter', sans-serif; opacity: .62; white-space: nowrap; }
+        .bd-grow small { display: block; font: 500 12px 'Inter', sans-serif; opacity: .62; white-space: nowrap; }
         .bd-col-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 14px 0 20px 2px; scrollbar-width: thin; }
         .bd-stack { position: relative; }
         .bd-threads { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; overflow: visible; }
@@ -540,13 +546,13 @@ export default function BrainDumpPage() {
         .bd-slip-face:focus-visible { outline: 3px solid #1b1a17; outline-offset: 2px; }
         .bd-slip-face .t { font: 700 16px/1.12 ${HAND}; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .bd-slip.d1 .bd-slip-face .t, .bd-slip.d2 .bd-slip-face .t { font-size: 14.5px; line-height: 1.08; }
-        .bd-slip-face .m { display: flex; align-items: center; gap: 6px; font: 600 9.5px 'JetBrains Mono', monospace; letter-spacing: .14em; opacity: .7; }
-        .bd-slip-face .m b { font: 600 10px 'Inter', sans-serif; letter-spacing: 0; background: #1b1a17; color: #fff; padding: 1px 7px; border-radius: 999px; opacity: 1; }
+        .bd-slip-face .m { display: flex; align-items: center; gap: 6px; font: 600 12px 'JetBrains Mono', monospace; letter-spacing: .14em; opacity: .7; }
+        .bd-slip-face .m b { font: 600 12px 'Inter', sans-serif; letter-spacing: 0; background: #1b1a17; color: #fff; padding: 1px 7px; border-radius: 999px; opacity: 1; }
         .bd-slip-pin { position: absolute; left: ${PIN.x - 5}px; top: ${PIN.y - 5}px; width: 10px; height: 10px; border-radius: 50%; background: var(--pin); box-shadow: inset -1.5px -1.5px 0 rgba(0,0,0,.25), 0 1px 2px rgba(0,0,0,.45); pointer-events: none; z-index: 3; }
         .bd-ghost { position: fixed; z-index: 80; width: 170px; min-height: 52px; padding: 9px 12px; border-radius: 2px; color: #1b1a17; font: 700 16px/1.12 ${HAND}; pointer-events: none; transform: translate(-50%, -60%) rotate(-4deg); box-shadow: 0 22px 36px -12px rgba(0,0,0,.6); overflow: hidden; }
         .bd-menu-back { position: fixed; inset: 0; z-index: 65; }
         .bd-menu { position: fixed; z-index: 70; width: 248px; max-height: min(440px, calc(100vh - 16px)); overflow-y: auto; padding: 6px; border-radius: 14px; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; box-shadow: 0 22px 50px -18px rgba(0,0,0,.7); }
-        .bd-menu p { margin: 8px 8px 4px; font: 600 11px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .bd-menu p { margin: 8px 8px 4px; font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; color: ${TEXT_MUTED}; }
         .bd-menu .bd-row[aria-checked="true"] { color: ${ACCENT_SOLID}; }
         .bd-sw { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 8px 6px; }
         .bd-swatch { width: 22px; height: 22px; border-radius: 6px; border: 2px solid rgba(27,26,23,.25); cursor: pointer; padding: 0; }

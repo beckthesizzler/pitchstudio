@@ -49,7 +49,7 @@ export default function Tour({ onDone }: { onDone: () => void }) {
       <div onClick={finish} style={{ position: "absolute", inset: 0 }} />
       <div style={{ position: "absolute", left: rect.left - pad, top: rect.top - pad, width: rect.width + pad * 2, height: rect.height + pad * 2, borderRadius: 12, border: `2px solid ${ACCENT_SOLID}`, boxShadow: "0 0 0 9999px rgba(8,9,11,0.62)", pointerEvents: "none", transition: "all .2s" }} />
       <div style={{ position: "absolute", left, top, width: W, background: SURFACE_1, border: `1px solid ${DS_BORDER_STRONG}`, borderRadius: 14, padding: "16px 18px", boxShadow: "0 20px 60px rgba(0,0,0,.45)", color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
-        <div style={{ fontSize: 11, letterSpacing: ".14em", fontWeight: 600, color: ACCENT_TEXT }}>{shown} OF {total}</div>
+        <div style={{ fontSize: 12, letterSpacing: ".14em", fontWeight: 600, color: ACCENT_TEXT }}>{shown} OF {total}</div>
         <div style={{ fontSize: 16, fontWeight: 600, margin: "6px 0 4px" }}>{STEPS[i].t}</div>
         <div style={{ fontSize: 13, lineHeight: 1.5, color: TEXT_MUTED }}>{STEPS[i].p}</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>

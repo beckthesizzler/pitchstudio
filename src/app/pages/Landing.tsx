@@ -118,7 +118,7 @@ export default function LandingPage() {
                   <g className="lp-ball"><circle cx="172" cy="236" r="5" fill="#fff" stroke="#121316" strokeWidth="1.5" /></g>
                 </svg>
                 <span className="ls-tag" style={{ right: 10, bottom: 10 }}>@yourname <i>made with PitchStudio</i></span>
-                <span className="ls-tag" style={{ left: 10, top: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: ".1em", fontWeight: 500 }}><span className="lp-rec" style={{ width: 7, height: 7, borderRadius: 99, background: "#e53935" }} />EXPORTING MP4</span>
+                <span className="ls-tag" style={{ left: 10, top: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, letterSpacing: ".1em", fontWeight: 500 }}><span className="lp-rec" style={{ width: 7, height: 7, borderRadius: 99, background: "#e53935" }} />EXPORTING MP4</span>
               </div>
             </div>
             <div className="ls-row" style={{ justifyContent: "center", alignItems: "center", gap: 8 }} role="group" aria-label="Try a format">

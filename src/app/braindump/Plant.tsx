@@ -213,18 +213,18 @@ export const PLANT_CSS = `
   .bd-tv-top { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; padding: 12px 16px; background: rgba(244,238,220,.82); border-bottom: 1px solid rgba(27,26,23,.12); }
   .bd-tv-top .bd-btn { background: ${INK}; color: #fff; border-color: transparent; }
   .bd-tv-name { display: flex; align-items: center; gap: 8px; font: 700 22px ${HAND}; }
-  .bd-tv-name em { font: 600 11px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; font-style: normal; opacity: .6; }
-  .bd-tv-legend { margin-left: auto; font: 600 11px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .12em; color: rgba(27,26,23,.62); }
+  .bd-tv-name em { font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; font-style: normal; opacity: .6; }
+  .bd-tv-legend { margin-left: auto; font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .12em; color: rgba(27,26,23,.62); }
   .bd-tv-legend span { color: ${INK}; background: ${LEAF}; padding: 2px 6px; border-radius: 4px; }
   .bd-tv-scroll { flex: 1; overflow: auto; display: flex; flex-direction: column; }
   .bd-tv-canvas { position: relative; margin: auto auto 0; flex-shrink: 0; } /* a short tree stands on the ground, not hanging from the top */
   .bd-tv-wood { position: absolute; left: 0; top: 0; pointer-events: none; }
   .bd-tv-root { position: absolute; transform: translateX(-50%) rotate(-1deg); max-width: 380px; min-width: 220px; padding: 10px 18px 12px; border: none; border-radius: 4px; background: ${CREAM}; color: ${INK}; font: 700 19px/1.25 ${HAND}; text-align: center; cursor: pointer; box-shadow: 0 10px 22px -12px rgba(0,0,0,.55); }
-  .bd-tv-root small { display: block; font: 600 10.5px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; opacity: .55; margin-bottom: 3px; }
+  .bd-tv-root small { display: block; font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; opacity: .55; margin-bottom: 3px; }
   .bd-tv-root.ask { color: rgba(27,26,23,.55); border: 1.5px dashed rgba(27,26,23,.35); }
   .bd-tv-seed { position: absolute; transform: translateX(-50%); width: 320px; margin: 0; text-align: center; font: 700 18px/1.35 ${HAND}; color: rgba(27,26,23,.62); }
   .bd-tv-slip { position: absolute; border: none; border-radius: 3px; padding: 7px 10px; text-align: left; cursor: pointer; background: var(--paper); color: ${INK}; box-shadow: 0 1px 1px rgba(0,0,0,.12), 0 10px 18px -10px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 2px; overflow: hidden; animation: bd-pop-in .35s cubic-bezier(.2,1.2,.4,1) both; }
-  .bd-tv-slip small { font: 600 10px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; opacity: .6; }
+  .bd-tv-slip small { font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; opacity: .6; }
   .bd-tv-slip span { font: 700 16px/1.15 ${HAND}; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .bd-tv-slip.twig { padding: 5px 9px; }
   .bd-tv-slip.twig span { font-size: 13px; line-height: 1.04; }
@@ -236,6 +236,6 @@ export const PLANT_CSS = `
   .bd-tv-leaf span { overflow: hidden; text-overflow: ellipsis; }
   .bd-tv-leaf.gone { background: rgba(27,26,23,.12); color: rgba(27,26,23,.6); cursor: default; box-shadow: none; }
   @keyframes bd-pop-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
-  @media (max-width: 700px) { .bd-tv { border-width: 6px; } .bd-tv-legend { margin-left: 0; font-size: 10px; } }
+  @media (max-width: 700px) { .bd-tv { border-width: 6px; } .bd-tv-legend { margin-left: 0; font-size: 12px; } }
   @media (prefers-reduced-motion: reduce) { .bd-sway, .bd-plant-svg.pop, .bd-tv-slip, .bd-tv-leaf { animation: none; } }
 `

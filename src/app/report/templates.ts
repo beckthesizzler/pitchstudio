@@ -104,7 +104,7 @@ export function nextGameFrom(prev: Report, handle: string): Report {
 
 /* ── Formation Change: your eleven in two shapes ── */
 export const SAMPLE_FORMATION: FormationFill = { template: "formation", title: "MY DREAM XI", shapeA: "4-3-3", shapeB: "3-4-3",
-  lineup: ["Joan García", "Koundé", "Araujo", "Cubarsí", "Balde", "Pedri", "De Jong", "Fermín", "Yamal", "Lewandowski", "Raphinha"], alt: ["", "", "", "", "", "Gavi", "", "", "", "", ""],
+  lineup: ["Joan García", "Koundé", "Araujo", "Cubarsí", "Balde", "Pedri", "De Jong", "Fermín", "Yamal", "Jesus", "Raphinha"], alt: ["", "", "", "", "", "Gavi", "", "", "", "", ""],
   roles: { Pedri: "mutant", Fermín: "mutant", Raphinha: "mutant", "De Jong": "anchor", Yamal: "special" }, note: "Illustrative lineup and positions, not tracking data." }
 function formationReport(handle: string): Report {
   const pal = { a: "#e9b949", b: "#38bdf8", c: "#ff4d5e" }
@@ -133,7 +133,7 @@ function formationReport(handle: string): Report {
 const INK = { blue: "#1f3e8c", red: "#b3261e", green: "#2e7d32", claret: "#6e1e3a", black: "#1a1916" }
 export const SAMPLE_JOURNAL: JournalFill = { template: "journal", home: "Barça", away: "Aston Villa", date: "Mon 3 Nov 2026", meta: "Champions League · League phase, MD4 · Camp Nou",
   last5: ["L", "W", "W", "W", "D"], shape: "4-2-3-1",
-  xi: [["13", "Joan García", "GK"], ["", "Cancelo", "LB"], ["", "", "CB"], ["", "", "CB"], ["", "", "RB"], ["", "Rodri", "DM"], ["8", "Pedri", "DM"], ["", "Gordon", "LW"], ["16", "Fermín", "AM"], ["10", "Yamal", "RW"], ["11", "Raphinha", "ST"]].map(([no, name, pos]) => ({ no, name, pos })),
+  xi: [["1", "Joan García", "GK"], ["", "Cancelo", "LB"], ["", "", "CB"], ["", "", "CB"], ["", "", "RB"], ["", "Rodri", "DM"], ["8", "Pedri", "DM"], ["", "Gordon", "LW"], ["7", "Fermín", "AM"], ["10", "Yamal", "RW"], ["11", "Raphinha", "ST"]].map(([no, name, pos]) => ({ no, name, pos })),
   bench: "Bernal", danger: [{ name: "Goretzka", note: "heads in from set pieces" }, { name: "McGinn", note: "carries through the middle" }, { name: "Gomes", note: "short build-up from the back" }, { name: "", note: "" }],
   watching: ["Do we jump their short build-up?", "Does the back line stay compact behind the press?", "Who keeps control if Rodri tires?"],
   score: "3–0", goals: ["7' Yamal", "52' Raphinha", "64' Raphinha"], subs: ["HT Rodri off (calf) · Bernal on"], yellows: "", reds: "", numbers: ["Villa 9 shots, 1 on target", "Yamal 6 shots, 7 dribbles (Opta)"], officials: "",

@@ -601,7 +601,7 @@ export default function ReportPage() {
         .rp-menu button:hover { background: ${SURFACE_2}; } .rp-menu small { color: ${TEXT_MUTED}; margin-left: auto; }
         .rp-body { display: grid; grid-template-columns: 84px 1fr 304px; min-height: 0; }
         .rp-rail { border-right: 1px solid ${DS_BORDER}; padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
-        .rp-rail-cap { font: 700 9.5px 'Inter', sans-serif; letter-spacing: .16em; color: ${TEXT_MUTED}; text-align: center; margin: 4px 0 4px; }
+        .rp-rail-cap { font: 700 12px 'Inter', sans-serif; letter-spacing: .16em; color: ${TEXT_MUTED}; text-align: center; margin: 4px 0 4px; }
         .rp-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 7px; border-radius: 10px; border: 1px solid transparent; background: none; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; cursor: pointer; position: relative; }
         .rp-tool:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
         .rp-tool.on { color: ${ACCENT_INK}; background: ${ACCENT_SOLID}; }
@@ -685,7 +685,7 @@ export default function ReportPage() {
         .rp-tpl { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 16px; padding: 10px; cursor: pointer; text-align: left; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; transition: transform .15s, border-color .15s; }
         .rp-tpl:hover, .rp-tpl:focus-visible { transform: translateY(-3px); border-color: ${ACCENT_SOLID}; outline: none; }
         .rp-tpl { position: relative; }
-        .rp-def { display: inline-block; vertical-align: 2px; margin-left: 6px; font: 700 10px 'JetBrains Mono', monospace; font-style: normal; letter-spacing: .14em; text-transform: uppercase; padding: 3px 7px; border-radius: 999px; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
+        .rp-def { display: inline-block; vertical-align: 2px; margin-left: 6px; font: 700 12px 'JetBrains Mono', monospace; font-style: normal; letter-spacing: .14em; text-transform: uppercase; padding: 3px 7px; border-radius: 999px; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
         .rp-own { margin-top: 40px; padding: 24px; max-width: 1180px; border-radius: 20px; border: 2px dashed var(--ps-bd2, ${DS_BORDER}); }
         .rp-own h2 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.01em; }
         .rp-own > p { margin: 0 0 18px; color: ${TEXT_MUTED}; font-size: 15px; max-width: 640px; line-height: 1.5; }
