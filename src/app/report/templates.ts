@@ -185,6 +185,35 @@ function journalReport(): Report {
   return applyFill({ v: 2, format: "16:9", mode: "bright", paper: "#f4f1ea", story: null, glow: false, seal: "tr", blocks, palette: { a: INK.claret, b: INK.blue, c: "#e9b949" }, stripe: false, roles: [], actions: null, issue: null, paperStyle: "dotted", fill: null }, SAMPLE_JOURNAL, false)
 }
 
+/** "Create your own": shapes to start from. Each is a real page with an example in every block, never an empty box, so there is always something to change. */
+export type ShapeId = "pitch" | "two" | "story" | "numbers" | "blank"
+export const SHAPES: { id: ShapeId; name: string; note: string }[] = [
+  { id: "pitch", name: "One big pitch", note: "A headline, a pitch and a line under it" },
+  { id: "two", name: "Two pitches", note: "Before and after, this or that" },
+  { id: "story", name: "Pitch and story", note: "The move, and the points beside it" },
+  { id: "numbers", name: "Numbers first", note: "Three numbers, then the pitch" },
+  { id: "blank", name: "Blank page", note: "A headline and every tool" },
+]
+export function makeShape(id: ShapeId): Report {
+  const base = { v: 2 as const, format: "1:1" as const, mode: "night" as const, paper: null, story: null, glow: false, seal: "br" as const }
+  const example = (): Mark[] => [
+    { id: newId(), kind: "zone", p: [0.5, 0.48], r: [0.12, 0.08], oval: false, hi: true, label: "" },
+    pass([0.3, 0.86], [0.48, 0.5], 2, true), pass([0.5, 0.5], [0.74, 0.3], 2, true, { run: true }),
+  ]
+  const head = (y = 90, size = 110) => text(80, y, 1440, "YOUR HEADLINE", "title", size)
+  const wide = { ...base, format: "16:9" as const } // 1600 × 900: side-by-side shapes fill it with no empty half
+  if (id === "pitch") return { ...base, blocks: [head(), pitch(230, 300, 1140, "half", example()), text(230, 1230, 1140, "One line that says what to look at.", "text", 32)] }
+  if (id === "two") return { ...wide, blocks: [head(56, 84),
+    text(80, 178, 700, "1 · BEFORE", "label", 22), pitch(80, 214, 700, "half", example()), text(80, 772, 700, "What happens first.", "text", 26),
+    text(820, 178, 700, "2 · AFTER", "label", 22), pitch(820, 214, 700, "half", example()), text(820, 772, 700, "What changes.", "text", 26)] }
+  if (id === "story") return { ...wide, blocks: [head(56, 84), pitch(80, 176, 860, "half", example()),
+    { id: newId(), kind: "story", x: 1010, y: 200, w: 510, s: 1, title: "The story", points: ["Your first point.", "Your second point.", "What it means."] }] }
+  if (id === "numbers") return { ...base, blocks: [head(),
+    { id: newId(), kind: "stats", x: 80, y: 290, w: 1440, s: 1, type: "team", player: "", num: "", rows: [{ value: "62%", label: "Possession" }, { value: "2.4", label: "xG" }, { value: "14", label: "Shots" }] },
+    pitch(330, 640, 940, "half", example())] }
+  return makeTemplate("blank")
+}
+
 export function makeTemplate(id: TemplateId, handle = ""): Report {
   if (id === "game") return gameReport(handle)
   if (id === "formation") return formationReport(handle)
@@ -204,7 +233,7 @@ export function makeTemplate(id: TemplateId, handle = ""): Report {
     const two: Mark[] = [
       zone([0.17, 0.78], [0.1, 0.08], "His post", true), zone([0.63, 0.46], [0.22, 0.17], "", false, true),
       pass([0.22, 0.7], [0.44, 0.38], 2, true, { run: true }),
-      pass([0.63, 0.46], [0.2, 0.76], 2, false, { c: [0.42, 0.7] }), pass([0.42, 0.62], [0.22, 0.8], 1, false, { run: true }),
+      pass([0.63, 0.46], [0.285, 0.75], 2, false, { c: [0.45, 0.68] }), pass([0.42, 0.62], [0.285, 0.81], 1, false, { run: true }), // both stop at the edge of his post, clear of its label
       pl(0, [0.44, 0.36], "95", "Bastoni", true, "above"), pl(0, [0.92, 0.12], "", "", false), pl(0, [0.08, 0.3], "", "", false), pl(0, [0.5, 0.86], "", "", false),
       pl(1, [0.63, 0.46], "", "First man", false, "below"), ball([0.66, 0.48]), pl(1, [0.3, 0.16], "", "", false), pl(1, [0.42, 0.62], "", "", false), pl(1, [0.88, 0.72], "", "", false),
     ]

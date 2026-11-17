@@ -166,6 +166,7 @@ interface BoardSettings {
   homeScore: string; awayScore: string; scoreNote: string // the score strip: the goals each side scored, and a note such as FT
   caption: string // the line (or two) under the board
   showLegend: boolean; cropMarks: boolean; showEdition: boolean
+  sealSide: "left" | "right" // the bottom corner your seal sits in; the team names and the editorial legend take the other side
   issueNo: number; issueDay: string // this board's issue number and the day it took it (0 = not numbered yet: it takes one at its first export)
   animSpeed: "slow" | "normal" | "fast"; endCard: boolean // how fast the steps play, and the animated end card on GIF and video exports
 }
@@ -188,7 +189,7 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto", area: null,
   homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
   pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "",
-  showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true, issueNo: 0, issueDay: "",
+  showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true, issueNo: 0, issueDay: "", sealSide: "left",
 }
 /** A zoomed area from saved data: four numbers inside the pitch, at least 60 × 40, else none */
 const areaFrom = (a: unknown): [number, number, number, number] | null => {
@@ -243,6 +244,7 @@ function settingsFrom(src: Record<string, unknown> | null | undefined, fresh = f
     scoreNote: typeof v.scoreNote === "string" ? v.scoreNote.slice(0, 12) : d.scoreNote,
     caption: typeof v.caption === "string" ? v.caption.slice(0, 160) : d.caption,
     showLegend: bool(v.showLegend, d.showLegend), cropMarks: bool(v.cropMarks, d.cropMarks), showEdition: bool(v.showEdition, d.showEdition),
+    sealSide: oneOf(v.sealSide, ["left", "right"] as const, d.sealSide),
     issueNo: typeof v.issueNo === "number" && Number.isInteger(v.issueNo) && v.issueNo > 0 && v.issueNo < 1000000 ? v.issueNo : d.issueNo,
     issueDay: typeof v.issueDay === "string" ? v.issueDay.slice(0, 8) : d.issueDay,
     animSpeed: oneOf(v.animSpeed, ["slow", "normal", "fast"] as const, d.animSpeed), endCard: bool(v.endCard, d.endCard),
@@ -972,6 +974,26 @@ function parseLineup(text: string): { name: string; num?: string }[] {
     return { name: t }
   }).filter(e => e.name).map(e => ({ ...e, name: e.name.slice(0, 30) })).slice(0, 30)
 }
+/** Team news as clubs and match reports write it, e.g. "Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; Pedri, De Jong, Fermín; Yamal, Lewandowski, Raphinha".
+ *  Semicolons (or new lines holding several names) separate the goalkeeper and each line, so their sizes give the formation; a formation written
+ *  in the text wins. A team name before the colon is kept; substitutes after "Subs" and anything in brackets, like (c), are left out. */
+interface TeamNews { team: string; formation: string; names: { name: string; num?: string }[] }
+function readTeamNews(text: string): TeamNews {
+  let t = text.replace(/\r/g, "").split(/\b(?:subs|substitutes|bench)\b\s*[:.\-]/i)[0]
+  const tens = (f: string) => f.split("-").reduce((s, n) => s + Number(n), 0) === 10
+  const written = (/\b([3-5](?:-[1-5]){2,4})\b/.exec(t)?.[1] ?? "")
+  let team = ""
+  const head = /^\s*([^:;,\n(]{2,40}?)\s*(?:\([^)]*\))?\s*:\s*/.exec(t)
+  if (head) { team = head[1].replace(/\b(?:starting\s+)?(?:xi|eleven|line-?up|team\s+news)\b/gi, "").replace(/[\s\-–·|]+$/, "").trim(); t = t.slice(head[0].length) }
+  t = t.replace(/\([^)]*\)/g, " ") // (c), (gk), (4-3-3)…
+  const header = /\b(?:xi|eleven|line-?up|team\s+news)\b/i // a heading line such as "Starting XI" is not a player
+  const groups = (t.includes(";") ? t.split(";") : t.split("\n"))
+    .map(g => parseLineup(g).filter(e => !header.test(e.name)).map(e => ({ ...e, name: e.name.replace(/[.\s]+$/, "") })).filter(e => e.name))
+    .filter(g => g.length)
+  const sizes = groups.map(g => g.length)
+  const fromLines = sizes.length >= 4 && sizes.length <= 6 && sizes[0] === 1 && sizes.reduce((a, b) => a + b, 0) === 11 ? sizes.slice(1).join("-") : ""
+  return { team, formation: written && tens(written) ? written : fromLines, names: groups.flat().slice(0, 11) }
+}
 /** A saved squad: a team's name, kit, and players' names and numbers in team-sheet order. Kept in this browser, for any board. */
 interface Squad { id: string; name: string; teamName: string; kit: { pat: KitPattern; c1: string; c2: string; num: string }; players: { name: string; num: string }[] }
 const SQUADS_KEY = "ps-squads"
@@ -1154,12 +1176,13 @@ const editionStamp = (n: number, day?: string) => `${issueLabel(n)} · ${day || 
 type EdTeam = { name: string; score: string; pat: KitPattern; c1: string; c2: string }
 type LegendItem = { kind: LineKind | "ghost"; color: string; label: string }
 /** The slate across the top (kicker, title, score strip), the caption and the legend underneath, crop marks at the corners and the edition number. It sits on the board, so every export carries it. */
-function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, legend, crop, edition, band, step }: {
+function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, legend, crop, edition, band, step, legendRight }: {
   frame: { x: number; y: number; w: number; h: number }; k: number; ink: string
   title: string; kicker: string; strip: { home: EdTeam; away: EdTeam } | null; note: string
   caption: string[]; legend: LegendItem[]; crop: boolean; edition: string | null
   band?: { color: string; top: number; bottom: number } | null // a band in the canvas colour above top and below bottom (the pitch carries on under a half or a third)
   step?: { n: number; of: number; note: string; fade: number } | null // the step on screen, shown in the slate after the kicker
+  legendRight?: boolean // the creator's seal sits bottom left, so the legend ends at the right instead
 }) {
   const x0 = frame.x, y0 = frame.y, x1 = frame.x + frame.w, y1 = frame.y + frame.h, m = 36 * k
   const narrow = frame.w < 1100
@@ -1192,7 +1215,8 @@ function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, le
       </g>
     )
   }
-  let lx = x0 + m
+  const legendW = legend.reduce((s, it) => s + (it.label.length * 8.2 + 62) * k, 0)
+  let lx = legendRight ? x1 - m - legendW + 22 * k : x0 + m
   return (
     <g style={{ pointerEvents: "none" }}>
       {/* On a half or a third the pitch carries on under the slate and the caption: a band in the canvas colour keeps them on clean ground */}
@@ -2384,6 +2408,7 @@ function TacticsBoard() {
   const [homeScore, setHomeScore] = useState(""); const [awayScore, setAwayScore] = useState(""); const [scoreNote, setScoreNote] = useState("")
   const [caption, setCaption] = useState("")
   const [showLegend, setShowLegend] = useState(true); const [cropMarks, setCropMarks] = useState(true); const [showEdition, setShowEdition] = useState(true)
+  const [sealSide, setSealSide] = useState<"left" | "right">("left")
   const [issueNo, setIssueNo] = useState(0); const [issueDay, setIssueDay] = useState("") // this board's issue number (0 = none yet) and the day it took it
   const [nextIssue, setNextIssue] = useState<number | null>(null) // the number its first export will take, when known
   const [noIssue, setNoIssue] = useState(false) // an export going out without a number, because it couldn't be fetched
@@ -2397,6 +2422,8 @@ function TacticsBoard() {
   const [making, setMaking] = useState<null | { fmt: "gif" | "mp4"; done: number }>(null) // a GIF or a video being made
   const [kitEditor, setKitEditor] = useState<Record<"home" | "away", "" | "more" | "own">>({ home: "", away: "" }) // a team's kits: the few, all of them, or your own
   const [namesFor, setNamesFor] = useState<"home" | "away" | null>(null) // the team whose names are open
+  const [pasteFor, setPasteFor] = useState<"home" | "away" | null>(null) // the "Paste the line-up" box is open for this team
+  const [newsText, setNewsText] = useState("")
   const [naming, setNaming] = useState<{ ids: string[]; i: number } | null>(null) // naming players on the pitch, one after another
   const [sheetHl, setSheetHl] = useState<string | null>(null) // the player whose team-sheet row you're in
   const [pasteOpen, setPasteOpen] = useState(false) // the team sheet's "paste a list" box
@@ -2711,7 +2738,7 @@ function TacticsBoard() {
       homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
       vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
       pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, area,
-      issueNo, issueDay,
+      issueNo, issueDay, sealSide,
     }),
     ...(stepList.length > 1 ? { steps: stepList, step: stepIdx } : {}),
   })
@@ -2734,7 +2761,7 @@ function TacticsBoard() {
     setHomeFormation(st.homeFormation); setHomeShape(st.homeShape); setAwayFormation(st.awayFormation); setAwayShape(st.awayShape)
     setPitchStyle(st.pitchStyle); setPsMark(st.psMark); setEditorial(st.editorial); setKicker(st.kicker)
     setHomeScore(st.homeScore); setAwayScore(st.awayScore); setScoreNote(st.scoreNote); setCaption(st.caption)
-    setShowLegend(st.showLegend); setCropMarks(st.cropMarks); setShowEdition(st.showEdition); setIssueNo(st.issueNo); setIssueDay(st.issueDay)
+    setShowLegend(st.showLegend); setCropMarks(st.cropMarks); setShowEdition(st.showEdition); setIssueNo(st.issueNo); setIssueDay(st.issueDay); setSealSide(st.sealSide)
     setAnimSpeed(st.animSpeed); setEndCard(st.endCard)
     setSteps(d.steps ?? []); setStepIdx(d.step ?? 0)
   }
@@ -2814,7 +2841,7 @@ function TacticsBoard() {
       showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
       labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
       pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, steps, stepIdx, area,
-      issueNo, issueDay, currentBoardId, authUser, saveTick])
+      issueNo, issueDay, sealSide, currentBoardId, authUser, saveTick])
 
   // "/board?open=ID": Home's "Continue" opens that saved board
   const openParam = new URLSearchParams(useLocation().search).get("open")
@@ -3668,6 +3695,8 @@ function TacticsBoard() {
               style={{ background: k.c1, color: inkOn(k.c1), border: `1px solid ${DS_BORDER}` }}>+ {label}</button>
           )}
         </div>
+        <button onClick={() => { setNewsText(""); setPasteFor(team) }}
+          className="self-start text-xs font-semibold hover:underline" style={{ color: ACCENT_TEXT, background: "transparent", border: "none", padding: 0 }}>Paste a line-up</button>
         {!there && squads.length > 0 && (
           <select value="" aria-label="Saved squad"
             onChange={e => { const q = squads.find(x => x.id === e.target.value); if (q) { applyLineup(team, q.players, q); setSquadId(q.id) } }}
@@ -3887,6 +3916,23 @@ function TacticsBoard() {
       if (team === "home") { setHomeColor(k.c1); setHomePat(k.pat); setHomeC2(k.c2); setHomeNum(k.num); setHomeName(squad.teamName) }
       else { setAwayColor(k.c1); setAwayPat(k.pat); setAwayC2(k.c2); setAwayNum(k.num); setAwayName(squad.teamName) }
     }
+  }
+  /** Puts pasted team news on the pitch: the team moves into the formation it gives (or keeps its own), every name lands in team-sheet order
+   *  and the team takes the name before the colon. One undo step. */
+  const applyTeamNews = (team: "home" | "away", news: TeamNews) => {
+    if (!news.names.length) return
+    undoPoint()
+    const known = FORMATIONS.find(x => x.name === news.formation)
+    const f = known ?? formationFor(team), shape = shapeFor(team, ballSide)
+    let list = placeTeam(players, f, team, shape)
+    if (shape !== "base") list = easeApart(list)
+    recordFormation(team, f.name, shape)
+    const order = lineupOf(list, team, f, shape)
+    const named = new Map(order.slice(0, news.names.length).map((p, i) => [p.id, news.names[i]]))
+    setPlayers(list.map(p => { const e = named.get(p.id); return e ? { ...p, name: e.name, ...(e.num ? { num: e.num } : {}) } : p }))
+    if (news.team) (team === "home" ? setHomeName : setAwayName)(news.team.slice(0, 30))
+    setExportNote(news.formation && !known ? `${news.formation} isn't one of the board's shapes yet, so they're in ${f.name}` : `${news.names.length} players in ${f.name}`)
+    ;(window as any).posthog?.capture("lineup_pasted", { formation: f.name, players: news.names.length, read: !!news.formation })
   }
   /** Keeps a team's names, numbers, kit and name as a squad in this browser, to use on any board. Saving under the same name replaces it. */
   const saveSquad = (team: "home" | "away") => {
@@ -5416,6 +5462,9 @@ function TacticsBoard() {
                 <Segmented label="Size" value={frameRatio} onChange={v => { undoPoint(); setFrameRatio(v) }}
                   options={[["auto", "Fit"], ["16:9", "16:9"], ["4:5", "4:5"], ["1:1", "1:1"], ["9:16", "9:16"]]} />
                 <p className="text-xs" style={{ color: TEXT_MUTED }}>What you see is what you export. 16:9 exports 1920×1080, 4:5 1080×1350, 1:1 1080×1080 and 9:16 1080×1920.</p>
+                <Segmented label="Your seal" value={sealSide} onChange={v => { undoPoint(); setSealSide(v) }}
+                  options={[["left", "Bottom left"], ["right", "Bottom right"]]} />
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>Your handle and badge sign every export. The team names and the legend move to the other side.</p>
               </div>
             )}
 
@@ -5660,8 +5709,10 @@ function TacticsBoard() {
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
               <div style={{ textAlign: "center", background: GLASS, border: `1px solid ${DS_BORDER}`, borderRadius: 12, padding: "22px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
                 <p style={{ fontSize: 18, fontWeight: 700, color: TEXT_PRIMARY, margin: 0 }}>Start your board</p>
-                <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Add a full team, place players one at a time, or draw a zone.</p>
+                <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Paste a line-up, add a full team, place players one at a time, or draw a zone.</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, padding: "0 12px", justifyContent: "center", pointerEvents: "auto" }}>
+                  <button onClick={() => { setNewsText(""); setPasteFor("home") }}
+                    style={{ background: ACCENT_SOLID, border: `1px solid ${ACCENT_SOLID}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: ACCENT_INK, cursor: "pointer" }}>Paste a line-up</button>
                   {([
                     { label: "Start from a drop", action: () => setShowTemplates(true) },
                     { label: "Add formation", action: () => addTeam("home") },
@@ -6193,16 +6244,17 @@ function TacticsBoard() {
                       n={(view ? view.step : stepIdx) + 1} of={stepList.length} note={(view ? view.note : stepList[stepIdx]?.note ?? "").trim()} fade={view ? view.noteFade : 1} />
                   )}
 
-                  {/* Team legend: the kit and name of each named team, bottom left */}
+                  {/* Team legend: the kit and name of each named team, in the bottom corner the seal doesn't use */}
                   {!editorial && (homeName.trim() !== "" || awayName.trim() !== "") && (
-                    <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x},${frame.y + frame.h}) scale(${sealK})`}>
+                    <g style={{ pointerEvents: "none" }} transform={`translate(${sealSide === "left" ? frame.x + frame.w : frame.x},${frame.y + frame.h}) scale(${sealK})`}>
                       {(["home", "away"] as const).filter(team => (team === "home" ? homeName : awayName).trim() !== "").map((team, i, arr) => {
                         const k = kitOf(team)
+                        const toRight = sealSide === "left"
                         return (
-                          <g key={team} transform={`translate(30,${-26 - (arr.length - 1 - i) * 28})`}>
+                          <g key={team} transform={`translate(${toRight ? -30 : 30},${-26 - (arr.length - 1 - i) * 28})`}>
                             <KitFill cid={`kl-${team}`} r={10} pat={k.pat} c1={k.c1} c2={k.c2} />
                             <circle r={10} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={1.5} />
-                            <text x={19} y={1} dominantBaseline="central" fill="#ffffff" fontSize={17} fontWeight={700}
+                            <text x={toRight ? -19 : 19} y={1} textAnchor={toRight ? "end" : "start"} dominantBaseline="central" fill="#ffffff" fontSize={17} fontWeight={700}
                               stroke="rgba(0,0,0,0.85)" strokeWidth={3.5} paintOrder="stroke" strokeLinejoin="round"
                               style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.04em", textTransform: "uppercase" }}>
                               {(team === "home" ? homeName : awayName).trim()}
@@ -6226,15 +6278,15 @@ function TacticsBoard() {
                     return (
                       <EditorialFrame frame={frame} k={sealK} ink={inkOn(bgColor)} title={edBoard} kicker={kicker.trim()}
                         strip={edStrip ? { home: { name: homeName, score: homeScore, pat: hk.pat, c1: hk.c1, c2: hk.c2 }, away: { name: awayName, score: awayScore, pat: ak.pat, c1: ak.c1, c2: ak.c2 } } : null}
-                        note={scoreNote.trim()} caption={edLines} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? edition : null}
+                        note={scoreNote.trim()} caption={edLines} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? edition : null} legendRight={sealSide === "left"}
                         step={stepList.length > 1 ? { n: (view ? view.step : stepIdx) + 1, of: stepList.length, note: (view ? view.note : stepList[stepIdx]?.note ?? "").trim(), fade: view ? view.noteFade : 1 } : null}
                         band={canvasMode !== "blank" && (focus === "half" || focus === "third") ? { color: bgColor, top: Math.min(frame.y + (edStrip && frame.w < 1100 ? 196 : 112) * sealK, partRect.y - 2), bottom: Math.max(frame.y + frame.h - (edLines.length ? 92 + (edLines.length - 1) * 22 : 60) * sealK, partRect.y + partRect.h + 2) } : null} />
                     )
                   })()}
 
                   {/* 13. Creator seal — always last, always visible: your crest or logo, your handle (once you've chosen one) and PITCHSTUDIO (if you keep it on) */}
-                  <g style={{ pointerEvents: "none" }} transform={`translate(${frame.x + frame.w - (editorial && cropMarks ? 10 * sealK : 0)},${frame.y + frame.h - (editorial && cropMarks ? 10 * sealK : 0)}) scale(${sealK})`}>
-                    <CreatorSeal brand={creatorBrand} handle={creatorHandle} logo={creatorLogo} pill={inkOn(bgColor) === "#000000" ? "#1d1b16" : "rgba(0,0,0,0.62)"} />
+                  <g style={{ pointerEvents: "none" }} transform={`translate(${sealSide === "left" ? frame.x + (editorial && cropMarks ? 10 * sealK : 0) : frame.x + frame.w - (editorial && cropMarks ? 10 * sealK : 0)},${frame.y + frame.h - (editorial && cropMarks ? 10 * sealK : 0)}) scale(${sealK})`}>
+                    <CreatorSeal side={sealSide} brand={creatorBrand} handle={creatorHandle} logo={creatorLogo} pill={inkOn(bgColor) === "#000000" ? "#1d1b16" : "rgba(0,0,0,0.62)"} />
                   </g>
                   {/* 14. The end card, at the end of a move */}
                   {view && view.end !== null && (
@@ -6247,8 +6299,8 @@ function TacticsBoard() {
             </div>
           </div>
 
-          {/* ── Zoom controls ── */}
-          <div className="absolute bottom-4 left-4 flex items-center gap-1 px-2 py-1.5 st-glass"
+          {/* ── Zoom controls: above the tool bar, so a narrow screen never puts one on top of the other (on a phone, top left) ── */}
+          <div className="absolute bottom-[84px] left-4 max-[600px]:bottom-auto max-[600px]:top-3 max-[600px]:left-3 flex items-center gap-1 px-2 py-1.5 st-glass"
             style={{ zIndex: 10, borderRadius: 12, display: presenting ? "none" : undefined }} onPointerDown={e => e.stopPropagation()}>
             <button onClick={() => applyZoom(0.87)} className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Minus size={13} /></button>
             <span className="text-xs font-mono w-12 text-center" style={{ color: TEXT_PRIMARY }}>
@@ -6433,6 +6485,39 @@ function TacticsBoard() {
       </div>
 
       {/* ── Template modal ── */}
+      {pasteFor && (() => {
+        const news = readTeamNews(newsText)
+        const known = FORMATIONS.some(x => x.name === news.formation)
+        const read = !newsText.trim() ? "Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; …"
+          : !news.names.length ? "No names yet"
+          : [news.team, news.formation ? (known ? news.formation : `${news.formation} (not on the board yet)`) : "formation: keeps the current one", `${news.names.length} of 11 players`].filter(Boolean).join(" · ")
+        const close = () => setPasteFor(null)
+        const go = () => { applyTeamNews(pasteFor, news); close() }
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={close}
+            onKeyDown={e => { if (e.key === "Escape") close(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && news.names.length) go() }}>
+            <div role="dialog" aria-modal="true" aria-label="Paste the line-up" className="w-full flex flex-col gap-3 rounded-lg border p-5"
+              style={{ background: SURFACE_1, borderColor: DS_BORDER_STRONG, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <span style={{ fontSize: 18, fontWeight: 700, color: TEXT_PRIMARY }}>Paste the line-up</span>
+                <button onClick={close} aria-label="Close" className="p-1 rounded hover:bg-[var(--ps-hover)]"><X size={16} /></button>
+              </div>
+              <p className="text-sm" style={{ color: TEXT_MUTED, margin: 0 }}>Copy it from the club's post or a match report. Goalkeeper first, a semicolon between the lines, and the formation comes with it.</p>
+              <Segmented label="Team" value={pasteFor} onChange={v => setPasteFor(v)} options={[["home", homeName.trim() || "Home"], ["away", awayName.trim() || "Away"]]} />
+              <textarea autoFocus value={newsText} onChange={e => setNewsText(e.target.value)} rows={5} aria-label="Line-up"
+                placeholder={"Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; Pedri, De Jong, Fermín; Yamal, Lewandowski, Raphinha"}
+                className="rounded px-3 py-2 text-sm outline-none resize-y" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, fontSize: 16 }} />
+              <p className="text-xs" aria-live="polite" style={{ color: news.names.length ? ACCENT_TEXT : TEXT_MUTED, margin: 0 }}>{read}</p>
+              <div className="flex justify-end gap-2">
+                <button onClick={close} className="px-4 rounded text-sm font-semibold" style={{ minHeight: 40, background: "transparent", color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>Cancel</button>
+                <button onClick={go} disabled={!news.names.length} className="px-4 rounded text-sm font-semibold hover:brightness-110"
+                  style={{ minHeight: 40, background: ACCENT_SOLID, color: ACCENT_INK, border: "none", opacity: news.names.length ? 1 : 0.4 }}>Put them on the pitch</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {showTemplates && (
         <TemplateModal
           templates={templates} onClose={() => setShowTemplates(false)}

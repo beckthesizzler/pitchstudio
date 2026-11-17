@@ -11,7 +11,7 @@ import { DEFAULT_BRAND, cardColours, logoToDataUrl, readBrand, type Brand } from
 import { Canvas, clampCrop, moveBlock, type Mode, type PitchTool, type Sel } from "../report/Canvas"
 import { Panel, PITCH_HINTS } from "../report/Panel"
 import { ReportView, blockBox } from "../report/Draw"
-import { BLANK_GAME, TEMPLATES, makeTemplate, nextGameFrom, type TemplateId } from "../report/templates"
+import { BLANK_GAME, SHAPES, TEMPLATES, makeShape, makeTemplate, nextGameFrom, type ShapeId, type TemplateId } from "../report/templates"
 import { FillForm } from "../report/FillForm"
 import { applyFill, journalToGame, lockEdited, reflow, unlock as unlockSection } from "../report/fill"
 import { peekIssue, takeIssue } from "../lib/issues"
@@ -170,9 +170,9 @@ export default function ReportPage() {
     if (brand.logo) logoToDataUrl(brand.logo).then(d => { if (!off) setLogo(d) })
     return () => { off = true }
   }, [brand.logo])
-  const start = (id: TemplateId | "next") => {
+  const start = (id: TemplateId | "next" | `own:${ShapeId}`) => {
     // a template isn't saved until you change something: leave without editing and nothing new appears in My reports
-    const tpl = id === "next" && lastGame ? nextGameFrom(lastGame, handle) : makeTemplate(id === "next" ? "game" : id, handle)
+    const tpl = id.startsWith("own:") ? makeShape(id.slice(4) as ShapeId) : id === "next" && lastGame ? nextGameFrom(lastGame, handle) : makeTemplate(id === "next" ? "game" : id as TemplateId, handle)
     setView(tpl.fill ? "fill" : "design")
     made.current = new Date().toISOString(); setTitle(""); titleRef.current = ""
     savedJson.current = payload("", tpl); setStatus("idle")
@@ -684,6 +684,11 @@ export default function ReportPage() {
         .rp-tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px; max-width: 1180px; }
         .rp-tpl { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 16px; padding: 10px; cursor: pointer; text-align: left; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; transition: transform .15s, border-color .15s; }
         .rp-tpl:hover, .rp-tpl:focus-visible { transform: translateY(-3px); border-color: ${ACCENT_SOLID}; outline: none; }
+        .rp-tpl { position: relative; }
+        .rp-def { display: inline-block; vertical-align: 2px; margin-left: 6px; font: 700 10px 'JetBrains Mono', monospace; font-style: normal; letter-spacing: .14em; text-transform: uppercase; padding: 3px 7px; border-radius: 999px; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
+        .rp-own { margin-top: 40px; padding: 24px; max-width: 1180px; border-radius: 20px; border: 2px dashed var(--ps-bd2, ${DS_BORDER}); }
+        .rp-own h2 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.01em; }
+        .rp-own > p { margin: 0 0 18px; color: ${TEXT_MUTED}; font-size: 15px; max-width: 640px; line-height: 1.5; }
         .rp-tpl .th { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #0f1114; display: grid; align-items: center; }
         .rp-tpl b { display: block; font-size: 15px; margin: 12px 4px 4px; } .rp-tpl span { display: block; font-size: 12.5px; color: ${TEXT_MUTED}; margin: 0 4px 6px; line-height: 1.45; }
         .rp-banner { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 20; background: ${SURFACE_1}; border: 1px solid ${DS_ERROR}; border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.4); max-width: calc(100% - 24px); }
@@ -762,23 +767,27 @@ export default function ReportPage() {
           <h1>Start a match report</h1>
           <p>Pick a starting point. Every word, block and colour can be changed, moved or deleted.</p>
           {lastGame && <button className="rp-btn pri" style={{ marginBottom: 22 }} onClick={() => start("next")}><Plus size={15} /> Start from your last Game Report</button>}
+          <p className="rp-cap" style={{ marginBottom: 12 }}>PITCHSTUDIO TEMPLATES · {TEMPLATES.filter(t => t.id !== "blank").length}</p>
           <div className="rp-tpls">
-            {TEMPLATES.filter(t => !t.more).map(t => (
+            {TEMPLATES.filter(t => t.id !== "blank").map(t => (
               <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
                 <div className="th" style={{ aspectRatio: t.id === "journal" ? "16 / 9" : t.id === "game" || t.id === "formation" ? "4 / 5" : "1" }}><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></div>
-                <b>{t.name}</b><span>{t.note}</span>
+                <b>{t.name} <i className="rp-def">Default</i></b><span>{t.note}</span>
               </button>
             ))}
           </div>
-          <p className="rp-cap" style={{ marginTop: 30 }}>MORE STARTING POINTS</p>
-          <div className="rp-tpls small">
-            {TEMPLATES.filter(t => t.more).map(t => (
-              <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
-                <div className="th"><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} /></div>
-                <b>{t.name}</b><span>{t.note}</span>
-              </button>
-            ))}
-          </div>
+          <section className="rp-own" aria-labelledby="rp-own-h">
+            <h2 id="rp-own-h">Create your own</h2>
+            <p>Start from a shape. Every block already holds an example, so there's always something to change: add a pitch, numbers, a timeline, a photo, anything.</p>
+            <div className="rp-tpls small">
+              {SHAPES.map(s => (
+                <button key={s.id} className="rp-tpl" data-template={`own:${s.id}`} onClick={() => start(`own:${s.id}`)}>
+                  <div className="th"><ReportView report={makeShape(s.id)} brand={brand} handle={handle} logo={logo} media={{}} /></div>
+                  <b>{s.name}</b><span>{s.note}</span>
+                </button>
+              ))}
+            </div>
+          </section>
         </div>
       ) : view === "fill" && report.fill ? (
         <div className="rp-fill">

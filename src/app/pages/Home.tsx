@@ -172,7 +172,7 @@ export default function HomePage() {
         @media (max-width: 880px) {
           .hm-top { padding: 0 16px; height: 56px; } .hm-word { display: none; } .hm-me .hm-hide { display: none; }
           .hm-main { grid-template-columns: 1fr; min-height: 0; }
-          .hm-art { order: -1; min-height: 0; height: 220px; }
+          .hm-art { order: -1; min-height: 0; height: clamp(220px, 46vw, 380px); } /* tall enough to show the creator at the desk, not a strip of it */
           .hm-learn, .hm-cap { display: none; }
           .hm-menu { padding: 22px 16px 28px; border-right: 0; }
           .hm-h1 { font-size: 25px; margin: 8px 0 18px; }

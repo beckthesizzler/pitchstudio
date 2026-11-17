@@ -24,8 +24,8 @@ export function SealDisc({ cx, cy, r, brand, logo, clipId }: { cx: number; cy: n
   )
 }
 
-/** The small seal in the corner of every picture. It is placed by its parent (the bottom right corner of the frame). */
-export function CreatorSeal({ brand, handle, logo, pill }: { brand: Brand; handle: string; logo: string | null; pill: string }) {
+/** The small seal in the corner of every picture. Its parent places it at a bottom corner of the frame; side says which one, so it grows inward. */
+export function CreatorSeal({ brand, handle, logo, pill, side = "right" }: { brand: Brand; handle: string; logo: string | null; pill: string; side?: "left" | "right" }) {
   const clipId = "psseal" + useId().replace(/[^a-zA-Z0-9]/g, "")
   const textRef = useRef<SVGTextElement>(null)
   const [tw, setTw] = useState(0)
@@ -37,12 +37,13 @@ export function CreatorSeal({ brand, handle, logo, pill }: { brand: Brand; handl
     document.fonts?.ready.then(measure)
   }, [handle, brand.madeWith])
   const w = hasText ? (tw || 92) + 48 : 34
+  const left = side === "left" ? 14 : -14 - w // the pill's left edge: 14px in from the corner either way
   return (
     <g>
-      <rect x={-14 - w} y={-42} width={w} height={28} rx={14} fill={pill} />
-      <SealDisc cx={-14 - w + 17} cy={-28} r={11} brand={brand} logo={logo} clipId={clipId} />
+      <rect x={left} y={-42} width={w} height={28} rx={14} fill={pill} />
+      <SealDisc cx={left + 17} cy={-28} r={11} brand={brand} logo={logo} clipId={clipId} />
       {hasText && (
-        <text ref={textRef} x={-26} y={-22} textAnchor="end" fontSize={17} style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
+        <text ref={textRef} x={left + w - 12} y={-22} textAnchor="end" fontSize={17} style={{ fontFamily: "'Barlow Condensed',sans-serif" }}>
           {handle && <tspan fill="rgba(255,255,255,0.97)" fontWeight="700" style={{ letterSpacing: "0.04em" }}>@{handle}</tspan>}
           {brand.madeWith && <tspan dx={handle ? 9 : 0} fill="rgba(255,255,255,0.58)" fontWeight="500" fontSize={12} style={{ fontFamily: "'Inter',sans-serif", letterSpacing: "0.02em" }}>made with PitchStudio</tspan>}
         </text>

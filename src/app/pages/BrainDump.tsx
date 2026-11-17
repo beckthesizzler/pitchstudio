@@ -621,7 +621,7 @@ export default function BrainDumpPage() {
             </div>
           : <div className="bd-wall">
               <Banner />
-              <div className="bd-cols" ref={wallRef}>{columns.map(column)}</div>
+              <div className="bd-cols" ref={wallRef}>{notes !== null && columns.map(column)}</div>{/* drawn once the notes are in: on a phone the wall snaps to its first column, so it must not open on an empty Just pinned that the piles then push aside */}
             </div>}
       </main>
 
