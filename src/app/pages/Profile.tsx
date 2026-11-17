@@ -405,13 +405,13 @@ export default function ProfilePage() {
           <button className="pf-btn" style={{ height: 36 }} onClick={() => { try { sessionStorage.setItem("ps-card-later", "1") } catch { /* private mode */ } navigate("/", { replace: true }) }}>Skip for now</button>
         </div></div>
       )}
-      <div className="pf-top">
+      <header className="pf-top">
         <button className="pf-back" onClick={() => navigate("/")}><ArrowLeft size={16} /> Home</button>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Mark size={26} color={ACCENT_SOLID} />
           <span style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 18, letterSpacing: "0.2em", fontWeight: 600 }}>PITCHSTUDIO</span>
         </div>
-      </div>
+      </header>
 
       <div className="pf-wrap2">
         <aside className="pf-stage">

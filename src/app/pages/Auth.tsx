@@ -274,7 +274,7 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
   const ctaText = loading ? (signup ? "Creating account…" : "Signing in…") : signup ? (step === 1 ? "Continue" : "Create account") : "Sign in"
 
   return (
-    <div className="au" style={{ background: SURFACE_BASE, color: TEXT_PRIMARY, minHeight: "100vh", fontFamily: "'Inter', sans-serif" }}>
+    <main className="au" style={{ background: SURFACE_BASE, color: TEXT_PRIMARY, minHeight: "100vh", fontFamily: "'Inter', sans-serif" }}>
       <style>{`
         .au * { box-sizing: border-box; }
         @keyframes au-in { from { opacity: 0; } to { opacity: 1; } }
@@ -422,6 +422,6 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
           <div className="au-chips"><span className="on">Free, all of it</span><span>MP4 · GIF · PNG</span><span>16:9 · 4:5 · 1:1 · 9:16</span><span>Your name on every export</span></div>
         </div>
       </div>
-    </div>
+    </main>
   )
 }

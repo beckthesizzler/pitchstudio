@@ -653,6 +653,7 @@ export default function BrainDumpPage() {
       </aside>
 
       <main className="bd-main">
+        <h1 className="sr-only">Dump &amp; Arrange</h1>
         {loadFailed && <div className="bd-failed" role="alert"><b>Your notes didn't load.</b><span>Nothing is lost. They're kept in your account.</span><button className="bd-btn" onClick={() => setTries(t => t + 1)}>Try again</button></div>}
         {tvPile && tvPile.kind === "tree" && tvCol
           ? <div style={{ position: "relative", flex: 1, minHeight: 0 }}>

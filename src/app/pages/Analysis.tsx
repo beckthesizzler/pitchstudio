@@ -491,7 +491,7 @@ export default function AnalysisPage() {
   if (phase === "loading") return <div className="an-page" style={{ minHeight: "100vh", background: SURFACE_BASE }} />
 
   return (
-    <div className="an-page" onDragOver={e => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); setDragOver(true) } }}
+    <main className="an-page" onDragOver={e => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); setDragOver(true) } }}
       onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false) }}
       onDrop={e => { e.preventDefault(); setDragOver(false); addFiles([...e.dataTransfer.files]) }}>
       <style>{`
@@ -768,8 +768,9 @@ export default function AnalysisPage() {
           </div>
         </div>
       )}
+      <h1 className="sr-only">Live Game Analysis</h1>
       {busy && <div className="an-busy" role="status"><span style={{ display: "flex", alignItems: "center", gap: 10 }}><Loader2 size={18} className="an-spin" /> {busy}</span></div>}
       <div aria-live="polite">{toast && <div className="an-toast">{toast}</div>}</div>
-    </div>
+    </main>
   )
 }

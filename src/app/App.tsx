@@ -5718,6 +5718,7 @@ function TacticsBoard() {
           onPointerMove={onCanvasMouseMove}
           onPointerUp={onCanvasMouseUp}
         >
+          <h1 className="sr-only">Tactics Board</h1>
           {/* Empty state overlay */}
           {players.length === 0 && arrows.length === 0 && texts.length === 0 && shapes.length === 0 && images.length === 0 && customZones.length === 0 && (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
@@ -6316,11 +6317,11 @@ function TacticsBoard() {
           {/* ── Zoom controls: above the tool bar, so a narrow screen never puts one on top of the other (on a phone, top left) ── */}
           <div className="absolute bottom-[84px] left-4 max-[600px]:bottom-auto max-[600px]:top-3 max-[600px]:left-3 flex items-center gap-1 px-2 py-1.5 st-glass"
             style={{ zIndex: 10, borderRadius: 12, display: presenting ? "none" : undefined }} onPointerDown={e => e.stopPropagation()}>
-            <button onClick={() => applyZoom(0.87)} className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Minus size={13} /></button>
+            <button onClick={() => applyZoom(0.87)} aria-label="Zoom out" title="Zoom out" className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Minus size={13} /></button>
             <span className="text-xs font-mono w-12 text-center" style={{ color: TEXT_PRIMARY }}>
               {Math.round(zoom * 100)}%
             </span>
-            <button onClick={() => applyZoom(1.15)} className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Plus size={13} /></button>
+            <button onClick={() => applyZoom(1.15)} aria-label="Zoom in" title="Zoom in" className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Plus size={13} /></button>
             <div className="w-px h-4 mx-1" style={{ background: DS_BORDER_STRONG }} />
             <button onClick={fitToView} className="px-1.5 py-0.5 rounded text-xs hover:bg-[var(--ps-hover)] transition-colors"
               style={{ color: TEXT_MUTED }}>Fit</button>

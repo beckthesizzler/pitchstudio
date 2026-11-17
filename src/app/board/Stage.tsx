@@ -19,7 +19,7 @@ export function saveDock(d: DockPlace) { try { localStorage.setItem(DOCK_KEY, d)
 export type PanelSide = "left" | "right"
 const PANEL_KEY = "ps_panel_side"
 export function readPanelSide(): PanelSide {
-  try { return localStorage.getItem(PANEL_KEY) === "left" ? "left" : "right" } catch { return "right" }
+  try { return localStorage.getItem(PANEL_KEY) === "right" ? "right" : "left" } catch { return "left" } // starts on the left until you move it
 }
 export function savePanelSide(s: PanelSide) { try { localStorage.setItem(PANEL_KEY, s) } catch { /* the choice just isn't remembered */ } }
 

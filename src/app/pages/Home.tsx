@@ -192,11 +192,12 @@ export default function HomePage() {
           <button className="hm-av" onClick={() => navigate("/profile")} aria-label="Creator profile" title="Creator profile">{initials}</button>
         </div>
       </header>
-      <div className="hm-main">
-        <div className="hm-menu" role="menu" aria-label="Creator hub" tabIndex={0} ref={menuRef} onKeyDown={onKey}>
+      <main className="hm-main">
+        <div className="hm-menu" tabIndex={0} ref={menuRef} onKeyDown={onKey}>
           <div className="hm-hi">{isNew ? "WELCOME" : "WELCOME BACK"}{first ? `, ${first.toUpperCase()}` : ""}{studioNo ? ` · STUDIO ${studioLabel(studioNo)}` : ""}</div>
           <h1 className="hm-h1">What do you want to<br />work on today?</h1>
           <div className="hm-lab">CREATOR HUB</div>
+          <div role="menu" aria-label="Creator hub" style={{ display: "contents" }}>
           {items.map((it, i) => (
             <div key={it.id} role="menuitem" aria-disabled={it.soon || undefined} data-home={it.id}
               className={`hm-it${sel === i ? " sel" : ""}${it.soon ? " soon" : ""}`}
@@ -211,6 +212,7 @@ export default function HomePage() {
               ) : null}
             </div>
           ))}
+          </div>
           <div className="hm-foot">
             <div className="hm-tagline">Enable your <em>creativity.</em></div>
             <div className="hm-keys"><span className="hm-k">↑</span><span className="hm-k">↓</span> move &nbsp;<span className="hm-k">Enter</span> open</div>
@@ -223,7 +225,7 @@ export default function HomePage() {
             <div className="hm-learn"><div className="t">LEARN FOOTBALL · COMING SOON</div><div className="q">Hand-picked football threads from X, always credited to the people who wrote them.</div></div>
           </div>
         </div>
-      </div>
+      </main>
       <div aria-live="polite">{toast && <div className="hm-toast">{toast}</div>}</div>
     </div>
   )

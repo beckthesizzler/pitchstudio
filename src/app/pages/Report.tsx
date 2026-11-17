@@ -576,7 +576,7 @@ export default function ReportPage() {
   if (phase === "loading") return <div className="rp-page" role="status" style={{ minHeight: "100vh", background: SURFACE_BASE, color: TEXT_MUTED, display: "grid", placeItems: "center", fontSize: 14 }}>Opening your report…</div>
 
   return (
-    <div className="rp-page">
+    <main className="rp-page">
       <style>{`
         .rp-page { height: 100vh; display: grid; grid-template-rows: 56px 1fr; background: ${SURFACE_BASE}; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; overflow: hidden; }
         .rp-page * { box-sizing: border-box; }
@@ -879,6 +879,6 @@ export default function ReportPage() {
       )}
       {busy && <div className="rp-busy" role="status"><span style={{ display: "flex", alignItems: "center", gap: 10 }}><Loader2 size={18} className="rp-spin" /> {busy}</span></div>}
       <div aria-live="polite">{toast && <div className="rp-toast">{toast}</div>}</div>
-    </div>
+    </main>
   )
 }

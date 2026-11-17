@@ -75,7 +75,7 @@ export default function LandingPage() {
   }, [])
 
   return (
-    <div className="ls" ref={root} style={{ background: SURFACE_BASE, color: TEXT_PRIMARY, minHeight: "100vh", fontFamily: "'Inter', sans-serif", overflowX: "hidden" }}>
+    <main className="ls" ref={root} style={{ background: SURFACE_BASE, color: TEXT_PRIMARY, minHeight: "100vh", fontFamily: "'Inter', sans-serif", overflowX: "hidden" }}>
       <style>{LANDING_CSS}</style>
 
       <div className="ls-w">
@@ -246,6 +246,6 @@ export default function LandingPage() {
 
       <footer className="ls-foot"><div className="ls-w"><span>PitchStudio, the football studio for creators</span><span>Free for every fan</span></div></footer>
       <div className="ls-sticky"><button className="ls-btn pri" onClick={start}>Open your studio, free</button></div>
-    </div>
+    </main>
   )
 }

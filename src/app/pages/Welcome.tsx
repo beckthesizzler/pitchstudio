@@ -75,7 +75,7 @@ export default function WelcomePage() {
         }
         @media (prefers-reduced-motion: reduce) { .wl-card > div { animation: none; } }
       `}</style>
-      <div className="wl-top"><Mark size={26} color={ACCENT_SOLID} />PITCHSTUDIO</div>
+      <header className="wl-top"><Mark size={26} color={ACCENT_SOLID} />PITCHSTUDIO</header>
       {me && (
         <main className="wl-main">
           <div>
