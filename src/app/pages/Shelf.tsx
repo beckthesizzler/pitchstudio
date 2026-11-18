@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { ArrowLeft, ArrowRight, FileText, GripVertical, Image as ImageIcon, LayoutDashboard, Search, Sprout, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, FileText, GripVertical, Image as ImageIcon, LayoutDashboard, Plus, Search, Sprout, X } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
@@ -24,6 +24,12 @@ type Piece = { key: string; kind: Kind; id: string; name: string; no: number; up
 const KINDS: { id: Kind | "all"; label: string }[] = [{ id: "all", label: "Everything" }, { id: "board", label: "Boards" }, { id: "analysis", label: "Analyses" }, { id: "report", label: "Reports" }, { id: "tree", label: "Piles" }]
 const KIND_NAME: Record<Kind, string> = { board: "Board", analysis: "Analysis", report: "Report", tree: "Pile" }
 const KIND_ICON: Record<Kind, React.ReactNode> = { board: <LayoutDashboard size={12} />, analysis: <ImageIcon size={12} />, report: <FileText size={12} />, tree: <Sprout size={12} /> }
+const MAKE = [
+  { name: "Tactics board", what: "Players, moves and steps", href: "/board", icon: <LayoutDashboard size={16} /> },
+  { name: "Live analysis", what: "Freeze a moment and draw", href: "/analysis", icon: <ImageIcon size={16} /> },
+  { name: "Match report", what: "The game on one card", href: "/report", icon: <FileText size={16} /> },
+  { name: "Dump & Arrange", what: "Pin an idea, grow a pile", href: "/braindump", icon: <Sprout size={16} /> },
+]
 const TREE_COLORS: Record<string, string> = { yellow: "#f7e36a", pink: "#f58cb4", peach: "#f9b27e", orange: "#f6a04a", lime: "#c8e86c", aqua: "#88dde0", teal: "#5ec6cb", lilac: "#c6b6fb" }
 
 /** An idea's first line, as Brain Dump shows an idea with no title */
@@ -71,6 +77,14 @@ export default function ShelfPage() {
   const [q, setQ] = useState("")
   const [toast, setToast] = useState("")
   const [drag, setDrag] = useState<{ key: string; over: string | null } | null>(null)
+  const [isPublic, setIsPublic] = useState(false)
+  const [makeOpen, setMakeOpen] = useState(false) // the "Make something" menu
+  useEffect(() => {
+    if (!makeOpen) return
+    const close = (e: Event) => { if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as HTMLElement).closest?.(".sh-make")) setMakeOpen(false) }
+    window.addEventListener("pointerdown", close); window.addEventListener("keydown", close)
+    return () => { window.removeEventListener("pointerdown", close); window.removeEventListener("keydown", close) }
+  }, [makeOpen])
   const saveTimer = useRef(0)
   const press = useRef<{ key: string; x: number; y: number; on: boolean } | null>(null)
 
@@ -82,7 +96,7 @@ export default function ShelfPage() {
       if (!u) { navigate("/", { replace: true }); return }
       setUser({ id: u.id, email: u.email ?? "" })
       const [prof, b, a, r, n] = await Promise.all([
-        (supabase as any).from("profiles").select("handle, display_name, brand, shelf").eq("id", u.id).maybeSingle(),
+        (supabase as any).from("profiles").select("handle, display_name, brand, shelf, card_public").eq("id", u.id).maybeSingle(),
         (supabase as any).from("boards").select(BOARD_CARD_COLS).eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
         (supabase as any).from("analyses").select("id, title, updated_at, shots:data->shots").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
         (supabase as any).from("reports").select("id, title, updated_at, data").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
@@ -92,6 +106,7 @@ export default function ShelfPage() {
       // without the shelf column (or the profile) the shelf still opens, in the order things were last changed
       const p = prof.data ?? (await (supabase as any).from("profiles").select("handle, display_name, brand").eq("id", u.id).maybeSingle()).data
       const h: string = p?.handle || ""
+      setIsPublic(!!prof.data?.card_public)
       setWho({ handle: h && stripHandleSuffix(h, u.id, u.email) === h ? h : "", name: stripHandleSuffix(p?.display_name || h || "", u.id, u.email) })
       const br = readBrand(p?.brand); setBrand(br)
       const out: Piece[] = []
@@ -173,39 +188,55 @@ export default function ShelfPage() {
   })
 
   const counts = (k: Kind) => (pieces ?? []).filter(p => p.kind === k).length
+  const search = <label className="sh-search"><Search size={15} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a piece" aria-label="Find a piece" />{q && <button className="sh-icon" style={{ width: 24, height: 24 }} aria-label="Clear search" onClick={() => setQ("")}><X size={13} /></button>}</label>
   const total = pieces?.length ?? 0
   return (
     <div className="sh" style={{ minHeight: "100vh", background: SURFACE_BASE, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
       <style>{`
         .sh * { box-sizing: border-box; }
-        .sh-top { height: 60px; display: flex; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid ${DS_BORDER}; }
+        .sh-top { position: sticky; top: 0; z-index: 30; height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 20px; border-bottom: 1px solid ${DS_BORDER}; background: ${SURFACE_BASE}; }
+        .sh-name2 b { display: block; font-size: 15px; font-weight: 600; } .sh-name2 span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: ${TEXT_MUTED}; }
+        .sh-name2 i { width: 7px; height: 7px; border-radius: 50%; background: ${TEXT_MUTED}; }
+        .sh-link { display: inline-flex; align-items: center; height: 38px; padding: 0 12px; border-radius: 10px; color: ${TEXT_MUTED}; font: 500 14px 'Inter', sans-serif; text-decoration: none; white-space: nowrap; }
+        .sh-link:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
+        .sh-make { position: relative; }
+        .sh-make > button { display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 16px; border-radius: 10px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; font: 600 14px 'Inter', sans-serif; cursor: pointer; white-space: nowrap; }
+        .sh-make > button.pri { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; border-color: ${ACCENT_SOLID}; }
+        .sh-menu { position: absolute; right: 0; top: 46px; z-index: 40; width: 240px; padding: 6px; border-radius: 14px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; box-shadow: 0 18px 40px -12px rgba(0,0,0,.6); }
+        .sh-menu button { display: flex; width: 100%; align-items: center; gap: 12px; padding: 10px; border: none; border-radius: 10px; background: none; color: ${TEXT_PRIMARY}; text-align: left; cursor: pointer; font: 600 14px 'Inter', sans-serif; }
+        .sh-menu button:hover, .sh-menu button:focus-visible { background: ${SURFACE_2}; outline: none; }
+        .sh-menu small { display: block; font: 500 12px 'Inter', sans-serif; color: ${TEXT_MUTED}; margin-top: 2px; }
+        .sh-menu i { width: 32px; height: 32px; border-radius: 9px; background: ${SURFACE_2}; display: grid; place-items: center; flex-shrink: 0; }
+        .sh-head { display: flex; align-items: flex-end; gap: 40px; flex-wrap: wrap; }
+        .sh-stats { display: flex; gap: 32px; margin-left: auto; padding-bottom: 4px; }
+        .sh-stats div b { display: block; font: 400 40px/1 Anton, 'Barlow Condensed', sans-serif; }
+        .sh-stats div span { display: block; margin-top: 6px; font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .sh-badge { position: absolute; left: 10px; top: 10px; padding: 3px 8px; border-radius: 6px; background: rgba(12,13,16,.86); color: #f5f5f7; font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; }
+        .sh-meta2 { margin-top: 6px; font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; color: ${TEXT_MUTED}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sh-icon { width: 36px; height: 36px; border-radius: 10px; border: none; background: none; color: ${TEXT_MUTED}; display: grid; place-items: center; cursor: pointer; }
         .sh-icon:hover { background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; }
         .sh-wrap { max-width: 1240px; margin: 0 auto; padding: 40px 28px 80px; }
         .sh-kick { font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .2em; text-transform: uppercase; color: ${ACCENT_SOLID}; }
         .sh-h1 { margin: 10px 0 0; font: 400 56px/1 Anton, 'Barlow Condensed', sans-serif; letter-spacing: .005em; text-transform: uppercase; }
         .sh-sub { margin: 12px 0 0; max-width: 640px; color: ${TEXT_MUTED}; font-size: 15px; line-height: 1.55; }
-        .sh-tally { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-        .sh-tally span { font-size: 12.5px; padding: 6px 11px; border-radius: 999px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
-        .sh-tally b { color: ${TEXT_PRIMARY}; font-weight: 700; margin-right: 4px; }
         .sh-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 30px 0 18px; }
         .sh-seg { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; }
         .sh-seg button { height: 34px; padding: 0 14px; border-radius: 9px; border: none; background: none; color: ${TEXT_MUTED}; font: 600 13px 'Inter', sans-serif; cursor: pointer; }
         .sh-seg button[aria-pressed="true"] { background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; }
-        .sh-search { margin-left: auto; display: flex; align-items: center; gap: 8px; height: 40px; width: min(320px, 100%); padding: 0 12px; border-radius: 12px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
+        .sh-search { display: flex; align-items: center; gap: 8px; height: 40px; width: min(260px, 100%); padding: 0 12px; border-radius: 12px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
         .sh-search input { flex: 1; min-width: 0; border: none; outline: none; background: none; color: ${TEXT_PRIMARY}; font: 500 14px 'Inter', sans-serif; }
-        .sh-hint { font-size: 12.5px; color: ${TEXT_MUTED}; margin: -6px 0 16px; }
-        .sh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 22px; }
-        .sh-card { position: relative; border-radius: 18px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; overflow: hidden; transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s, opacity .2s; }
+        .sh-hint { font-size: 13px; color: ${TEXT_MUTED}; margin: 0; }
+        .sh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 28px 26px; }
+        .sh-card { position: relative; border-radius: 14px; transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s, opacity .2s; }
         .sh-card:hover { transform: translateY(-3px); box-shadow: 0 22px 40px -22px rgba(0,0,0,.7); }
         .sh-card.lifted { opacity: .35; }
         .sh-card.target { box-shadow: 0 0 0 3px ${ACCENT_SOLID}; }
         .sh-face { display: block; width: 100%; padding: 0; border: none; background: none; color: inherit; text-align: left; cursor: pointer; }
-        .sh-face:focus-visible { outline: 3px solid ${ACCENT_SOLID}; outline-offset: -3px; border-radius: 18px; }
-        .sh-pic { aspect-ratio: 16 / 10; background: #16181d; overflow: hidden; border-bottom: 1px solid ${DS_BORDER}; }
+        .sh-face:focus-visible { outline: 3px solid ${ACCENT_SOLID}; outline-offset: 3px; border-radius: 14px; }
+        .sh-pic { position: relative; aspect-ratio: 4 / 3; background: #16181d; overflow: hidden; border-radius: 12px; }
         .sh-pic > svg, .sh-pic > img { width: 100%; height: 100%; }
-        .sh-meta { padding: 14px 16px 16px; }
-        .sh-name { font: 700 16px/1.25 'Inter', sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .sh-meta { padding: 12px 2px 4px; }
+        .sh-name { font: 700 15px/1.3 'Inter', sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .sh-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: ${TEXT_MUTED}; }
         .sh-kind { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; font-weight: 600; font-size: 12px; }
         .sh-no { font: 700 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .08em; color: ${ACCENT_SOLID}; }
@@ -214,7 +245,7 @@ export default function ShelfPage() {
         @media (hover: none) { .sh-tools { opacity: 1; } }
         .sh-tools button { width: 32px; height: 32px; border-radius: 10px; border: none; background: rgba(12,13,16,.78); color: #fff; display: grid; place-items: center; cursor: pointer; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
         .sh-tools button:disabled { opacity: .35; cursor: default; }
-        .sh-grip { position: absolute; top: 10px; left: 10px; width: 32px; height: 32px; border-radius: 10px; background: rgba(12,13,16,.78); color: #fff; display: grid; place-items: center; opacity: 0; transition: opacity .15s; pointer-events: none; }
+        .sh-grip { position: absolute; top: 10px; right: 86px; width: 32px; height: 32px; border-radius: 10px; background: rgba(12,13,16,.78); color: #fff; display: grid; place-items: center; opacity: 0; transition: opacity .15s; pointer-events: none; }
         .sh-card:hover .sh-grip { opacity: 1; }
         .sh-empty { border: 2px dashed ${DS_BORDER}; border-radius: 22px; padding: 46px 30px; text-align: center; color: ${TEXT_MUTED}; }
         .sh-empty b { display: block; color: ${TEXT_PRIMARY}; font: 400 40px/1 Anton, 'Barlow Condensed', sans-serif; text-transform: uppercase; letter-spacing: .01em; margin-bottom: 10px; }
@@ -224,30 +255,45 @@ export default function ShelfPage() {
         @keyframes sh-pulse { from { opacity: .55 } to { opacity: 1 } }
         .sh-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: ${TEXT_PRIMARY}; color: ${SURFACE_BASE}; padding: 10px 16px; border-radius: 999px; font: 500 13px 'Inter', sans-serif; z-index: 60; }
         .sh.dragging, .sh.dragging * { cursor: grabbing !important; user-select: none; }
-        @media (max-width: 720px) { .sh-wrap { padding: 26px 16px 70px; } .sh-h1 { font-size: 40px; } .sh-search { margin-left: 0; width: 100%; } .sh-seg { overflow-x: auto; max-width: 100%; } }
+        @media (max-width: 720px) { .sh-wrap { padding: 26px 16px 70px; } .sh-h1 { font-size: 40px; } .sh-seg { overflow-x: auto; max-width: 100%; } .sh-stats { margin-left: 0; gap: 22px; } .sh-stats div b { font-size: 32px; } .sh-top .sh-search, .sh-top .sh-link { display: none; } .sh-bar .sh-search { display: flex; width: 100%; } }
+        @media (min-width: 721px) { .sh-bar .sh-search { display: none; } }
         @media (prefers-reduced-motion: reduce) { .sh-card, .sh-skel { transition: none; animation: none; } }
       `}</style>
       <header className="sh-top">
         <button className="sh-icon" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
-        <span style={{ font: "800 15px 'Barlow Condensed', sans-serif", letterSpacing: ".14em", textTransform: "uppercase" }}>Your shelf</span>
+        <div className="sh-name2"><b>Your shelf</b><span><i aria-hidden="true" />Only you can see this</span></div>
+        <span style={{ flex: 1 }} />
+        {search}
+        {isPublic && who.handle && <a className="sh-link" href={`/c/${who.handle}`} target="_blank" rel="noreferrer">Public card</a>}
+        <div className="sh-make">
+          <button className={total ? "pri" : ""} aria-haspopup="menu" aria-expanded={makeOpen} onClick={() => setMakeOpen(v => !v)}><Plus size={16} /> Make something</button>
+          {makeOpen && (
+            <div className="sh-menu" role="menu">
+              {MAKE.map(m => <button key={m.href} role="menuitem" onClick={() => { setMakeOpen(false); navigate(m.href) }}><i aria-hidden="true">{m.icon}</i><span>{m.name}<small>{m.what}</small></span></button>)}
+            </div>
+          )}
+        </div>
       </header>
       <main className={`sh-wrap${drag ? " dragging" : ""}`}>
-        <div className="sh-kick">Only you can see this</div>
-        <h1 className="sh-h1">{who.handle ? `@${who.handle}'s shelf` : who.name ? `${who.name}'s shelf` : "Your shelf"}</h1>
-        <p className="sh-sub">Everything you've made, in the order you choose. Boards carry their issue number once they've been exported.</p>
-        {pieces && total > 0 && (
-          <div className="sh-tally" aria-label="What's on your shelf">
-            <span><b>{total}</b>{total === 1 ? "piece" : "pieces"}</span>
-            {(["board", "analysis", "report", "tree"] as Kind[]).filter(k => counts(k)).map(k => <span key={k}><b>{counts(k)}</b>{counts(k) === 1 ? KIND_NAME[k].toLowerCase() : k === "analysis" ? "analyses" : KIND_NAME[k].toLowerCase() + "s"}</span>)}
+        <div className="sh-head">
+          <div>
+            <div className="sh-kick">The work so far</div>
+            <h1 className="sh-h1">{who.handle ? `@${who.handle}'s shelf` : who.name ? `${who.name}'s shelf` : "Your shelf"}</h1>
           </div>
-        )}
+          {pieces && total > 0 && (
+            <div className="sh-stats" aria-label="What's on your shelf">
+              <div><b>{total}</b><span>{total === 1 ? "Piece" : "Pieces"}</span></div>
+              {(["report", "analysis", "board", "tree"] as Kind[]).filter(k => counts(k)).map(k => <div key={k}><b>{counts(k)}</b><span>{counts(k) === 1 ? KIND_NAME[k] : k === "analysis" ? "Analyses" : KIND_NAME[k] + "s"}</span></div>)}
+            </div>
+          )}
+        </div>
         <div className="sh-bar">
           <div className="sh-seg" role="group" aria-label="Show">
             {KINDS.map(k => <button key={k.id} aria-pressed={kind === k.id} onClick={() => setKind(k.id)}>{k.label}</button>)}
           </div>
-          <label className="sh-search"><Search size={15} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a piece" aria-label="Find a piece" />{q && <button className="sh-icon" style={{ width: 24, height: 24 }} aria-label="Clear search" onClick={() => setQ("")}><X size={13} /></button>}</label>
+          {search}
+          {pieces && total > 1 && <p className="sh-hint">{canMove ? "Drag to put them in the order you want, or use the arrows. Numbers are given when you export." : "Show everything to change the order."}</p>}
         </div>
-        {pieces && total > 1 && <p className="sh-hint">{canMove ? "Drag a card to put it where you want it, or use its arrows." : "Show everything to change the order."}</p>}
         {pieces === null ? (
           <div className="sh-grid" aria-busy="true">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="sh-skel" />)}</div>
         ) : total === 0 ? (
@@ -270,10 +316,10 @@ export default function ShelfPage() {
                   <button className="sh-face" aria-label={`Open ${p.name}`}
                     onPointerDown={e => { if (!canMove || e.button !== 0 || e.pointerType === "touch") return; e.preventDefault(); press.current = { key: p.key, x: e.clientX, y: e.clientY, on: false } }}
                     onClick={e => { if (e.detail === 0 || !canMove || (e.nativeEvent as PointerEvent).pointerType === "touch") navigate(p.href) }}>
-                    <div className="sh-pic">{p.thumb}</div>
+                    <div className="sh-pic">{p.thumb}{(p.no > 0 || p.kind === "tree") && <span className="sh-badge">{p.no > 0 ? issueLabel(p.no) : "Pile"}</span>}</div>
                     <div className="sh-meta">
                       <div className="sh-name">{p.name}</div>
-                      <div className="sh-row"><span className="sh-kind">{KIND_ICON[p.kind]} {KIND_NAME[p.kind]}</span>{p.no > 0 && <span className="sh-no">{issueLabel(p.no)}</span>}<span style={{ marginLeft: "auto" }}>{relTime(p.updated)}</span></div>
+                      <div className="sh-meta2">{KIND_NAME[p.kind]} · {relTime(p.updated)}</div>
                     </div>
                   </button>
                   {canMove && <span className="sh-grip" aria-hidden="true"><GripVertical size={16} /></span>}

@@ -14,6 +14,7 @@ import { CARD_STYLES, COLOURS, DEFAULT_BRAND, DEFAULT_POS, LOGO_BUCKET, LOGO_PRE
 import { openStudio, sinceLabel, studioLabel } from "../lib/studio"
 
 const SITE = "https://pitchstudio-brown.vercel.app"
+const MONO = "'JetBrains Mono', ui-monospace, monospace"
 const postFor = (studio: number | null, handle: string) =>
   `Proud new member of PitchStudio. Studio ${studio ? studioLabel(studio) : "Nº —"} is open: boards, reports and ideas, all in one place. ${SITE}/c/${handle || "you"}`
 /** A picture of the card on the studio's dark background, w by h, the card centred at cw wide */
@@ -31,7 +32,7 @@ async function cardOnBackground(card: string, w: number, h: number, cw: number, 
   g.fillText(`pitchstudio-brown.vercel.app/c/${handle || "you"}`, w / 2, y + ch + (h > w * 1.5 ? 110 : 60))
   return cv.toDataURL("image/png")
 }
-import { useTheme, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT } from "../theme"
+import { useTheme, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT } from "../theme"
 
 /* Creator Profile ("/profile"): your Creator Card (your brand, which signs every export), who you are in the studio, and how the app looks. */
 
@@ -312,7 +313,17 @@ export default function ProfilePage() {
     <div className="pf" style={{ minHeight: "100vh", background: SURFACE_BASE, color: TEXT_PRIMARY, fontFamily: "'Inter', sans-serif" }}>
       <style>{`
         .pf * { box-sizing: border-box; }
-        .pf-top { height: 60px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid ${DS_BORDER}; padding: 0 32px; }
+        .pf-top { position: sticky; top: 0; z-index: 30; height: 60px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid ${DS_BORDER}; padding: 0 20px; background: ${SURFACE_BASE}; }
+        .pf-home { width: 40px; height: 40px; display: grid; place-items: center; border: none; background: none; cursor: pointer; border-radius: 10px; }
+        .pf-name b { display: block; font-size: 15px; font-weight: 600; } .pf-name span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: ${TEXT_MUTED}; }
+        .pf-dot { width: 7px; height: 7px; border-radius: 50%; background: ${TEXT_MUTED}; } .pf-dot.ok { background: #3fb950; } .pf-dot.busy { background: #e3b341; } .pf-dot.bad { background: ${DS_ERROR}; }
+        .pf-link { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border: none; border-radius: 10px; background: none; color: ${TEXT_MUTED}; font: 500 14px 'Inter', sans-serif; cursor: pointer; text-decoration: none; white-space: nowrap; }
+        .pf-link:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
+        .pf-top .pf-top-save { height: 40px; padding: 0 18px; border-radius: 10px; font-size: 14px; }
+        .pf-k { margin: 0 0 10px; font: 500 12px ${MONO}; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .pf-num { margin: 34px 0 14px; padding-top: 22px; border-top: 1px solid ${DS_BORDER}; font: 500 12px ${MONO}; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .pf-num b { color: ${TEXT_PRIMARY}; font-weight: 500; }
+        .pf-sig { display: flex; flex-direction: column; gap: 10px; }
         .pf-back { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: ${TEXT_MUTED}; font-size: 14px; cursor: pointer; font-family: inherit; padding: 6px 0; }
         .pf-back:hover { color: ${TEXT_PRIMARY}; }
         .pf-wrap { max-width: 1080px; margin: 0 auto; padding: 40px 32px 130px; display: grid; grid-template-columns: 340px 1fr; gap: 44px; }
@@ -322,7 +333,7 @@ export default function ProfilePage() {
         .pf-cardwrap:hover { transform: rotateY(0) rotateX(0); }
         @media (prefers-reduced-motion: reduce) { .pf-cardwrap { transition: none; } }
         .pf-cardbox { border-radius: 22px; overflow: hidden; }
-        .pf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; padding: 0 20px; border-radius: 999px; font-weight: 600; font-size: 14px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; cursor: pointer; font-family: inherit; }
+        .pf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 42px; padding: 0 18px; border-radius: 10px; font-weight: 600; font-size: 14px; border: 1px solid ${DS_BORDER_STRONG}; background: transparent; color: ${TEXT_PRIMARY}; cursor: pointer; font-family: inherit; }
         .pf-btn.pri { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; border-color: ${ACCENT_SOLID}; }
         .pf-btn:disabled { opacity: .55; cursor: default; }
         .pf-panel { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 16px; padding: 18px; }
@@ -339,15 +350,15 @@ export default function ProfilePage() {
         .pf-public input:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
         .pf-public b { display: block; font-size: 14px; } .pf-public small { display: block; font-size: 12.5px; color: ${TEXT_MUTED}; margin-top: 2px; overflow-wrap: anywhere; }
         .pf-club { margin-top: 22px; }
-        .pf-photo { border-style: dashed; border-color: var(--ps-bd2); display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+        .pf-photo { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
         .pf-photo > .cc-row { margin: 0; }
         .pf-photo-row { flex: 1 1 280px; display: flex; align-items: center; gap: 14px; min-width: 0; }
         .pf-photo-row b { display: block; font-size: 15px; } .pf-photo-row div > span { display: block; font-size: 13px; color: ${TEXT_MUTED}; margin-top: 2px; line-height: 1.4; }
         .pf-photo-ico { width: 46px; height: 46px; flex: none; border-radius: 12px; display: grid; place-items: center; background: ${SURFACE_2}; color: ${ACCENT_TEXT}; }
         .pf-photo > p { flex-basis: 100%; }
         @media (hover: none) { .pf-tilt-hint { display: none; } }
-        .pf-cap { font-size: 12px; letter-spacing: .12em; font-weight: 600; color: ${TEXT_MUTED}; margin: 0 0 10px; }
-        .pf-sec { margin: 0 0 14px; font-size: 12px; letter-spacing: .12em; font-weight: 600; color: ${TEXT_MUTED}; }
+        .pf-cap { font: 500 12px ${MONO}; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; margin: 0 0 10px; }
+        .pf-sec { margin: 0 0 12px; font: 500 12px ${MONO}; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
         .pf-g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         .pf-g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
         .pf-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -378,21 +389,23 @@ export default function ProfilePage() {
         .cc-sw, .cc-skin { width: 36px; height: 36px; border-radius: 50%; border: 2px solid rgba(128,128,128,.35); cursor: pointer; padding: 0; }
         .cc-cr { width: 52px; height: 52px; border-radius: 12px; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; display: grid; place-items: center; cursor: pointer; color: ${TEXT_PRIMARY}; }
         .cc-color { width: 36px; height: 36px; padding: 0; border: 2px solid rgba(128,128,128,.35); border-radius: 50%; background: none; cursor: pointer; }
-        .pf-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: ${SURFACE_BASE}; border-top: 1px solid ${DS_BORDER}; }
+        .pf-bar { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: ${SURFACE_BASE}; border-top: 1px solid ${DS_BORDER}; }
         .pf-bar > div { max-width: 1080px; margin: 0 auto; padding: 12px 32px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
-        .pf-save { height: 46px; padding: 0 28px; border-radius: 999px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font-weight: 600; font-size: 15px; border: none; cursor: pointer; font-family: inherit; }
+        .pf-save { height: 46px; padding: 0 28px; border-radius: 12px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font-weight: 600; font-size: 15px; border: none; cursor: pointer; font-family: inherit; }
         .pf-save:disabled { opacity: .5; cursor: default; }
-        .pf-wrap2 { max-width: 1240px; margin: 0 auto; padding: 32px 32px 130px; display: grid; grid-template-columns: 560px minmax(0, 1fr); gap: 48px; }
+        .pf-wrap2 { max-width: 1240px; margin: 0 auto; padding: 36px 32px 80px; display: grid; grid-template-columns: 480px minmax(0, 1fr); gap: 64px; }
         .pf-stage { position: sticky; top: 20px; align-self: start; display: flex; flex-direction: column; gap: 14px; }
         .pf-card3d { perspective: 1100px; }
-        .pf-card3d > div { width: min(100%, 440px); margin: 0 auto; transition: transform .35s cubic-bezier(.2,.8,.2,1); filter: drop-shadow(0 30px 40px rgba(0,0,0,.45)); touch-action: none; }
-        .pf-styles { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+        .pf-card3d > div { width: min(100%, 360px); margin: 0 auto; transition: transform .35s cubic-bezier(.2,.8,.2,1); filter: drop-shadow(0 30px 40px rgba(0,0,0,.45)); touch-action: none; }
+        .pf-styles { display: flex; align-self: center; gap: 2px; padding: 3px; border-radius: 12px; background: ${SURFACE_2}; }
+        .pf-styles button { border: none; background: none; color: ${TEXT_MUTED}; font: 600 13px 'Inter', sans-serif; padding: 9px 16px; border-radius: 9px; cursor: pointer; min-height: 38px; }
+        .pf-styles button.on { background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
         .pf-crop { position: absolute; left: 4.85%; top: 3.4%; width: 90.3%; height: 55.7%; border-radius: 14px; cursor: grab; outline: 2px dashed rgba(255,255,255,.85); display: grid; place-items: end center; padding-bottom: 10px; }
         .pf-crop span { background: rgba(0,0,0,.65); color: #fff; font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; }
         .pf-welcome { background: ${ACCENT_SOFT}; border-bottom: 1px solid ${DS_BORDER}; }
         .pf-welcome > div { max-width: 1240px; margin: 0 auto; padding: 12px 32px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 14px; }
         .pf-welcome b { color: ${ACCENT_TEXT}; }
-        .pf-h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.03em; }
+        .pf-h1 { margin: 0; font: 400 clamp(34px, 4vw, 52px)/1 'Anton', 'Bebas Neue', sans-serif; letter-spacing: .01em; text-transform: uppercase; }
         .pf-share textarea { width: 100%; min-height: 96px; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; border: 1px solid ${DS_BORDER}; border-radius: 12px; padding: 12px; font: 400 14px/1.5 'Inter', sans-serif; resize: vertical; }
         .pf-share .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
         .pf-share .row .pf-btn { padding: 0 10px; font-size: 13px; }
@@ -401,7 +414,8 @@ export default function ProfilePage() {
           .pf-wrap2 .pf-chip, .pf-wrap2 .pf-btn, .pf-back { min-height: 44px; } .pf-wrap2 .cc-sw { width: 40px; height: 40px; }
           .pf-wrap2 input:not([type=range]), .pf-wrap2 textarea, .pf-wrap2 select { font-size: 16px; }
         }
-        @media (max-width: 1080px) { .pf-wrap2 { grid-template-columns: 1fr; padding: 20px 18px 130px; gap: 24px; } .pf-stage { position: static; } .pf-share .row { grid-template-columns: 1fr 1fr; } .pf-welcome > div { padding: 10px 18px; } }
+        @media (max-width: 700px) { .pf-bar { display: block; } .pf-top-save, .pf-hide-sm { display: none; } .pf-top { padding: 0 10px; } }
+        @media (max-width: 1080px) { .pf-wrap2 { grid-template-columns: 1fr; padding: 20px 18px 130px; gap: 24px; } .pf-stage { display: contents; } .pf-wrap2 > main { order: 4; } .pf-stage > .pf-share { order: 5; } .pf-stage > .pf-card3d, .pf-stage > .pf-styles, .pf-stage > .pf-tilt-hint { order: 1; } .pf-share .row { grid-template-columns: 1fr 1fr; } .pf-welcome > div { padding: 10px 18px; } }
         @media (max-width: 860px) {
           .pf-top { padding: 0 16px; }
           .pf-wrap { grid-template-columns: 1fr; gap: 24px; padding: 20px 20px 130px; }
@@ -425,11 +439,16 @@ export default function ProfilePage() {
         </div></div>
       )}
       <header className="pf-top">
-        <button className="pf-back" onClick={() => navigate("/")}><ArrowLeft size={16} /> Home</button>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Mark size={26} color={ACCENT_SOLID} />
-          <span style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 18, letterSpacing: "0.2em", fontWeight: 600 }}>PITCHSTUDIO</span>
+        <button className="pf-home" aria-label="Home" title="Home" onClick={() => navigate("/")}><Mark size={28} color={ACCENT_SOLID} /></button>
+        <div className="pf-name">
+          <b>Your card</b>
+          <span aria-live="polite"><i className={`pf-dot${saveMsg === "error" ? " bad" : saving ? " busy" : dirty ? " busy" : hadBrand ? " ok" : ""}`} aria-hidden="true" />
+            {saving ? "Saving…" : saveMsg === "error" ? "Not saved. Try again." : dirty ? "Changes not saved yet" : saveMsg === "saved" || hadBrand ? "Saved" : "Not saved yet"}</span>
         </div>
+        <span style={{ flex: 1 }} />
+        {cardPublic && normalizeHandle(handle) && <a className="pf-link pf-hide-sm" href={`/c/${normalizeHandle(handle)}`} target="_blank" rel="noreferrer">View public card</a>}
+        <button className="pf-link" onClick={() => navigate("/")}><ArrowLeft size={15} /> Home</button>
+        <button className="pf-save pf-top-save" onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>
       </header>
 
       <div className="pf-wrap2">
@@ -448,35 +467,44 @@ export default function ProfilePage() {
               <CreatorCard brand={brand} handle={chosen} name={name} since={sinceLabel(openedAt)} logo={shownLogo} unfinished={!hadBrand} photo={shownPhoto} studio={studioNo} title={idLabel ?? brand.title} />
             </div>
           </div>
-          <div className="pf-styles" role="group" aria-label="Card style">
-            {CARD_STYLES.map(st => <button key={st.id} className={`pf-chip${brand.style === st.id ? " on" : ""}`} style={{ margin: 0 }} aria-pressed={brand.style === st.id} onClick={() => edit({ style: st.id })}>{st.name}</button>)}
+          <div className="pf-styles" role="group" aria-label="Card finish">
+            {CARD_STYLES.map(st => <button key={st.id} className={brand.style === st.id ? "on" : ""} aria-pressed={brand.style === st.id} onClick={() => edit({ style: st.id })}>{st.name}</button>)}
           </div>
           <p className="pf-hint pf-tilt-hint" style={{ textAlign: "center", margin: 0 }}>Move your mouse over the card.</p>
-          <div className="pf-panel">
-            <p className="pf-cap">YOUR EXPORT SIGNATURE</p>
-            <div className="pf-pitch" data-card="signature">
-              <svg viewBox="0 0 300 74" width="100%" height="100%" preserveAspectRatio="xMaxYMax meet" aria-label="Your signature on an export">
-                <g transform="translate(298 76)"><CreatorSeal brand={brand} handle={chosen} logo={shownLogo} pill="rgba(0,0,0,0.62)" /></g>
-              </svg>
+          <div className="pf-panel pf-share">
+            <p className="pf-cap">Share that you're in</p>
+            <label className="pf-public">
+              <input type="checkbox" role="switch" checked={cardPublic} onChange={e => setPublic(e.target.checked)} />
+              <span><b>Show my card publicly</b><small>{cardPublic ? `Anyone with the link can see it: pitchstudio-brown.vercel.app/c/${normalizeHandle(handle)}` : "Only you can see it. Sharing turns it on, so your link works."}</small></span>
+            </label>
+            <textarea aria-label="Your post" value={postText} maxLength={280} onChange={e => setPost(e.target.value)} />
+            <div className="row">
+              <button className="pf-btn" onClick={shareX}>Post on X</button>
+              <button className="pf-btn" onClick={() => shareImage("story")} disabled={downloading}><Instagram size={15} /> Story 9:16</button>
+              <button className="pf-btn" onClick={shareLinkedIn}><Linkedin size={15} /> LinkedIn</button>
+              <button className="pf-btn" onClick={downloadCard} disabled={downloading}><Download size={15} /> {downloading ? "Making…" : "Download card"}</button>
             </div>
-            <p style={{ fontSize: 12, color: TEXT_MUTED, lineHeight: 1.5, margin: "10px 0 0" }}>
-              Signs every image, GIF and video you export.{!chosen ? " Choose your own handle to put your name on it." : ""}
-            </p>
+            <p className="pf-hint" style={{ margin: "10px 0 0" }} aria-live="polite">{shareMsg || "X opens with the text and link filled in. Instagram and LinkedIn: we copy the text and save the image, you paste."}</p>
+            {!hadBrand && <p className="pf-hint" style={{ margin: "6px 0 0" }}>Save your card first, so the link shows it.</p>}
+            <button className="pf-btn" style={{ height: 34, marginTop: 10 }} onClick={async () => { goPublic(); setShareMsg((await copyPost()) ? "Copied. Your card is public, so the link works." : "Couldn't copy. Select the text instead.") }}><Copy size={13} /> Copy the post</button>
           </div>
+
         </aside>
 
         <main style={{ minWidth: 0 }}>
+          <p className="pf-k">Your card</p>
           <h1 className="pf-h1">Your card is your stamp.</h1>
-          <p style={{ margin: "8px 0 24px", fontSize: 15, color: TEXT_MUTED, lineHeight: 1.55 }}>It signs every image, clip and report you export, and it is the page people land on.</p>
+          <p style={{ margin: "10px 0 6px", fontSize: 15, color: TEXT_MUTED, lineHeight: 1.55 }}>It signs every image, clip and report you export, and it's the page people land on.</p>
 
-          <div className="pf-panel pf-photo" style={{ marginBottom: 16 }}>
+          <h2 className="pf-num"><b>01</b> · Photo</h2>
+          <div className="pf-photo">
             <div className="pf-photo-row">
               <span className="pf-photo-ico" aria-hidden="true"><ImagePlus size={18} /></span>
               <div style={{ flex: 1, minWidth: 0 }}><b>{shownPhoto ? "Your photo" : "Upload your photo"}</b><span>Any photo. Drag it in the frame to crop. Yours to remove any time.</span></div>
             </div>
             <div className="cc-row">
               <input ref={photoRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => { pickPhoto(e.target.files?.[0]); e.target.value = "" }} />
-              <button className="pf-btn pri" onClick={() => photoRef.current?.click()}><ImagePlus size={15} /> {shownPhoto ? "Change photo" : "Choose photo"}</button>
+              <button className="pf-btn" onClick={() => photoRef.current?.click()}><ImagePlus size={15} /> {shownPhoto ? "Change photo" : "Choose photo"}</button>
               {shownPhoto && <button className="pf-btn" onClick={() => setCropping(v => !v)}>{cropping ? "Done cropping" : "Crop"}</button>}
               {shownPhoto && <button className="pf-btn" onClick={removePhoto}><Trash2 size={14} /> Remove photo</button>}
             </div>
@@ -487,12 +515,13 @@ export default function ProfilePage() {
             {photoMsg && <p className="pf-err" style={{ margin: "8px 0 0" }}>{photoMsg}</p>}
           </div>
 
+          <h2 className="pf-num"><b>02</b> · Who you are</h2>
           <div className="pf-g2" style={{ marginBottom: 16 }}>
             {field("handle", "Handle", handle, setHandle, { prefix: "@", max: 30, err: handleError })}
             {field("motto", "Tagline", brand.motto, v => edit({ motto: v }), { max: MOTTO_MAX, hint: `${brand.motto.length}/${MOTTO_MAX}` })}
           </div>
 
-          <p className="pf-sec" style={{ marginTop: 22 }}>I AM A</p>
+          <p className="pf-sec" style={{ marginTop: 18 }}>I am a</p>
           <div>
             {IDENTITY_OPTIONS.map(o => {
               const active = identity === o.value
@@ -500,38 +529,32 @@ export default function ProfilePage() {
             })}
           </div>
 
-          <div className="pf-club">{field("favoriteClub", "MY CLUB", favoriteClub, setFavoriteClub, { max: 30, hint: "Your home team on every new board and match report." })}</div>
-          <p className="pf-sec" style={{ marginTop: 22 }}>MY COLOURS</p>
+          <h2 className="pf-num"><b>03</b> · My club and colours</h2>
+          <div className="pf-club">{field("favoriteClub", "My club", favoriteClub, setFavoriteClub, { max: 30, hint: "Your home team on every new board and match report." })}</div>
+          <p className="pf-sec" style={{ marginTop: 18 }}>My colours</p>
           <div className="cc-row pf-pairs" style={{ marginBottom: 12 }}>
             {PAIRS.map(p => {
               const on = brand.color === p.c1 && brand.color2 === p.c2
               return <button key={p.name} className={`pf-pair${on ? " on" : ""}`} aria-label={p.name} aria-pressed={on} title={p.name} onClick={() => edit({ color: p.c1, color2: p.c2 })}><i style={{ background: p.c1 }} /><i style={{ background: p.c2 }} /></button>
             })}
           </div>
-          <div className="cc-row" style={{ marginBottom: 26 }}>
+          <div className="cc-row">
             <span className="pf-hint" style={{ margin: "0 4px 0 0" }}>Or one colour</span>
             {COLOURS.map(c => <button key={c} className={`cc-sw${brand.color === c && !brand.color2 ? " on" : ""}`} aria-label={`Colour ${c}`} aria-pressed={brand.color === c && !brand.color2} style={{ background: c }} onClick={() => edit({ color: c, color2: null })} />)}
             <input type="color" className="cc-color" aria-label="Pick any colour" value={brand.color} onChange={e => edit({ color: e.target.value.toLowerCase(), color2: null })} />
           </div>
 
-          <div className="pf-panel pf-share" style={{ marginBottom: 22 }}>
-            <p className="pf-cap">SHARE THAT YOU'RE IN</p>
-            <label className="pf-public">
-              <input type="checkbox" role="switch" checked={cardPublic} onChange={e => setPublic(e.target.checked)} />
-              <span><b>Show my card publicly</b><small>{cardPublic ? `Anyone with the link can see it: pitchstudio-brown.vercel.app/c/${normalizeHandle(handle)}` : "Only you can see it. Sharing turns it on, so your link works."}</small></span>
-            </label>
-            <textarea aria-label="Your post" value={postText} maxLength={280} onChange={e => setPost(e.target.value)} />
-            <div className="row">
-              <button className="pf-btn pri" onClick={shareX}>Post on X</button>
-              <button className="pf-btn" onClick={() => shareImage("story")} disabled={downloading}><Instagram size={15} /> Story 9:16</button>
-              <button className="pf-btn" onClick={shareLinkedIn}><Linkedin size={15} /> LinkedIn</button>
-              <button className="pf-btn" onClick={downloadCard} disabled={downloading}><Download size={15} /> {downloading ? "Making…" : "Download card"}</button>
+          <h2 className="pf-num"><b>04</b> · Your export signature</h2>
+          <div className="pf-sig">
+            <div className="pf-pitch" data-card="signature">
+              <svg viewBox="0 0 300 74" width="100%" height="100%" preserveAspectRatio="xMaxYMax meet" aria-label="Your signature on an export">
+                <g transform="translate(298 76)"><CreatorSeal brand={brand} handle={chosen} logo={shownLogo} pill="rgba(0,0,0,0.62)" /></g>
+              </svg>
             </div>
-            <p className="pf-hint" style={{ margin: "10px 0 0" }} aria-live="polite">{shareMsg || "X opens with the text and link filled in. Instagram and LinkedIn: we copy the text and save the image, you paste."}</p>
-            {!hadBrand && <p className="pf-hint" style={{ margin: "6px 0 0" }}>Save your card first, so the link shows it.</p>}
-            <button className="pf-btn" style={{ height: 34, marginTop: 10 }} onClick={async () => { goPublic(); setShareMsg((await copyPost()) ? "Copied. Your card is public, so the link works." : "Couldn't copy. Select the text instead.") }}><Copy size={13} /> Copy the post</button>
+            <p style={{ fontSize: 12, color: TEXT_MUTED, lineHeight: 1.5, margin: "10px 0 0" }}>
+              Signs every image, GIF and video you export.{!chosen ? " Choose your own handle to put your name on it." : ""}
+            </p>
           </div>
-
           <button className="pf-more" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)}>More about you <ChevronDown size={18} style={{ transform: moreOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} /></button>
           {moreOpen && <div style={{ display: "grid", gap: 22, paddingBottom: 10 }}>
             <div className="pf-g2">
@@ -588,7 +611,7 @@ export default function ProfilePage() {
         </main>
       </div>
 
-      <div className="pf-bar" aria-live="polite">
+      <div className="pf-bar">
         <div>
           {saveMsg === "saved" ? <span style={{ fontSize: 14, color: ACCENT_TEXT, fontWeight: 500 }}>Saved</span>
             : saveMsg === "error" ? <span style={{ fontSize: 14, color: DS_ERROR }}>Something went wrong. Try again.</span>

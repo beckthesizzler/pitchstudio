@@ -12,7 +12,9 @@ import { COLORS, COLS, STATUSES, clean, col, firstLine, hex, madeLabel, nameOf, 
 import { Banner, PIN, Popover, STACK_W, THREAD, TILTS, Threads, layoutColumn, plantStage, type Row } from "../braindump/Wall"
 import { PLANT_CSS, Plant, TreeView, type Stage } from "../braindump/Plant"
 import { GROW_CSS, GrowPanel } from "../braindump/Grow"
-import { ACCENT_SOLID, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR } from "../theme"
+import { ACCENT_SOLID, ACCENT_INK, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR } from "../theme"
+
+const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
 /* Dump & Arrange ("/braindump"): your wall of ideas. Pin a note as fast as it comes; it lands in "Just pinned". Piles are
    columns on the wall (a pile is a note of kind "tree"). Drag a note onto another and a red thread ties them; every tie
@@ -23,6 +25,7 @@ const MARKS = [["#fff27a", "Yellow"], ["#ffc2dc", "Pink"], ["#c9f5b6", "Green"],
 const STATUS_CAPS: Record<Status, string> = { idea: "IDEA", making: "MAKING", made: "MADE" }
 const STAGE_WORD: Record<Stage, string> = { seed: "a seed", sprout: "a sprout", sapling: "a sapling", tree: "a tree" }
 const LONG_PRESS = 420
+const PHONE = () => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches // a phone has no room for the panel: a tap opens the note
 
 function Words({ block, onChange, onFocus }: { block: TextBlock; onChange: (b: TextBlock) => void; onFocus: (el: HTMLDivElement) => void }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -61,6 +64,8 @@ export default function BrainDumpPage() {
   const [popped, setPopped] = useState<Set<string>>(new Set()) // piles whose plant just grew
   const [pieces, setPieces] = useState<Piece[] | null>(null) // your recent boards, reports and analyses, for "what it became"
   const [loadFailed, setLoadFailed] = useState(false)
+  const [sel, setSel] = useState<string | null>(null) // the note picked on the wall: it shows in the panel on the right
+  const [selDel, setSelDel] = useState(false) // the panel's delete waiting for a yes
   const [tries, setTries] = useState(0)
   const failed = useRef(new Set<string>())
   const focused = useRef<HTMLDivElement | null>(null)
@@ -322,7 +327,8 @@ export default function BrainDumpPage() {
       if (menu) { setMenu(null); return }
       if (drag) { press.current = null; setDrag(null); return }
       if (open) { if (!(e.target as HTMLElement)?.closest?.(".bd-map, .bd-dia")) close(); return }
-      if (treeView) navigate("/braindump")
+      if (treeView) { navigate("/braindump"); return }
+      if (sel) { setSel(null); setSelDel(false) }
     }
     window.addEventListener("keydown", k)
     return () => window.removeEventListener("keydown", k)
@@ -417,10 +423,11 @@ export default function BrainDumpPage() {
     return (
       <div key={n.id} className={`bd-slip d${Math.min(r.depth, 2)}${drag?.id === n.id ? " lifted" : ""}${canTake ? " can" : ""}${over && canTake ? " over" : ""}${term && !hit(n) ? " dim" : ""}`}
         data-drop={`note:${n.id}`} style={{ left: r.x, top: r.y, width: r.w, height: r.h, transform: `rotate(${TILTS[i % 3]}deg)`, transformOrigin: `${PIN.x}px ${PIN.y}px`, ["--paper" as any]: c.c, ["--pin" as any]: c.root }}>
-        <button className="bd-slip-face" onPointerDown={e => slipDown(e, n.id)} onClick={() => { if (!dragged.current) setOpen(n.id) }}
+        <button className="bd-slip-face" onPointerDown={e => slipDown(e, n.id)} aria-pressed={sel === n.id}
+          onClick={() => { if (dragged.current) return; if (PHONE()) setOpen(n.id); else { setSel(n.id); setSelDel(false) } }} onDoubleClick={() => { if (!dragged.current) setOpen(n.id) }}
           onContextMenu={e => { e.preventDefault(); if (press.current?.touch || dragged.current) return; setMenu({ kind: "note", id: n.id, x: e.clientX, y: e.clientY }) }}
           onKeyDown={e => { if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); const b = e.currentTarget.getBoundingClientRect(); setMenu({ kind: "note", id: n.id, x: b.left + 20, y: b.bottom }) } }}
-          aria-label={`${nameOf(n)}, ${n.status}${n.made_ref ? `, became a ${madeLabel(n.made_ref)}` : ""}. Open`}>
+          aria-label={`${nameOf(n)}, ${n.status}${n.made_ref ? `, became a ${madeLabel(n.made_ref)}` : ""}`}>
           <span className="t">{nameOf(n)}</span>
           <span className="m">{STATUS_CAPS[n.status]}{n.made_ref && <b>{madeLabel(n.made_ref)}</b>}</span>
         </button>
@@ -466,28 +473,106 @@ export default function BrainDumpPage() {
     )
   }
 
+  /* ── the panel: the picked note, its thread, and one next step ── */
+  const sNote = sel ? byId.get(sel) : undefined
+  useEffect(() => { if (sel && notes && !byId.get(sel)) setSel(null) }, [sel, notes, byId])
+  const sPile = sNote ? pileOf(sNote) : null
+  const sTie = sNote?.parent_id ? byId.get(sNote.parent_id) : undefined
+  const treeTarget = sPile?.id ?? piles[0]?.id ?? null
+  const step = nIdeas === 0 ? 0 : nThreads === 0 ? 1 : 2
+  const panel = sNote && sNote.kind === "note" && !treeView ? (
+    <aside className="bd-panel" aria-label={`Note: ${nameOf(sNote)}`}>
+      <div className="bd-ph">
+        <span className="bd-pico" style={{ background: hex(sNote.color) }} aria-hidden="true" />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <p className="bd-k">Note · {sPile ? nameOf(sPile) : "Just pinned"}</p>
+          <h2 className="bd-big">{nameOf(sNote)}</h2>
+        </div>
+        <button className="bd-icon" aria-label="Close the panel" title="Close (Esc)" onClick={() => setSel(null)}><X size={16} /></button>
+      </div>
+      <p className="bd-k">Status</p>
+      <div className="bd-seg" role="group" aria-label="Status">
+        {STATUSES.map(st => <button key={st.id} aria-pressed={sNote.status === st.id} onClick={() => setStatusOf(sNote.id, st.id)}>{st.label}</button>)}
+      </div>
+      <p className="bd-k">Thread</p>
+      {sTie && sTie.kind === "note"
+        ? <div className="bd-tie"><span className="bd-tie-dot" aria-hidden="true" /><span style={{ flex: 1, minWidth: 0 }}>Tied to <b>{nameOf(sTie)}</b></span><button className="bd-link" onClick={() => untie(sNote.id)}>Untie</button></div>
+        : <p className="bd-note">Drag it onto another note to tie a thread.</p>}
+      <p className="bd-k">Colour</p>
+      <div className="bd-sw" style={{ padding: 0 }}>{COLORS.map(c => <button key={c.id} className="bd-swatch" aria-label={`Colour ${c.id}`} aria-pressed={sNote.color === c.id} style={{ background: c.c }} onClick={() => change(sNote.id, n => ({ ...n, color: c.id }), 300)} />)}</div>
+      <p className="bd-k">Words</p>
+      <p className="bd-words2">{sNote.body.filter((b): b is TextBlock => b.type === "text").map(b => plain(b.html)).join(" ").trim().slice(0, 220) || "Nothing written yet."}</p>
+      <button className="bd-link" style={{ marginTop: 6 }} onClick={() => setOpen(sNote.id)}>Open the note to write more ›</button>
+      <p className="bd-k">What it became</p>
+      <button className="bd-link" onClick={e => { const b = e.currentTarget.getBoundingClientRect(); loadPieces(); setMenu({ kind: "note", id: sNote.id, x: Math.min(b.left, window.innerWidth - 260), y: b.bottom + 4, sub: "made" }) }}>
+        {sNote.made_ref ? `${madeLabel(sNote.made_ref)}: change` : "Link what it became"}</button>
+      <div className="bd-pacts">
+        {sPile
+          ? <button className="bd-go" onClick={() => { setGrowing(true); navigate(`/braindump?tree=${sPile.id}&view=tree`) }}><Sprout size={17} /> Grow this idea</button>
+          : <p className="bd-note">Drag it into a pile to grow it into a question, your points and a report.</p>}
+        <div className="bd-two">
+          <button className="bd-act" onClick={() => setOpen(sNote.id)}><PenLine size={15} /> Open note</button>
+          {selDel
+            ? <button className="bd-act bad on" onClick={() => { remove(sNote.id); setSel(null); setSelDel(false) }}>Yes, delete</button>
+            : <button className="bd-act bad" onClick={() => setSelDel(true)}><Trash2 size={15} /> Delete</button>}
+        </div>
+      </div>
+    </aside>
+  ) : null
+
   const mNote = menu?.kind === "note" ? byId.get(menu.id) : undefined
   const mPile = menu?.kind === "pile" ? byId.get(menu.id) : undefined
   return (
     <div className={`bd${drag ? " dragging" : ""}`}>
       <style>{`
-        .bd { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 232px minmax(0, 1fr); background: ${SURFACE_BASE}; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; overflow: hidden; }
+        .bd { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 280px minmax(0, 1fr) auto; grid-template-rows: 60px minmax(0, 1fr); background: ${SURFACE_BASE}; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; overflow: hidden; }
         .bd * { box-sizing: border-box; }
         .bd.dragging, .bd.dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
-        .bd-side { display: flex; flex-direction: column; gap: 14px; min-height: 0; padding: 14px 14px 0; border-right: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; overflow-y: auto; }
-        .bd-side-top { display: flex; align-items: center; gap: 8px; }
-        .bd-side-top b { font: 800 15px 'Barlow Condensed', sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+        .bd-side { display: flex; flex-direction: column; gap: 22px; min-height: 0; padding: 18px 16px 0; border-right: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; overflow-y: auto; }
+        .bd-top { grid-column: 1 / -1; position: relative; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid ${DS_BORDER}; min-width: 0; }
+        .bd-top-name b { display: block; font-size: 15px; font-weight: 600; } .bd-top-name > span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: ${TEXT_MUTED}; }
+        .bd-dot2 { width: 7px; height: 7px; border-radius: 50%; background: ${TEXT_MUTED}; } .bd-dot2.ok { background: #3fb950; } .bd-dot2.busy { background: #e3b341; } .bd-dot2.bad { background: ${DS_ERROR}; }
+        .bd-modes { display: flex; padding: 3px; gap: 2px; border-radius: 12px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; }
+        .bd-modes button { height: 32px; padding: 0 16px; border: none; border-radius: 9px; background: none; color: ${TEXT_MUTED}; font: 600 13px 'Inter', sans-serif; cursor: pointer; }
+        .bd-modes button[aria-pressed="true"] { background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; }
+        .bd-modes button:disabled { opacity: .4; cursor: default; }
+        @media (min-width: 1000px) { .bd-modes { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); } }
+        .bd-top .bd-search { width: 260px; height: 38px; background: ${SURFACE_1}; }
+        .bd-panel { width: 320px; min-height: 0; overflow-y: auto; border-left: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; padding: 20px; display: flex; flex-direction: column; }
+        .bd-ph { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
+        .bd-pico { width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+        .bd-k { margin: 18px 0 9px; font: 500 12px ${MONO}; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .bd-ph .bd-k { margin: 2px 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .bd-big { margin: 0; font: 400 24px/1.08 Anton, 'Bebas Neue', sans-serif; letter-spacing: .01em; text-transform: uppercase; overflow-wrap: anywhere; }
+        .bd-seg { display: flex; padding: 3px; gap: 2px; border-radius: 10px; background: ${SURFACE_2}; }
+        .bd-seg button { flex: 1; height: 34px; border: none; border-radius: 8px; background: none; color: ${TEXT_MUTED}; font: 600 13px 'Inter', sans-serif; cursor: pointer; }
+        .bd-seg button[aria-pressed="true"] { background: ${SURFACE_BASE}; color: ${TEXT_PRIMARY}; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+        .bd-tie { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: 10px; background: ${SURFACE_2}; font-size: 13px; line-height: 1.35; }
+        .bd-tie b { font-weight: 600; }
+        .bd-tie-dot { width: 8px; height: 8px; border-radius: 50%; background: ${THREAD}; flex-shrink: 0; }
+        .bd-link { align-self: flex-start; border: none; background: none; padding: 4px 0; color: ${TEXT_MUTED}; font: 600 13px 'Inter', sans-serif; cursor: pointer; text-align: left; }
+        .bd-link:hover { color: ${TEXT_PRIMARY}; }
+        .bd-note { margin: 0; font-size: 13px; line-height: 1.5; color: ${TEXT_MUTED}; }
+        .bd-words2 { margin: 0; font-size: 13.5px; line-height: 1.55; color: ${TEXT_PRIMARY}; opacity: .85; overflow-wrap: anywhere; }
+        .bd-pacts { margin-top: auto; padding-top: 22px; display: grid; gap: 10px; }
+        .bd-go { height: 48px; border: none; border-radius: 12px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 14.5px 'Inter', sans-serif; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
+        .bd-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .bd-act { height: 42px; border-radius: 10px; border: 1px solid ${DS_BORDER_STRONG}; background: none; color: ${TEXT_PRIMARY}; font: 600 13.5px 'Inter', sans-serif; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
+        .bd-act:hover { background: ${SURFACE_2}; } .bd-act.bad { color: ${DS_ERROR}; } .bd-act.bad.on { background: ${DS_ERROR}; color: #fff; border-color: ${DS_ERROR}; }
+        .bd-steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 11px; }
+        .bd-steps li { display: flex; gap: 11px; font-size: 13px; line-height: 1.4; color: ${TEXT_MUTED}; }
+        .bd-steps li b { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; font: 700 12px 'Inter', sans-serif; margin-top: -2px; }
+        .bd-steps li.on { color: ${TEXT_PRIMARY}; font-weight: 600; } .bd-steps li.on b { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; }
+        .bd-slip-face[aria-pressed="true"] { outline: 3px solid #7cc4ff; outline-offset: 3px; }
         .bd-icon { width: 34px; height: 34px; border-radius: 10px; border: none; background: none; color: ${TEXT_MUTED}; display: grid; place-items: center; cursor: pointer; flex-shrink: 0; }
         .bd-icon:hover { background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; }
-        .bd-cap { font: 600 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; color: ${TEXT_MUTED}; margin-bottom: 7px; display: flex; justify-content: space-between; }
+        .bd-cap { font: 500 12px ${MONO}; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; margin-bottom: 9px; display: flex; justify-content: space-between; }
         .bd-pin-in { width: 100%; height: 44px; border-radius: 4px; border: none; outline: none; padding: 0 12px; background: #F4EEDC; color: #1b1a17; font: 700 18px ${HAND}; box-shadow: 0 8px 16px -10px rgba(0,0,0,.6); }
         .bd-pin-in:focus { box-shadow: 0 0 0 3px ${ACCENT_SOLID}; }
         .bd-pin-in::placeholder { color: rgba(27,26,23,.45); }
         .bd-hint { font-size: 12px; color: ${TEXT_MUTED}; margin-top: 6px; }
-        .bd-how { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 12px; padding: 12px 14px; display: grid; gap: 9px; }
-        .bd-how .bd-cap { color: ${ACCENT_SOLID}; }
-        .bd-how > div:not(.bd-cap) { display: grid; grid-template-columns: 18px 1fr; gap: 6px; font-size: 12.5px; line-height: 1.4; color: ${TEXT_MUTED}; }
-        .bd-how i { font: 700 12px 'JetBrains Mono', monospace; font-style: normal; color: ${ACCENT_SOLID}; }
+        .bd-how { display: grid; gap: 12px; }
+        .bd-side .bd-phone-search { display: none; }
         .bd-search { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 10px; background: ${SURFACE_BASE}; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
         .bd-search input { flex: 1; min-width: 0; border: none; outline: none; background: none; color: ${TEXT_PRIMARY}; font: 500 13px 'Inter', sans-serif; }
         .bd-piles { display: grid; gap: 2px; }
@@ -495,7 +580,8 @@ export default function BrainDumpPage() {
         .bd-row:hover { background: ${SURFACE_2}; }
         .bd-row:disabled { opacity: .4; cursor: default; background: none; }
         .bd-row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .bd-row em { font-style: normal; font: 600 12px 'JetBrains Mono', monospace; letter-spacing: .08em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .bd-row em { font-style: normal; font: 500 12px ${MONO}; letter-spacing: .12em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .bd-row small { font: 500 12px 'Inter', sans-serif; color: ${TEXT_MUTED}; }
         .bd-row.add { color: ${ACCENT_SOLID}; font-weight: 600; }
         .bd-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
         .bd-none { margin: 2px 8px; font-size: 12.5px; color: ${TEXT_MUTED}; line-height: 1.5; }
@@ -503,7 +589,7 @@ export default function BrainDumpPage() {
         .bd-saved { display: inline-flex; align-items: center; gap: 5px; text-transform: none; letter-spacing: 0; font: 500 12px 'Inter', sans-serif; }
         .bd-retry { border: none; background: none; padding: 0; cursor: pointer; color: ${DS_ERROR}; font: 600 12px 'Inter', sans-serif; text-decoration: underline; text-underline-offset: 3px; }
         .bd-btn { height: 38px; border-radius: 11px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font: 600 13px 'Inter', sans-serif; cursor: pointer; padding: 0 12px; white-space: nowrap; }
-        .bd-main { min-width: 0; min-height: 0; position: relative; padding: 14px; display: flex; flex-direction: column; }
+        .bd-main { min-width: 0; min-height: 0; position: relative; padding: 18px; display: flex; flex-direction: column; background: #141518; }
         .bd-failed { display: flex; align-items: center; gap: 14px; padding: 12px 14px; margin-bottom: 10px; border-radius: 12px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; font-size: 14px; }
         .bd-failed span { flex: 1; color: ${TEXT_MUTED}; }
         .bd-wall { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; background: #CBC6BC; border: 10px solid #3A332D; border-radius: 6px; box-shadow: inset 0 0 40px rgba(0,0,0,.18), 0 20px 40px -24px rgba(0,0,0,.8);
@@ -602,11 +688,11 @@ export default function BrainDumpPage() {
         .bd-live { position: fixed; left: 0; bottom: 0; width: 0; height: 0; }
         @media (max-width: 700px) {
           .bd-icon { width: 44px; height: 44px; } .bd-tag-name { min-height: 40px; } .bd-tag-more { width: 40px; height: 40px; }
-          .bd { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+          .bd { grid-template-columns: minmax(0, 1fr); grid-template-rows: 56px auto minmax(0, 1fr); }
+          .bd-top { padding: 0 8px; gap: 6px; } .bd-top .bd-search, .bd-top-name > span, .bd-panel { display: none; } .bd-top-name b { font-size: 14px; }
           .bd-side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-right: none; border-bottom: 1px solid ${DS_BORDER}; overflow: visible; }
-          .bd-side-top { flex-shrink: 0; } .bd-side-top b { display: none; }
           .bd-side > .bd-pinbox { flex: 1; min-width: 0; } .bd-side .bd-cap, .bd-side .bd-hint, .bd-how, .bd-piles-box, .bd-foot { display: none; }
-          .bd-side .bd-search { display: none; } .bd-side.search .bd-search { display: flex; width: 100%; order: 5; }
+          .bd-side.search .bd-phone-search { display: flex; width: 100%; order: 5; }
           .bd-phone-only { display: grid; }
           .bd-pin-in { height: 40px; font-size: 17px; }
           .bd-main { padding: 8px; }
@@ -620,11 +706,21 @@ export default function BrainDumpPage() {
         @media (prefers-reduced-motion: reduce) { .bd-sheet, .bd-slip, .bd-slip-face, .bd-col { animation: none; transition: none; } }
       `}</style>
 
-      <aside className={`bd-side${q ? " search" : ""}`} aria-label="Pin and find">
-        <div className="bd-side-top">
-          <button className="bd-icon" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={26} color={ACCENT_SOLID} /></button>
+      <header className="bd-top">
+        <button className="bd-icon" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
+        <div className="bd-top-name">
           <b>Dump &amp; Arrange</b>
+          <span aria-live="polite"><i className={`bd-dot2${status === "error" ? " bad" : status === "saving" ? " busy" : status === "saved" ? " ok" : ""}`} aria-hidden="true" />
+            {status === "saving" ? "Saving…" : status === "error" ? <button className="bd-retry" onClick={retry}>Not saved · Retry</button> : notes === null ? "Loading…" : "Saved"}</span>
         </div>
+        <span style={{ flex: 1 }} />
+        <div className="bd-modes" role="group" aria-label="View">
+          <button aria-pressed={!treeView} onClick={() => { if (treeView) navigate("/braindump") }}>Wall</button>
+          <button aria-pressed={!!treeView} disabled={!treeTarget} title={treeTarget ? "See a pile as a tree" : "Start a pile first"} onClick={() => { if (treeTarget && !treeView) { setGrowing(false); navigate(`/braindump?tree=${treeTarget}&view=tree`) } }}>Tree</button>
+        </div>
+        <label className="bd-search"><Search size={14} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{q && <button className="bd-icon" style={{ width: 22, height: 22 }} aria-label="Clear search" onClick={() => setQ("")}><X size={13} /></button>}</label>
+      </header>
+      <aside className={`bd-side${q ? " search" : ""}`} aria-label="Pin and find">
         <div className="bd-pinbox">
           <div className="bd-cap"><span>Pin a note</span></div>
           <input ref={quickRef} className="bd-pin-in" value={quick} maxLength={120} placeholder="An idea, quick…" aria-label="Pin a note" disabled={!user}
@@ -633,28 +729,27 @@ export default function BrainDumpPage() {
         </div>
         <button className="bd-icon bd-phone-only" aria-label="Search your notes" onClick={() => setQ(v => v || " ")}><Search size={17} /></button>
         <button className="bd-icon bd-phone-only" aria-label="New pile" onClick={newPile} disabled={!user}><Plus size={18} /></button>
-        <label className="bd-search"><Search size={14} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{q && <button className="bd-icon" style={{ width: 22, height: 22 }} aria-label="Clear search" onClick={() => setQ("")}><X size={13} /></button>}</label>
-        <div className="bd-how" aria-label="How it grows">
-          <div className="bd-cap" style={{ margin: 0 }}><span>How it grows</span></div>
-          <div><i>1</i><span>Drag a note onto another. A red thread ties them.</span></div>
-          <div><i>2</i><span>Every thread grows the pile's plant, from seed to tree.</span></div>
-          <div><i>3</i><span>Tap the plant to grow the idea: your question, your points, then a report made from it.</span></div>
-        </div>
+        <label className="bd-search bd-phone-search"><Search size={14} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search your notes" aria-label="Search your notes (phone)" />{q && <button className="bd-icon" style={{ width: 22, height: 22 }} aria-label="Clear search" onClick={() => setQ("")}><X size={13} /></button>}</label>
         <div className="bd-piles-box">
-          <div className="bd-cap"><span>Piles</span><span>{piles.length || ""}</span></div>
+          <div className="bd-cap"><span>Piles · {piles.length}</span></div>
           <div className="bd-piles">
             {notes !== null && piles.length === 0 && <p className="bd-none">No piles yet. Start one for notes that belong together.</p>}
             {columns.filter(c => c.pile).map(c => (
               <button key={c.id} className="bd-row" onClick={() => { if (treeView) navigate("/braindump"); setTimeout(() => showPile(c.id), treeView ? 80 : 0) }}>
-                <span className="bd-dot" style={{ background: hex(c.pile!.color) }} /><span className="t">{nameOf(c.pile!)}</span><em>{stageOf(c).label}</em>
+                <span className="bd-dot" style={{ background: hex(c.pile!.color) }} /><span className="t">{nameOf(c.pile!)}</span><small>{c.rows.length}</small><em>{stageOf(c).label}</em>
               </button>
             ))}
             <button className="bd-row add" onClick={newPile} disabled={!user}><Plus size={15} /><span className="t">New pile</span></button>
           </div>
         </div>
+        <div className="bd-how" aria-label="How it grows">
+          <div className="bd-cap" style={{ margin: 0 }}><span>How it grows</span></div>
+          <ol className="bd-steps">
+            {["Pin it the moment you think it.", "Drag one note onto another to tie a thread.", "Every thread grows the pile, from seed to tree.", "Grow it into a question, your points, then a report."].map((t, i) => <li key={i} className={i === step ? "on" : ""}><b>{i + 1}</b>{t}</li>)}
+          </ol>
+        </div>
         <div className="bd-foot">
           <span>{notes === null ? "Loading…" : `${nIdeas} note${nIdeas === 1 ? "" : "s"} · ${nThreads} thread${nThreads === 1 ? "" : "s"}`}</span>
-          <span className="bd-saved" aria-live="polite">{status === "saving" ? <><Loader2 size={11} className="an-spin" /> Saving</> : status === "saved" ? <><Check size={11} /> Saved</> : status === "error" ? <button className="bd-retry" onClick={retry}>Not saved · Retry</button> : ""}</span>
         </div>
       </aside>
 
@@ -675,6 +770,7 @@ export default function BrainDumpPage() {
               <div className="bd-cols" ref={wallRef}>{notes !== null && columns.map(column)}</div>{/* drawn once the notes are in: on a phone the wall snaps to its first column, so it must not open on an empty Just pinned that the piles then push aside */}
             </div>}
       </main>
+      {panel}
 
       {drag && (() => { const n = byId.get(drag.id); return n ? <div className="bd-ghost" style={{ left: drag.x, top: drag.y, background: hex(n.color) }}>{nameOf(n)}</div> : null })()}
 

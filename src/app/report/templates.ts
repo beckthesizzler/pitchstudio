@@ -1,5 +1,6 @@
 import { DEFAULT_TEAMS, defaultRoles, newId, type Block, type FormationFill, type GameFill, type JournalFill, type Mark, type PitchBlock, type Pt, type Report, type ShapeBlock, type TextBlock } from "./model"
 import { applyFill } from "./fill"
+import { blockBox } from "./Draw"
 
 /* The ways to start a report. Each is ordinary report data: every block can be moved, resized, changed or deleted.
    The sample words are an example (a made-up Barcelona match), there to show what goes where. */
@@ -303,4 +304,83 @@ export function makeTemplate(id: TemplateId, handle = ""): Report {
     { id: newId(), kind: "stats", x: 80, y: 1210, w: 1440, s: 1, type: "team", player: "", num: "", rows: [{ value: "94", label: "Pedri passes" }, { value: "17", label: "Between the lines" }, { value: "4", label: "Chances made" }] },
     text(80, 1420, 1200, "Leave the pocket open and he will live in it.", "title", 52),
   ] }
+}
+
+/** A report from pasted notes (see notes.ts), in one of three layouts: 0 the pitch beside the idea, 1 one big pitch,
+    2 words first. The players found stand on the pitch, highlighted, with a pass between the first two. Blocks are
+    stacked by their real heights and everything shrinks a step at a time until it fits above the footer. */
+export const NOTE_LAYOUTS = ["Pitch and idea", "One big pitch", "Words first"] as const
+export function makeFromNotes(n: { home: string; away: string; score: string; headline: string; idea: string; points: string[]; players: string[]; potm: string }, layout: 0 | 1 | 2, handle = ""): Report {
+  const base = { v: 2 as const, format: "4:5" as const, mode: "bright" as const, paper: null, story: null, glow: false, seal: "br" as const }
+  const spots: Pt[] = [[0.32, 0.74], [0.52, 0.56], [0.72, 0.7], [0.42, 0.36], [0.64, 0.3], [0.5, 0.16]]
+  const marks = (): Mark[] => {
+    const m: Mark[] = n.players.slice(0, 6).map((name, i) => pl(0, spots[i], "", name, true))
+    if (m.length > 1) m.push(pass(spots[0], spots[1], 2, true))
+    return m
+  }
+  const teams = DEFAULT_TEAMS(n.home || "Your team", n.away || "Opponent")
+  const top = [handle ? `@${handle.toUpperCase()}` : "", n.score ? `${n.home} ${n.score} ${n.away}`.toUpperCase() : ""].filter(Boolean).join(" · ")
+  const head = (n.headline || "Your headline").toUpperCase()
+  const points = n.points.length ? n.points : ["Your first point.", "Your second point.", "What it means."]
+  const title = ["The story", "One thing", "Two things", "Three things", "Four things", "Five things"][n.points.length] ?? "The story"
+  const h = (b: Block) => blockBox(b).h
+  const FOOT = 1840 // the player of the match line and the seal sit below this
+  const pitchW = (w: number, x: number, y: number) => pitch(x, y, w, "half", marks(), { teams, ms: Math.min(1.6, Math.max(1, 1000 / w)) })
+  const build = (k: number): { blocks: Block[]; bottom: number } => {
+    const blocks: Block[] = []
+    let y = 64
+    if (top) { const t = text(80, y, 1440, top, "label", 26, "left", "story"); blocks.push(t); y += h(t) + 18 }
+    const hd = text(80, y, 1440, head, "title", Math.round((layout === 2 ? 176 : 150) * Math.min(1.1, Math.max(k, 0.8)))); blocks.push(hd); y += h(hd) + 54 * k
+    const story = (x: number, y: number, w: number, s: number): Block => ({ id: newId(), kind: "story", x, y, w, s: +(s * k).toFixed(2), title, points })
+    let bottom = y
+    if (layout === 0) {
+      const pw = Math.round(Math.min(960, 860 * Math.max(k, 0.75))), pt = pitchW(pw, 80, y), ix = 80 + pw + 50, iw = 1520 - ix
+      const lab = text(ix, y + 4, iw, "THE IDEA", "label", 24, "left", "story")
+      const idea = text(ix, y + 50, iw, n.idea || "What was the plan, in a sentence or two.", "text", Math.round(38 * k))
+      blocks.push(pt, lab, idea)
+      y = Math.max(y + h(pt), idea.y + h(idea)) + 64 * k
+      const st = story(80, y, 1440, 2.1); blocks.push(st); bottom = y + h(st)
+    } else if (layout === 1) {
+      const st = story(80, 0, 1440, 1.7), idea = n.idea ? text(80, 0, 1440, n.idea, "text", Math.round(34 * k)) : null
+      const room = FOOT - y - 50 * k - (idea ? h(idea) + 40 * k : 0) - h(st)
+      const pw = Math.round(Math.min(1440, Math.max(700, room * 68 / 52.5))), pt = pitchW(pw, Math.round((1600 - pw) / 2), y)
+      blocks.push(pt); y += h(pt) + 50 * k
+      if (idea) { idea.y = Math.round(y); blocks.push(idea); y += h(idea) + 40 * k }
+      st.y = Math.round(y); blocks.push(st); bottom = y + h(st)
+    } else {
+      if (n.idea) { const idea = text(80, y, 1440, n.idea, "text", Math.round(50 * k)); blocks.push(idea); y += h(idea) + 64 * k }
+      const pw = Math.round(Math.min(600, 520 * Math.max(k, 0.8))), pt = pitchW(pw, 1520 - pw, y), st = story(80, y, 1520 - pw - 60 - 80, 1.9)
+      blocks.push(st, pt); bottom = y + Math.max(h(st), h(pt))
+    }
+    return { blocks, bottom }
+  }
+  // the biggest size that fits: short notes fill the page, long ones shrink to it
+  let out = build(1.4)
+  for (let k = 1.34; out.bottom > FOOT && k > 0.5; k -= 0.06) out = build(k)
+  if (n.potm) out.blocks.push(text(80, 1880, 1100, `PLAYER OF THE MATCH · ${n.potm.toUpperCase()}`, "label", 28, "left", "story"))
+  return { ...base, blocks: out.blocks.map(b => ("y" in b ? { ...b, y: Math.round(b.y) } : b)) as Block[] }
+}
+
+/* ── your own templates: a report's layout kept in Start new (profiles.report_templates, newest first, up to 12) ── */
+export type MyTemplate = { id: string; name: string; at: string; data: Report }
+export const MAX_MINE = 12
+/** The layout without the words: headlines, text and points become prompts; photos become empty frames; players keep their places, not their names */
+export function asTemplate(r: Report): Report {
+  const { fill: _f, issue: _i, ...rest } = r
+  const blocks = r.blocks.map((b0): Block => {
+    const { slot: _s, locked: _l, ...plain } = b0 as Block & { slot?: unknown; locked?: unknown }
+    const b = plain as Block // no Fill form comes with a template, so nothing stays tied to one
+    switch (b.kind) {
+      case "text": return { ...b, text: b.style === "title" ? "YOUR HEADLINE" : b.style === "label" ? (b.text.length <= 18 ? b.text : "LABEL") : "Your words go here." }
+      case "story": return { ...b, points: b.points.map((_, i) => ["Your first point.", "Your second point.", "Your third point.", "Your fourth point.", "Your fifth point.", "Your sixth point."][i] ?? "Another point.") }
+      case "photo": return { ...b, src: "", nw: b.w, nh: b.h, ix: 0, iy: 0, iw: b.w }
+      case "pitch": return { ...b, marks: b.marks.map(m => (m.kind === "player" ? { ...m, name: "" } : m)) }
+      default: return b
+    }
+  })
+  return { ...rest, blocks }
+}
+/** A template of yours, ready to fill: fresh ids so it's a new report */
+export function fromMine(t: MyTemplate): Report {
+  return { ...t.data, blocks: t.data.blocks.map(b => ({ ...b, id: newId(), ...(b.kind === "pitch" ? { marks: b.marks.map(m => ({ ...m, id: newId() })) } : {}) }) as Block) }
 }

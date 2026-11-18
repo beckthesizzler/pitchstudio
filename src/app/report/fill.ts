@@ -165,6 +165,13 @@ export function unlock(r: Report, section: string): Report {
   return r.fill ? applyFill(open, r.fill) : open
 }
 
+/** Which of a form's sections have an answer, in the form's order */
+export function filledList(f: Fill): boolean[] {
+  if (f.template === "game") return [f.home || f.away || f.score || f.meta, f.headline, f.events.length, f.lineup.some(Boolean), f.onball || f.offball || f.pattern, f.situations.some(x => x.text), f.dial !== 0 || f.dialWhy, f.report].map(Boolean)
+  if (f.template === "formation") return [f.title, f.shapeA && f.shapeB, f.lineup.some(Boolean), f.note].map(Boolean)
+  return [f.home || f.away, f.xi.some(x => x.name), f.danger.some(d => d.name) || f.watching.some(Boolean), f.score || f.goals.some(Boolean), f.yellows || f.reds || f.numbers.some(Boolean), f.pod || f.verdict.some(Boolean)].map(Boolean)
+}
+
 /** How many of a form's sections have an answer */
 export function filledCount(f: Fill): [number, number] {
   if (f.template === "game") {

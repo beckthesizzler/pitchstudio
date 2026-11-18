@@ -1,20 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowLeft, ArrowRight, Maximize2, Plus, Trash2, Unlock, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, Check, Maximize2, Plus, Trash2, Unlock, X } from "lucide-react"
 import { SHAPES4, type FormationFill, type GameFill, type Fill, type JournalFill, type Report } from "./model"
 import { lineupOf, placeFormation, TOP_FORMATIONS } from "./team"
-import { filledCount, lockedIn } from "./fill"
+import { filledCount, filledList, lockedIn } from "./fill"
 import { dialScore, dialTilt } from "./Draw"
 import { TimelineEdit } from "./Panel"
 
 /* The Fill side of a template: a form whose answers write themselves onto the card as you type (fill.ts does the writing).
    On a computer it's one long form beside the card; on a phone, one step per screen with the card above. */
 
-type Step = { id: string; name: string; ask: string; body: ReactNode }
+type Step = { id: string; name: string; ask: string; body: ReactNode; sum?: string }
 export type FillFormProps = {
   report: Report; fill: Fill; set: (f: Fill, live?: boolean) => void; begin: () => void; end: () => void
   club?: string // your club, from your profile
   unlock: (section: string) => void; phone: boolean; preview: ReactNode; full: ReactNode; title: string
   onDesign: () => void; onToGame?: () => void
+  onStep?: (section: string | null) => void // the section being filled: its blocks light up on the card
 }
 
 const csv = (a: string[]) => a.filter(Boolean).join(", ")
@@ -39,6 +40,8 @@ export function FillForm(P: FillFormProps) {
   const [step, setStep] = useState(0)
   const [big, setBig] = useState(false)
   const [done, total] = filledCount(fill)
+  const doneAt = filledList(fill)
+  const [open, setOpen] = useState(() => Math.max(0, doneAt.indexOf(false))) // on a computer, one section open at a time
   // a new report starts with your club as your team
   const clubbed = useRef(false)
   useEffect(() => {
@@ -66,24 +69,24 @@ export function FillForm(P: FillFormProps) {
     const seats = seatOrder(f.shape)
     const dial = { value: f.dial, left: "CHAOS", right: "CONTROL" }
     return [
-      { id: "match", name: "The match", ask: "Who played, and where?", body: <>{lockNote("match")}
+      { id: "match", name: "The match", ask: "Who played, and where?", sum: [[f.home, f.score, f.away].filter(Boolean).join(" "), f.meta].filter(Boolean).join(" · "), body: <>{lockNote("match")}
         <div className="ff-three">{field("Your team", f.home, v => put({ home: v }), { max: 30, ph: P.club || "Your team" })}{field("Score", f.score, v => put({ score: v }), { max: 12, ph: "3–0" })}{field("Opponent", f.away, v => put({ away: v }), { max: 30, ph: "Opponent" })}</div>
         {field("Competition, ground, date", f.meta, v => put({ meta: v }), { ph: "Competition · Matchday · Ground · Date" })}</> },
-      { id: "headline", name: "Headline", ask: "What's the story in one line?", body: <>{lockNote("headline")}{field("Headline", f.headline, v => put({ headline: v }), { ph: "Villa played into the trap" })}<p className="rp-note">It shrinks to fit one line, however long.</p></> },
-      { id: "state", name: "Game state", ask: "What changed the game, and when?", body: <>{lockNote("state")}
+      { id: "headline", name: "Headline", ask: "What's the story in one line?", sum: f.headline, body: <>{lockNote("headline")}{field("Headline", f.headline, v => put({ headline: v }), { ph: "Villa played into the trap" })}<p className="rp-note">It shrinks to fit one line, however long.</p></> },
+      { id: "state", name: "Game state", ask: "What changed the game, and when?", sum: f.events.length ? `${f.events.length} moment${f.events.length === 1 ? "" : "s"} · ${f.events.slice(0, 2).map(e => `${e.min}′ ${e.label}`).join(", ")}` : "", body: <>{lockNote("state")}
         <TimelineEdit events={f.events} set={events => put({ events }, false)} big={P.phone} chips={P.phone} /></> },
-      { id: "shape", name: "Shape and players", ask: "How did you line up?", body: <>{lockNote("shape")}
+      { id: "shape", name: "Shape and players", ask: "How did you line up?", sum: f.lineup.some(Boolean) ? `${f.shape} · ${f.lineup.filter(Boolean).length} named${f.keys.length ? ` · ${f.keys.join(", ")}` : ""}` : "", body: <>{lockNote("shape")}
         <div className="ff-field"><span>Formation</span>{chips(f.shape, SHAPES4, v => put({ shape: v, lineup: keepSpots(f.shape, v, f.lineup) }, false), "Formation")}</div>
         {field("Our XI, keeper first", csv(f.lineup) ? f.lineup.join(", ").replace(/(, )+$/, "") : "", v => { const a = fromCsv(v, 11); while (a.length < 11) a.push(""); put({ lineup: a }) }, { area: 2, max: 400, ph: "Goalkeeper, right back, centre back, centre back, left back, …" })}
         <div className="ff-seats">{seats.map((pos, i) => <span key={i}><b>{pos}</b>{f.lineup[i] || "—"}</span>)}</div>
         {field("Key players (highlighted)", csv(f.keys), v => put({ keys: fromCsv(v, 11).filter(Boolean) }), { ph: "Up to 4 names, with commas" })}
         {field("Point of Difference (gold ring)", f.pod, v => put({ pod: v }), { max: 32, ph: "One name" })}
         {field("Why they made the difference", f.podWhy, v => put({ podWhy: v }), { area: 2, max: 160 })}</> },
-      { id: "idea", name: "The idea", ask: "What was the plan?", body: <>{lockNote("idea")}
+      { id: "idea", name: "The idea", ask: "What was the plan?", sum: f.onball || f.offball || f.pattern, body: <>{lockNote("idea")}
         {field("On-ball structure", f.onball, v => put({ onball: v }), { area: 3 })}
         {field("Off-ball structure", f.offball, v => put({ offball: v }), { area: 3 })}
         {field("Pattern recognition", f.pattern, v => put({ pattern: v }), { area: 3 })}</> },
-      { id: "situations", name: "Key situations", ask: "Which moments prove it?", body: <>{lockNote("situations")}
+      { id: "situations", name: "Key situations", ask: "Which moments prove it?", sum: (n => n ? `${n} filled` : "")(f.situations.filter(x => x.text).length), body: <>{lockNote("situations")}
         <p className="rp-note">Each one gets a numbered pin, next to the first player of yours it names. Start a tag with "Game state" for one without a pin.</p>
         {f.situations.map((q, i) => <div key={i} className="ff-sit">
           <div className="ff-two">{field(`Tag ${i + 1}`, q.tag, v => put({ situations: f.situations.map((x, j) => (j === i ? { ...x, tag: v } : x)) }), { max: 24, ph: "Trap · 7'" })}
@@ -91,11 +94,11 @@ export function FillForm(P: FillFormProps) {
           {field("What happened", q.text, v => put({ situations: f.situations.map((x, j) => (j === i ? { ...x, text: v } : x)) }), { area: 2, max: 200 })}
         </div>)}
         {f.situations.length < 6 && <button className="rp-btn sm" onClick={() => put({ situations: [...f.situations, { tag: "", text: "" }] }, false)}><Plus size={14} /> Add a situation</button>}</> },
-      { id: "balance", name: "Balance", ask: "Control or chaos?", body: <>{lockNote("balance")}
+      { id: "balance", name: "Balance", ask: "Control or chaos?", sum: f.dial !== 0 || f.dialWhy ? `${dialScore(f.dial)} of 10 · ${dialTilt(dial)}` : "", body: <>{lockNote("balance")}
         <input className="ff-dial" type="range" min={-10} max={10} step={1} value={f.dial} aria-label="Balance" onPointerDown={begin} onPointerUp={end} onKeyDown={begin} onKeyUp={end} onChange={e => put({ dial: +e.target.value })} />
         <div className="ff-dial-row"><span>CHAOS</span><b>{dialScore(f.dial)}/10 · {dialTilt(dial)}</b><span>CONTROL</span></div>
         {field("Why, in one line", f.dialWhy, v => put({ dialWhy: v }), { max: 160 })}</> },
-      { id: "report", name: "The report", ask: "What's your verdict?", body: <>{lockNote("report")}{field("The report", f.report, v => put({ report: v }), { area: 6, max: 600, ph: "What were we trying to achieve? Did we? How?" })}</> },
+      { id: "report", name: "The report", ask: "What's your verdict?", sum: f.report, body: <>{lockNote("report")}{field("The report", f.report, v => put({ report: v }), { area: 6, max: 600, ph: "What were we trying to achieve? Did we? How?" })}</> },
     ]
   }
 
@@ -166,7 +169,19 @@ export function FillForm(P: FillFormProps) {
     .ff-sec:last-of-type { border-bottom: none; }
     .ff-sec h3 { margin: 0 0 12px; font: 600 12px 'JetBrains Mono', monospace; letter-spacing: .16em; text-transform: uppercase; color: var(--ps-mu, #9aa0aa); }
     .ff-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 2px 0 14px; font-size: 14px; color: var(--ps-mu, #9aa0aa); }
-    .ff-count { font: 700 12px 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ps-em, #d7ff3c); white-space: nowrap; }
+    .ff-count { font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .16em; text-transform: uppercase; color: var(--ps-em, #d7ff3c); white-space: nowrap; }
+    .ff-k { font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .16em; text-transform: uppercase; color: var(--ps-mu, #9aa0aa); }
+    .ff-ticks { display: grid; grid-auto-flow: column; gap: 4px; margin: -4px 0 8px; } .ff-ticks i { height: 4px; border-radius: 2px; background: rgba(128,128,128,.25); } .ff-ticks i.on { background: var(--ps-accent, #d7ff3c); }
+    .ff-acc { border-bottom: 1px solid var(--ps-bd, rgba(128,128,128,.2)); }
+    .ff-acc-h { width: 100%; display: flex; align-items: flex-start; gap: 12px; padding: 13px 0; border: none; background: none; color: inherit; text-align: left; cursor: pointer; }
+    .ff-acc-h:focus-visible { outline: 2px solid var(--ps-accent, #d7ff3c); outline-offset: 2px; border-radius: 8px; }
+    .ff-n { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; background: rgba(128,128,128,.18); font: 700 12px 'Inter', sans-serif; }
+    .ff-n.cur { background: var(--ps-accent, #d7ff3c); color: #121316; } .ff-n.ok { background: rgba(128,128,128,.18); }
+    .ff-acc-t { min-width: 0; flex: 1; } .ff-acc-t b { display: block; font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .16em; text-transform: uppercase; color: var(--ps-mu, #9aa0aa); }
+    .ff-acc.open .ff-acc-t b { color: inherit; }
+    .ff-acc-t small { display: block; margin-top: 4px; font: 400 13.5px 'Inter', sans-serif; color: var(--ps-mu, #9aa0aa); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ff-acc.open .ff-acc-t small { white-space: normal; color: inherit; font-weight: 500; }
+    .ff-acc-b { padding: 4px 0 18px 38px; }
     .ff-lock { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(233,185,73,.14); color: #e9b949; font: 600 12.5px 'Inter', sans-serif; margin-bottom: 12px; }
     .ff-seats { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: -4px 0 12px; font-size: 12px; color: var(--ps-mu, #9aa0aa); } .ff-seats b { font: 700 12px 'JetBrains Mono', monospace; margin-right: 4px; color: inherit; opacity: .8; }
     .ff-rows { display: grid; gap: 6px; margin-bottom: 12px; } .ff-row { display: grid; grid-template-columns: 38px 1fr 1fr auto; gap: 8px; align-items: center; font-size: 13px; } .ff-row b { font: 700 12px 'JetBrains Mono', monospace; color: var(--ps-mu, #9aa0aa); } .ff-row .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -214,16 +229,26 @@ export function FillForm(P: FillFormProps) {
       </div>
     )
   }
+  const cur = Math.min(open, steps.length - 1)
   return (
     <div className="ff">{css}
-      <div className="ff-top"><span>Fill it in. The card designs itself.</span><span className="ff-count">{done} OF {total} FILLED</span></div>
-      {steps.map((s, i) => (
-        <section key={s.id} className="ff-sec" aria-label={s.name}>
-          <h3>{i + 1} · {s.name}</h3>
-          {s.body}
-        </section>
-      ))}
-      <p className="rp-note">Anything else (colours, layout, extra blocks) is in <button className="tm-link" onClick={P.onDesign}>Design</button>.</p>
+      <div className="ff-top"><span className="ff-k">Fill it in</span><span className="ff-count">{done} of {total}</span></div>
+      <div className="ff-ticks" aria-hidden="true">{doneAt.map((d, i) => <i key={i} className={d ? "on" : ""} />)}</div>
+      {steps.map((s, i) => {
+        const on = i === cur, ok = !!doneAt[i]
+        return (
+          <section key={s.id} className={`ff-acc${on ? " open" : ""}`} aria-label={s.name}>
+            <button className="ff-acc-h" aria-expanded={on} onClick={() => { setOpen(on ? -1 : i); P.onStep?.(on ? null : s.id) }} onFocus={() => P.onStep?.(s.id)}>
+              <span className={`ff-n${on ? " cur" : ok ? " ok" : ""}`}>{ok && !on ? <Check size={14} strokeWidth={3} /> : i + 1}</span>
+              <span className="ff-acc-t"><b>{s.name}</b><small>{on ? s.ask : s.sum || "Not filled yet"}</small></span>
+            </button>
+            {on && <div className="ff-acc-b" onFocusCapture={() => P.onStep?.(s.id)}>{s.body}
+              {i < steps.length - 1 && <button className="rp-btn sm" style={{ marginTop: 4 }} onClick={() => { setOpen(i + 1); P.onStep?.(steps[i + 1].id) }}>Next: {steps[i + 1].name} <ArrowRight size={14} /></button>}
+            </div>}
+          </section>
+        )
+      })}
+      <p className="rp-note" style={{ marginTop: 14 }}>Anything else (colours, layout, extra blocks) is in <button className="tm-link" onClick={P.onDesign}>Design</button>.</p>
     </div>
   )
 }

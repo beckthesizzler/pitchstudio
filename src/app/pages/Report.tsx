@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { flushSync } from "react-dom"
 import { useLocation, useNavigate } from "react-router"
-import { Activity, BarChart3, Circle as CircleIcon, Copy, Download, FolderOpen, Gauge, Hash, Heading1, ImagePlus, Lightbulb, ListOrdered, Loader2, Maximize, MousePointer2, MoveUpRight, Plus, Redo2, Spline, Square, Type, Undo2, UserPlus, UserRound, X, ZoomIn, ZoomOut, MapPin, LayoutTemplate } from "lucide-react"
+import { exportStarted, reportError, toolOpened } from "../lib/telemetry"
+import { Activity, BarChart3, Circle as CircleIcon, Copy, Download, FolderOpen, Gauge, Hash, Heading1, ImagePlus, Lightbulb, ListOrdered, Loader2, Maximize, MousePointer2, MoveUpRight, Plus, Redo2, Spline, Square, Type, Undo2, UserPlus, UserRound, X, ZoomIn, ZoomOut, MapPin, LayoutTemplate , PanelLeft} from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
@@ -11,11 +12,16 @@ import { DEFAULT_BRAND, cardColours, logoToDataUrl, readBrand, type Brand } from
 import { Canvas, clampCrop, moveBlock, type Mode, type PitchTool, type Sel } from "../report/Canvas"
 import { Panel, PITCH_HINTS } from "../report/Panel"
 import { ReportView, blockBox } from "../report/Draw"
-import { BLANK_GAME, SAMPLES_AS_OF, SAMPLES_BY, SHAPES, TEMPLATES, makeShape, makeTemplate, nextGameFrom, type ShapeId, type TemplateId } from "../report/templates"
+import { BLANK_GAME, MAX_MINE, SAMPLES_AS_OF, SAMPLES_BY, SHAPES, TEMPLATES, asTemplate, fromMine, makeShape, makeTemplate, nextGameFrom, type MyTemplate, type ShapeId, type TemplateId } from "../report/templates"
 import { FillForm } from "../report/FillForm"
-import { applyFill, journalToGame, lockEdited, reflow, unlock as unlockSection } from "../report/fill"
+import { Dock, STAGE_CSS, type DockItem } from "../board/Stage"
+import { Library } from "../report/Library"
+import { PasteNotes } from "../report/PasteNotes"
+import { Side, shotFile, type LibItem } from "../report/Side"
+import { boardPitch } from "../report/fromBoard"
+import { applyFill, journalToGame, lockEdited, reflow, unlock as unlockSection, SECTION_SLOTS } from "../report/fill"
 import { peekIssue, takeIssue } from "../lib/issues"
-import { DEFAULT_TEAMS, MAX_BLOCKS, MAX_MARKS, SIZES, mediaOf, newId, pitchBox, projector, readReport, type Block, type Fill, type Mark, type PhotoBlock, type PitchBlock, type Pt, type Report, type Shape, type Team } from "../report/model"
+import { DEFAULT_TEAMS, FORMATS, MAX_BLOCKS, MAX_MARKS, SIZES, mediaOf, newId, pitchBox, projector, readReport, type Block, type Fill, type Mark, type PhotoBlock, type PitchBlock, type Pt, type Report, type Shape, type Team } from "../report/model"
 import { applyLineup, formationOf, lineupOf, lineupText, placeFormation, type Squad } from "../report/team"
 import { downloadMedia, mediaLinks, preparePhoto, removeFolder, svgToCanvas, tidyFolder, uploadMedia } from "../report/media"
 import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT, SCRIM } from "../theme"
@@ -39,6 +45,30 @@ const TOOLS: { id: PitchTool; name: string; key: string; icon: ReactNode }[] = [
   { id: "run", name: "Run", key: "R", icon: <Spline size={18} /> }, { id: "pin", name: "Pin", key: "N", icon: <MapPin size={18} /> },
   { id: "zone", name: "Zone", key: "Z", icon: <Square size={18} /> }, { id: "ball", name: "Ball", key: "B", icon: <CircleIcon size={18} /> },
 ]
+// the Add dock: words, then the pitch and pictures, then numbers
+const ADD_GROUPS: AddKind[][] = [["title", "text", "story", "idea"], ["pitch", "photo"], ["stats", "series", "timeline", "dial"]]
+
+/** The blocks of the section being filled, outlined on the card. Measured from the drawn card itself, so it follows any layout. */
+function SectionGlow({ section, name, report }: { section: string | null; name: string; report: Report }) {
+  const box = useRef<HTMLDivElement>(null)
+  const [r, setR] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  useEffect(() => {
+    const wrap = box.current?.parentElement
+    if (!section || !wrap) { setR(null); return }
+    const measure = () => {
+      const slots = new Set(SECTION_SLOTS[section] ?? []), ids = report.blocks.filter(b => b.slot && slots.has(b.slot)).map(b => b.id)
+      const at = wrap.getBoundingClientRect(), rects = ids.map(id => wrap.querySelector(`[data-bid="${CSS.escape(id)}"]`)?.getBoundingClientRect()).filter((x): x is DOMRect => !!x && x.width > 0)
+      if (!rects.length) { setR(null); return }
+      const x0 = Math.min(...rects.map(q => q.left)), y0 = Math.min(...rects.map(q => q.top)), x1 = Math.max(...rects.map(q => q.right)), y1 = Math.max(...rects.map(q => q.bottom))
+      setR({ x: x0 - at.left - 6, y: y0 - at.top - 6, w: x1 - x0 + 12, h: y1 - y0 + 12 })
+    }
+    const f = requestAnimationFrame(measure)
+    window.addEventListener("resize", measure)
+    return () => { cancelAnimationFrame(f); window.removeEventListener("resize", measure) }
+  }, [section, report])
+  return <div ref={box} aria-hidden="true">{r && <div className="rp-glow" style={{ left: r.x, top: r.y, width: r.w, height: r.h }}><span>{name}</span></div>}</div>
+}
+
 const TOOL_KEYS: Record<string, PitchTool> = { v: "select", p: "player", o: "opp", a: "pass", r: "run", n: "pin", z: "zone", b: "ball" }
 const EMPTY: Report = { v: 2, format: "1:1", mode: "night", paper: null, story: null, glow: false, seal: "br", blocks: [] }
 
@@ -67,7 +97,7 @@ function OnScreen({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   const [near, setNear] = useState(false)
   useEffect(() => {
-    const el = ref.current
+    const el = ref.current?.parentElement // the wrapper has no box of its own (display: contents), so watch its frame
     if (!el || near) return
     if (typeof IntersectionObserver === "undefined") { setNear(true); return }
     const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { setNear(true); io.disconnect() } }, { rootMargin: "300px" })
@@ -78,6 +108,7 @@ function OnScreen({ children }: { children: ReactNode }) {
 }
 
 export default function ReportPage() {
+  useEffect(() => { toolOpened("report") }, [])
   const navigate = useNavigate()
   const loc = useLocation()
   const openId = new URLSearchParams(loc.search).get("open")
@@ -120,6 +151,8 @@ export default function ReportPage() {
   const saving = useRef(false), again = useRef(false)
   const [, force] = useState(0)
   const [view, setView] = useState<"fill" | "design">("design") // a report with a form opens on Fill
+  const [fillStep, setFillStep] = useState<string | null>(null) // the section being filled
+  const [allOpen, setAllOpen] = useState(false) // every template and shape, from Start new
   const viewRef = useRef(view); viewRef.current = view
   const [phone, setPhone] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 700px)").matches)
   useEffect(() => { const mq = window.matchMedia?.("(max-width: 700px)"); if (!mq) return; const on = () => setPhone(mq.matches); mq.addEventListener?.("change", on); return () => mq.removeEventListener?.("change", on) }, [])
@@ -146,8 +179,10 @@ export default function ReportPage() {
       const u = session?.user
       if (!u) { navigate("/", { replace: true }); return }
       setUser({ id: u.id, email: u.email ?? "" })
-      supabase.from("profiles").select("handle, brand, favorite_club").eq("id", u.id).maybeSingle().then(({ data }) => {
+      ;(supabase as any).from("profiles").select("handle, brand, favorite_club, report_templates").eq("id", u.id).maybeSingle().then(({ data }: { data: any }) => {
         if (off) return
+        const raw: unknown[] = Array.isArray(data?.report_templates) ? data.report_templates : []
+        setMine(raw.flatMap((t: any) => t && typeof t.id === "string" && t.data ? [{ id: t.id, name: String(t.name || "My template").slice(0, 40), at: String(t.at || ""), data: readReport(t.data, u.id) }] : []).slice(0, MAX_MINE))
         const h: string = (data as any)?.handle || ""
         setHandle(h && stripHandleSuffix(h, u.id, u.email) === h ? h : "")
         setBrand(readBrand((data as any)?.brand))
@@ -188,14 +223,39 @@ export default function ReportPage() {
     return () => { off = true }
   }, [brand.logo])
   const start = (id: TemplateId | "next" | `own:${ShapeId}`) => {
-    // a template isn't saved until you change something: leave without editing and nothing new appears in My reports
-    const tpl = id.startsWith("own:") ? makeShape(id.slice(4) as ShapeId) : id === "next" && lastGame ? nextGameFrom(lastGame, handle) : makeTemplate(id === "next" ? "game" : id as TemplateId, handle)
+    startWith(id.startsWith("own:") ? makeShape(id.slice(4) as ShapeId) : id === "next" && lastGame ? nextGameFrom(lastGame, handle) : makeTemplate(id === "next" ? "game" : id as TemplateId, handle), id)
+  }
+  // a template isn't saved until you change something: leave without editing and nothing new appears in My reports
+  function startWith(tpl: Report, id: string) {
+    setAllOpen(false); setNotesOpen(false)
     setView(tpl.fill ? "fill" : "design")
     made.current = new Date().toISOString(); setTitle(""); titleRef.current = ""
     savedJson.current = payload("", tpl); setStatus("idle")
     setReport(tpl); setPhase("ready"); setSel({ bid: null, mid: null })
     ;(window as any).posthog?.capture("report_started", { template: id })
   }
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [known, setKnown] = useState<string[]>([])
+  const [mine, setMine] = useState<MyTemplate[]>([])
+  const mineRef = useRef(mine); mineRef.current = mine
+  const [sideOpen, setSideOpen] = useState(() => { try { return localStorage.getItem("ps-report-side-open") !== "0" } catch { return true } })
+  useEffect(() => { try { localStorage.setItem("ps-report-side-open", sideOpen ? "1" : "0") } catch { /* fine */ } }, [sideOpen])
+  /** your templates are kept on your profile, newest first */
+  const storeMine = async (next: MyTemplate[], before: MyTemplate[], done: string) => {
+    if (!user) return
+    setMine(next)
+    const { error } = await (supabase as any).from("profiles").update({ report_templates: next }).eq("id", user.id)
+    if (error) { reportError(error, "report_templates"); setMine(before); say("That didn't save. Try again."); return }
+    say(done)
+  }
+  const saveAsTemplate = () => {
+    const head = headlineOf(repRef.current), prompt = !head || /^your headline$/i.test(head.trim())
+    const name = (titleRef.current.trim() || (prompt ? `My template ${mineRef.current.length + 1}` : head)).slice(0, 40)
+    const before = mineRef.current
+    storeMine([{ id: newId(), name, at: new Date().toISOString(), data: asTemplate(repRef.current) }, ...before].slice(0, MAX_MINE), before, `Saved as “${name}”. It's in Start new.`)
+    ;(window as any).posthog?.capture("report_template_saved", { blocks: repRef.current.blocks.length })
+  }
+  const dropMine = (t: MyTemplate) => { const before = mineRef.current; storeMine(before.filter(x => x.id !== t.id), before, `Removed “${t.name}” from your templates.`) }
 
   /* ── saving: a moment after every change. A photo is saved once its file has arrived. ── */
   function payload(t: string, r: Report) {
@@ -305,6 +365,21 @@ export default function ReportPage() {
     change(r => ({ ...r, blocks: [...r.blocks, b] }))
     setModeState({ kind: "page" }); setSel({ bid: b.id, mid: null })
     if (focus) setFocusReq("text")
+  }
+  /** a board, freeze-frame or note from your Library, placed where it was dropped (or in the middle) */
+  const addItem = async (it: LibItem, at: Pt = [W / 2, H / 2]) => {
+    if (it.type === "board") { addBlock(boardPitch(it.row, at, W)); return }
+    if (it.type === "note") {
+      const k = W / 1600, w = Math.min(W - 160 * k, 760 * k), first = it.text.split(String.fromCharCode(10))[0].trim()
+      const words = it.text && first !== it.name ? `${it.name}${String.fromCharCode(10)}${it.text}` : it.text || it.name
+      addBlock({ id: newId(), kind: "text", x: Math.max(0, Math.min(W - w, at[0] - w / 2)), y: Math.max(0, at[1] - 40 * k), w, rot: 0, text: words.slice(0, 600), style: "text", size: 30 * k, align: "left", color: "ink", plate: null })
+      return
+    }
+    say("Bringing in the freeze-frame…")
+    const f = await shotFile(it)
+    if (!f) { say("That freeze-frame didn't load. Try again."); return }
+    const slot = repRef.current.blocks.find(b => b.kind === "photo" && !b.src && at[0] >= b.x && at[0] <= b.x + (b as PhotoBlock).w && at[1] >= b.y && at[1] <= b.y + (b as PhotoBlock).h)
+    addPhotos([f], at, slot?.id ?? null)
   }
   const add = (kind: AddKind) => {
     const k = W / 1600
@@ -527,6 +602,7 @@ export default function ReportPage() {
     if (!svg || busy) return
     if (mediaOf(report).some(pth => !media[pth])) { say("A photo is still loading. Try again in a moment."); return }
     setBusy("Exporting…")
+    exportStarted("report", what)
     try {
       // a report with a series line takes its number from your series at its first export, and keeps it
       const wantsNo = report.blocks.some(b => b.kind === "series" && b.text.includes("{n}"))
@@ -592,12 +668,93 @@ export default function ReportPage() {
 
   if (phase === "loading") return <div className="rp-page" role="status" style={{ minHeight: "100vh", background: SURFACE_BASE, color: TEXT_MUTED, display: "grid", placeItems: "center", fontSize: 14 }}>Opening your report…</div>
 
+  const picker = (
+        <div className="rp-start">
+            <h1>Start a match report</h1>
+            <p>Pick a starting point. Every word, block and colour can be changed, moved or deleted.</p>
+            <div className="rp-startbtns">
+              {lastGame && <button className="rp-btn pri" onClick={() => start("next")}><Plus size={15} /> Start from your last Game Report</button>}
+              <button className="rp-btn" onClick={() => setNotesOpen(true)}><Type size={15} /> Paste your notes</button>
+            </div>
+            {mine.length > 0 && <>
+              <p className="rp-cap" style={{ marginBottom: 12 }}>YOUR TEMPLATES · {mine.length}</p>
+              <div className="rp-tpls small" style={{ marginBottom: 28 }}>
+                {mine.map(t => (
+                  <div key={t.id} className="rp-mine">
+                    <button className="rp-tpl" data-mine={t.id} onClick={() => startWith(fromMine(t), "mine")}>
+                      <div className="th"><OnScreen><ReportView report={t.data} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></div>
+                      <b>{t.name}</b><span>Your layout · {t.data.blocks.length} blocks</span>
+                    </button>
+                    <button className="rp-icon sm rp-mine-x" aria-label={`Remove ${t.name} from your templates`} title="Remove" onClick={() => dropMine(t)}><X size={14} /></button>
+                  </div>
+                ))}
+              </div>
+            </>}
+            <p className="rp-cap" style={{ marginBottom: 12 }}>PITCHSTUDIO TEMPLATES · {TEMPLATES.filter(t => t.id !== "blank").length}</p>
+            <div className="rp-tpls">
+              {TEMPLATES.filter(t => t.id !== "blank").map(t => (
+                <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
+                  <div className="th" style={{ aspectRatio: t.id === "journal" ? "16 / 9" : t.id === "game" || t.id === "formation" ? "4 / 5" : "1" }}><OnScreen><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></div>
+                  <b>{t.name} <i className="rp-def">Default</i></b><span>{t.note}</span><small className="rp-by">Example by @{SAMPLES_BY} · {SAMPLES_AS_OF}</small>
+                </button>
+              ))}
+            </div>
+            <section className="rp-own" aria-labelledby="rp-own-h">
+              <h2 id="rp-own-h">Create your own</h2>
+              <p>Start from a shape. Every block already holds an example, so there's always something to change: add a pitch, numbers, a timeline, a photo, anything.</p>
+              <div className="rp-tpls small">
+                {SHAPES.map(s => (
+                  <button key={s.id} className="rp-tpl" data-template={`own:${s.id}`} onClick={() => start(`own:${s.id}`)}>
+                    <div className="th"><OnScreen><ReportView report={makeShape(s.id)} brand={brand} handle={handle} logo={logo} media={{}} /></OnScreen></div>
+                    <b>{s.name}</b><span>{s.note}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          </div>
+  )
   return (
     <main className="rp-page">
       <style>{`
         .rp-page { height: 100vh; display: grid; grid-template-rows: 56px 1fr; background: ${SURFACE_BASE}; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; overflow: hidden; }
         .rp-page * { box-sizing: border-box; }
-        .rp-top { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid ${DS_BORDER}; min-width: 0; }
+        .rp-top { position: relative; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid ${DS_BORDER}; min-width: 0; }
+        .rp-name { display: flex; flex-direction: column; justify-content: center; min-width: 0; flex: 0 1 320px; }
+        .rp-name .rp-title { flex: none; width: 100%; height: 26px; padding: 0 6px; }
+        .rp-name .rp-status { padding: 0 7px; min-height: 18px; }
+        .rp-dot { width: 7px; height: 7px; border-radius: 50%; background: ${TEXT_MUTED}; flex-shrink: 0; } .rp-dot.ok { background: #3fb950; } .rp-dot.busy { background: #e3b341; } .rp-dot.bad { background: ${DS_ERROR}; }
+        .rp-link { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border: none; border-radius: 10px; background: none; color: ${TEXT_MUTED}; font: 500 14px 'Inter', sans-serif; cursor: pointer; white-space: nowrap; }
+        .rp-link:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
+        .rp-show-sm { display: none; }
+        .rp-icon.ghost { border-color: transparent; background: none; }
+        @media (min-width: 1100px) { .rp-fd { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0 !important; } }
+        .rp-dock { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; }
+        .rp-phone-rail { display: none !important; }
+        .rp-sizes { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 4; }
+        .rp-dock-t { font: 600 13px 'Inter', sans-serif; padding: 0 6px; white-space: nowrap; }
+        .rp-sizes .st-btn { width: auto; padding: 0 8px; }
+        .rp-glow { position: absolute; border: 2px solid ${ACCENT_SOLID}; border-radius: 4px; pointer-events: none; transition: all .18s cubic-bezier(.2,.8,.2,1); box-shadow: 0 0 0 9999px rgba(10,11,14,.18); }
+        .rp-glow span { position: absolute; left: -2px; top: -24px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; padding: 3px 7px; border-radius: 5px; white-space: nowrap; }
+        .rp-bh { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; }
+        .rp-bico { width: 44px; height: 44px; border-radius: 12px; background: ${SURFACE_2}; display: grid; place-items: center; color: ${TEXT_PRIMARY}; flex-shrink: 0; }
+        .rp-big { margin: 4px 0 0; font: 400 26px/1.05 'Anton', 'Bebas Neue', sans-serif; letter-spacing: .01em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .rp-acts2 { display: grid; gap: 8px; margin-top: 18px; }
+        .rp-acts2 .rp-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .rp-act { height: 42px; border-radius: 10px; border: 1px solid ${DS_BORDER_STRONG}; background: none; color: ${TEXT_PRIMARY}; font: 600 13.5px 'Inter', sans-serif; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
+        .rp-act:hover { background: ${SURFACE_1}; } .rp-act.bad { color: ${DS_ERROR}; }
+        .rp-startrow { display: flex; gap: 14px; }
+        .rp-st { flex-shrink: 0; width: 118px; padding: 0; border: none; background: none; color: ${TEXT_PRIMARY}; text-align: left; cursor: pointer; }
+        .rp-st .th, .rp-st .ico { display: grid; place-items: center; width: 118px; height: 84px; border-radius: 10px; overflow: hidden; background: #0f1114; }
+        .rp-st .th svg { width: 100%; height: auto; align-self: start; }
+        .rp-st .ico { border: 1.5px dashed ${DS_BORDER_STRONG}; background: none; }
+        .rp-st .ico.lime { border-color: rgba(215,255,60,.6); color: ${ACCENT_SOLID}; }
+        .rp-st b { display: block; margin-top: 7px; font: 600 12.5px 'Inter', sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .rp-st:hover .th, .rp-st:hover .ico { outline: 2px solid ${DS_BORDER_STRONG}; outline-offset: 2px; }
+        .rp-st:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 4px; border-radius: 10px; }
+        .rp-st.more { height: 84px; border: 1px solid ${DS_BORDER}; border-radius: 10px; display: grid; place-items: center; } .rp-st.more b { margin: 0; color: ${TEXT_MUTED}; }
+        .rp-all { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+        @media (max-width: 860px) { .lb-body { height: calc(100dvh - 64px); } }
+        ${STAGE_CSS}
         .rp-home { background: none; border: none; padding: 4px; cursor: pointer; display: flex; border-radius: 8px; }
         .rp-title { flex: 0 1 300px; min-width: 80px; height: 36px; background: transparent; border: 1px solid transparent; border-radius: 8px; color: ${TEXT_PRIMARY}; font: 600 15px 'Inter', sans-serif; padding: 0 10px; }
         .rp-title:hover { border-color: ${DS_BORDER}; } .rp-title:focus { outline: none; border-color: ${ACCENT_SOLID}; background: ${SURFACE_1}; }
@@ -616,7 +773,20 @@ export default function ReportPage() {
         .rp-menu { position: absolute; right: 0; top: 42px; z-index: 30; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER_STRONG}; border-radius: 12px; padding: 6px; min-width: 230px; box-shadow: 0 14px 40px rgba(0,0,0,.35); }
         .rp-menu button { display: flex; width: 100%; align-items: center; gap: 10px; background: none; border: none; color: ${TEXT_PRIMARY}; font: 500 13px 'Inter', sans-serif; padding: 9px 10px; border-radius: 8px; cursor: pointer; text-align: left; }
         .rp-menu button:hover { background: ${SURFACE_2}; } .rp-menu small { color: ${TEXT_MUTED}; margin-left: auto; }
-        .rp-body { display: grid; grid-template-columns: 84px 1fr 304px; min-height: 0; }
+        .rp-body { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+        .rp-body.side { grid-template-columns: 272px minmax(0, 1fr) 320px; }
+        .rp-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+        .rp-sidebtn { width: 36px; height: 36px; border: 0; border-radius: 10px; background: none; color: ${TEXT_MUTED}; display: grid; place-items: center; cursor: pointer; flex: none; }
+        .rp-sidebtn:hover, .rp-sidebtn[aria-pressed="true"] { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
+        .rp-bbar { position: absolute; z-index: 7; }
+        .rp-pbar { display: flex; align-items: center; gap: 2px; padding: 6px; border-radius: 14px; background: rgba(24,26,31,.94); border: 1px solid ${DS_BORDER_STRONG}; box-shadow: 0 10px 30px rgba(0,0,0,.45); white-space: nowrap; }
+        .rp-pbar button { height: 36px; min-width: 36px; padding: 0 8px; border: 0; border-radius: 9px; background: none; color: ${TEXT_PRIMARY}; display: grid; place-items: center; cursor: pointer; font: 600 13.5px 'Inter', sans-serif; }
+        .rp-pbar button:hover { background: ${SURFACE_2}; }
+        .rp-pbar .rp-pbar-go { color: ${ACCENT_TEXT}; padding: 0 10px; }
+        .rp-pbar-sep { width: 1px; height: 22px; background: ${DS_BORDER_STRONG}; margin: 0 4px; }
+        .rp-sum { margin: 0 0 12px; font-size: 14px; color: ${TEXT_PRIMARY}; }
+        .rp-layout { margin-top: 22px; padding-top: 16px; border-top: 1px solid ${DS_BORDER}; }
+        .rp-btn.rp-line { border-color: ${ACCENT_SOLID}; color: ${ACCENT_TEXT}; background: transparent; }
         .rp-rail { border-right: 1px solid ${DS_BORDER}; padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
         .rp-rail-cap { font: 700 12px 'Inter', sans-serif; letter-spacing: .16em; color: ${TEXT_MUTED}; text-align: center; margin: 4px 0 4px; }
         .rp-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 7px; border-radius: 10px; border: 1px solid transparent; background: none; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; cursor: pointer; position: relative; }
@@ -631,7 +801,7 @@ export default function ReportPage() {
         .rp-zoom button { width: 28px; height: 28px; border-radius: 8px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: #f5f5f7; display: grid; place-items: center; cursor: pointer; }
         .rp-insp { border-left: 1px solid ${DS_BORDER}; padding: 16px; overflow-y: auto; min-height: 0; }
         .rp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; } .rp-head .rp-cap { margin: 0; }
-        .rp-cap { font-size: 12px; letter-spacing: .14em; font-weight: 700; color: ${TEXT_MUTED}; margin: 0 0 12px; }
+        .rp-cap { font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; margin: 0 0 12px; }
         .rp-row { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; min-width: 0; }
         .rp-lab { font-size: 12px; color: ${TEXT_MUTED}; }
         .rp-two { display: grid; grid-template-columns: 76px 1fr; gap: 10px; }
@@ -691,9 +861,9 @@ export default function ReportPage() {
         .tm-names { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; align-items: flex-start; } .tm-names .rp-inp { font-size: 13px; }
         .tm-squad { display: flex; gap: 6px; align-items: center; width: 100%; } .tm-squad select { flex: 1; }
         .rp-fd { margin-left: 4px; } .rp-fd button { padding: 6px 14px; font-weight: 600; }
-        .rp-fill { display: grid; grid-template-columns: 560px minmax(0, 1fr); min-height: 0; }
+        .rp-fill { display: grid; grid-template-columns: 440px minmax(0, 1fr); min-height: 0; }
         .rp-fill-form { overflow-y: auto; padding: 16px 18px 40px; border-right: 1px solid ${DS_BORDER}; min-height: 0; }
-        .rp-fill-card { display: flex; padding: 24px; background: #101114; min-width: 0; min-height: 0; overflow: auto; } .rp-fill-card .rp-wrap { margin: auto; }
+        .rp-fill-card { position: relative; display: flex; padding: 40px 24px 84px; background: #101114; min-width: 0; min-height: 0; overflow: auto; } .rp-fill-card .rp-wrap { margin: auto; }
         .rp-box { border: 1px solid ${DS_BORDER}; border-radius: 12px; padding: 10px 10px 2px; margin-bottom: 10px; }
         .rp-tpls.small { grid-template-columns: repeat(auto-fill, minmax(170px, 210px)); }
         .rp-start { overflow-y: auto; padding: 40px 32px; }
@@ -710,6 +880,10 @@ export default function ReportPage() {
         .rp-tpl .rp-by { display: block; margin: 0 4px 8px; font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .04em; color: ${TEXT_MUTED}; }
         .rp-tpl b { display: block; font-size: 15px; margin: 12px 4px 4px; } .rp-tpl span { display: block; font-size: 12.5px; color: ${TEXT_MUTED}; margin: 0 4px 6px; line-height: 1.45; }
         .rp-banner { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 20; background: ${SURFACE_1}; border: 1px solid ${DS_ERROR}; border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.4); max-width: calc(100% - 24px); }
+        .rp-mine { position: relative; }
+        .rp-mine .rp-tpl { width: 100%; }
+        .rp-mine-x { position: absolute; top: 8px; right: 8px; background: rgba(12,14,18,.8) !important; }
+        .rp-startbtns { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
         .rp-scrim { position: fixed; inset: 0; background: ${SCRIM}; z-index: 50; display: grid; place-items: center; padding: 20px; }
         .rp-modal { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER_STRONG}; border-radius: 18px; width: min(860px, 100%); max-height: 82vh; display: flex; flex-direction: column; }
         .rp-modal header { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid ${DS_BORDER}; font-weight: 700; }
@@ -721,7 +895,7 @@ export default function ReportPage() {
         .rp-busy { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 55; display: grid; place-items: center; color: #fff; font: 600 14px 'Inter', sans-serif; }
         .rp-spin { animation: rpSpin 1s linear infinite; } @keyframes rpSpin { to { transform: rotate(360deg); } }
         @media (prefers-reduced-motion: reduce) { .rp-spin { animation: none; } .rp-tpl { transition: none; } }
-        @media (max-width: 1100px) { .rp-body { grid-template-columns: 76px 1fr 270px; } .rp-hide-md { display: none; } }
+        @media (max-width: 1100px) { .rp-body, .rp-body.side { grid-template-columns: 1fr 280px; } .rp-body .sd, .rp-sidebtn { display: none; } .rp-hide-md { display: none; } }
         @media (max-width: 700px) {
           .rp-fill-form { padding: 0; }
           .rp-top .rp-icon, .rp-top .rp-home { width: 42px; height: 42px; } .rp-top .rp-btn { min-height: 42px; } .rp-fd button { min-height: 38px; }
@@ -731,34 +905,42 @@ export default function ReportPage() {
         @media (max-width: 860px) {
           .rp-page { height: auto; min-height: 100vh; overflow: visible; grid-template-rows: auto auto; }
           .rp-top { flex-wrap: wrap; padding: 8px 12px; row-gap: 8px; } .rp-title { flex: 1 1 0; min-width: 0; } .rp-top .rp-sp { flex: 0 0 100%; height: 0; }
-          .rp-body { grid-template-columns: 1fr; } .rp-rail { flex-direction: row; border-right: none; border-bottom: 1px solid ${DS_BORDER}; overflow-x: auto; } .rp-tool { min-width: 64px; } .rp-rail-cap { display: none; }
+          .rp-dock { display: none; } .rp-phone-rail { display: flex !important; } .rp-show-sm { display: inline; } .rp-link { padding: 0 10px; } .rp-name { flex: 1 1 0; }
+          .rp-bbar { display: none; }
+          .rp-body, .rp-body.side { grid-template-columns: 1fr; } .rp-rail { flex-direction: row; border-right: none; border-bottom: 1px solid ${DS_BORDER}; overflow-x: auto; } .rp-tool { min-width: 64px; } .rp-rail-cap { display: none; }
           .rp-mid { height: 92vw; max-height: 72vh; } .rp-insp { border-left: none; border-top: 1px solid ${DS_BORDER}; } .rp-hide-sm { display: none; }
           .rp-fill { grid-template-columns: 1fr; } .rp-fill-form { border-right: none; }
         }
         @media (pointer: coarse) { .rp-tool kbd { display: none; } }
       `}</style>
 
-      <header className="rp-top">
+      {!(phase === "start" && user) && <header className="rp-top">
+        {phase === "ready" && view === "design" && <button className="rp-sidebtn" aria-label={sideOpen ? "Hide blocks and Library" : "Show blocks and Library"} aria-pressed={sideOpen} title="Blocks and Library" onClick={() => setSideOpen(v => !v)}><PanelLeft size={18} /></button>}
         <button className="rp-home" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
+        <div className="rp-name">
         <input className="rp-title" aria-label="Report title" value={title} maxLength={80} placeholder={pieceName("Report", "", headlineOf(report), made.current)} onChange={e => setTitle(e.target.value)} />
         <span className={`rp-status${failed || status === "error" || status === "conflict" || status === "offline" ? " bad" : ""}`} aria-live="polite">
+          <i className={`rp-dot${failed || status === "error" || status === "conflict" || status === "offline" ? " bad" : upCount || status === "saving" ? " busy" : status === "saved" ? " ok" : ""}`} aria-hidden="true" />
           {status === "conflict" ? "Changed in another tab"
             : status === "offline" ? <>Offline: kept here <button onClick={() => save()}>Retry</button></>
               : failed || status === "error" ? <>Not saved <button onClick={retry}>Retry</button></>
                 : upCount ? <><Loader2 size={13} className="rp-spin" /> Uploading {upCount === 1 ? "photo" : `${upCount} photos`}…</>
-                  : status === "saving" ? "Saving…" : status === "saved" ? "Saved" : ""}
+                  : status === "saving" ? "Saving…" : status === "saved" ? "Saved" : phase === "start" ? "Not saved yet" : "Saved"}
         </span>
+        </div>
         {phase === "ready" && report.fill && <div className="rp-seg rp-fd" role="group" aria-label="Fill or design">
           <button className={view === "fill" ? "on" : ""} aria-pressed={view === "fill"} onClick={() => { setView("fill"); setModeState({ kind: "page" }); setSel({ bid: null, mid: null }) }}>Fill</button>
           <button className={view === "design" ? "on" : ""} aria-pressed={view === "design"} onClick={() => setView("design")}>Design</button>
         </div>}
         <span className="rp-sp" />
-        <button className="rp-icon" onClick={undo} disabled={!past.current.length} aria-label="Undo" title="Undo (Ctrl Z)"><Undo2 size={16} /></button>
-        <button className="rp-icon" onClick={redo} disabled={!future.current.length} aria-label="Redo" title="Redo (Ctrl Shift Z)"><Redo2 size={16} /></button>
-        <button className="rp-btn" onClick={openList}><FolderOpen size={15} /><span className="rp-hide-sm">My reports</span></button>
-        <button className="rp-btn" onClick={() => navigate("/report")} aria-label="New report"><Plus size={15} /><span className="rp-hide-sm">New</span></button>
+        <button className="rp-link" onClick={() => navigate("/report")} aria-label="My reports"><FolderOpen size={15} className="rp-show-sm" /><span className="rp-hide-sm">My reports</span></button>
+        <button className="rp-link" onClick={() => navigate("/report")} aria-label="New report"><Plus size={15} className="rp-show-sm" /><span className="rp-hide-sm">New</span></button>
+        {phase === "ready" && <>
+          <button className="rp-icon ghost" onClick={undo} disabled={!past.current.length} aria-label="Undo" title="Undo (Ctrl Z)"><Undo2 size={16} /></button>
+          <button className="rp-icon ghost" onClick={redo} disabled={!future.current.length} aria-label="Redo" title="Redo (Ctrl Shift Z)"><Redo2 size={16} /></button>
+        </>}
         <div style={{ position: "relative" }} data-export>
-          <button className="rp-btn pri" disabled={phase !== "ready" || !!busy} onClick={() => setExportOpen(o => !o)} aria-expanded={exportOpen}><Download size={15} /> Export</button>
+          {phase === "ready" && <button className="rp-btn pri" disabled={!!busy} onClick={() => setExportOpen(o => !o)} aria-expanded={exportOpen}><Download size={15} /> Export</button>}
           {exportOpen && (
             <div className="rp-menu" role="menu">
               <button role="menuitem" onClick={() => doExport("png")}>PNG<small>{W} × {H}</small></button>
@@ -767,7 +949,7 @@ export default function ReportPage() {
             </div>
           )}
         </div>
-      </header>
+      </header>}
 
       {phase === "missing" ? (
         <div style={{ display: "grid", placeItems: "center", textAlign: "center", padding: 30 }}>
@@ -781,46 +963,45 @@ export default function ReportPage() {
           </div>
         </div>
       ) : phase === "start" ? (
-        <div className="rp-start">
-          <h1>Start a match report</h1>
-          <p>Pick a starting point. Every word, block and colour can be changed, moved or deleted.</p>
-          {lastGame && <button className="rp-btn pri" style={{ marginBottom: 22 }} onClick={() => start("next")}><Plus size={15} /> Start from your last Game Report</button>}
-          <p className="rp-cap" style={{ marginBottom: 12 }}>PITCHSTUDIO TEMPLATES · {TEMPLATES.filter(t => t.id !== "blank").length}</p>
-          <div className="rp-tpls">
-            {TEMPLATES.filter(t => t.id !== "blank").map(t => (
-              <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
-                <div className="th" style={{ aspectRatio: t.id === "journal" ? "16 / 9" : t.id === "game" || t.id === "formation" ? "4 / 5" : "1" }}><OnScreen><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></div>
-                <b>{t.name} <i className="rp-def">Default</i></b><span>{t.note}</span><small className="rp-by">Example by @{SAMPLES_BY} · {SAMPLES_AS_OF}</small>
-              </button>
-            ))}
-          </div>
-          <section className="rp-own" aria-labelledby="rp-own-h">
-            <h2 id="rp-own-h">Create your own</h2>
-            <p>Start from a shape. Every block already holds an example, so there's always something to change: add a pitch, numbers, a timeline, a photo, anything.</p>
-            <div className="rp-tpls small">
-              {SHAPES.map(s => (
-                <button key={s.id} className="rp-tpl" data-template={`own:${s.id}`} onClick={() => start(`own:${s.id}`)}>
-                  <div className="th"><OnScreen><ReportView report={makeShape(s.id)} brand={brand} handle={handle} logo={logo} media={{}} /></OnScreen></div>
-                  <b>{s.name}</b><span>{s.note}</span>
+        user ? <Library userId={user.id} brand={brand} handle={handle} logo={logo} say={say} onOpen={id => navigate(`/report?open=${id}`)} onNew={() => setAllOpen(true)} onKnown={setKnown}
+          empty={picker} start={
+            <div className="rp-startrow">
+              <button className="rp-st" onClick={() => start("own:blank")}><span className="ico"><Plus size={22} /></span><b>Blank page</b></button>
+              <button className="rp-st" onClick={() => setNotesOpen(true)}><span className="ico lime"><Type size={22} /></span><b>Paste your notes</b></button>
+              {mine.slice(0, 3).map(t => (
+                <button key={t.id} className="rp-st" data-mine={t.id} onClick={() => startWith(fromMine(t), "mine")}>
+                  <span className="th"><OnScreen><ReportView report={t.data} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></span><b>{t.name}</b>
                 </button>
               ))}
-            </div>
-          </section>
-        </div>
+              {TEMPLATES.filter(t => t.id !== "blank").slice(0, 4).map(t => (
+                <button key={t.id} className="rp-st" data-template={t.id} onClick={() => start(t.id)}>
+                  <span className="th"><OnScreen><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></span><b>{t.name}</b>
+                </button>
+              ))}
+              <button className="rp-st more" onClick={() => setAllOpen(true)}><b>More templates ›</b></button>
+            </div>} />
+          : picker
       ) : view === "fill" && report.fill ? (
         <div className="rp-fill">
           <div className="rp-fill-form">
             <FillForm club={club} report={report} fill={report.fill} set={setFill} begin={begin} end={end} unlock={sec => change(r => unlockSection(r, sec))} phone={phone} title={title}
               preview={<ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} />}
               full={<ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} />}
-              onDesign={() => setView("design")} onToGame={report.fill.template === "journal" ? toGame : undefined} />
+              onDesign={() => setView("design")} onToGame={report.fill.template === "journal" ? toGame : undefined} onStep={setFillStep} />
           </div>
-          {!phone && <div className="rp-fill-card"><div className="rp-wrap" style={{ width: `min(100%, calc((100vh - 120px) * ${W / H}))` }}><ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} svgRef={svgRef} /></div></div>}
+          {!phone && <div className="rp-fill-card">
+            <div className="rp-wrap" style={{ width: `min(100%, calc((100vh - 170px) * ${W / H}))`, position: "relative" }}>
+              <ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} svgRef={svgRef} />
+              <SectionGlow section={fillStep} report={report} name={fillStep ? (({ match: "The match", headline: "Headline", state: "Game state", shape: "Shape and players", idea: "The idea", situations: "Key situations", balance: "Balance", report: "The report" } as Record<string, string>)[fillStep] ?? "") : ""} />
+            </div>
+            <div className="rp-sizes"><Dock groups={[FORMATS.map((f): DockItem => ({ id: f.id, icon: <span className="rp-dock-t">{f.name}</span>, label: `Page size: ${f.name}`, pressed: report.format === f.id, onClick: () => reformat(f.id) }))]} /></div>
+          </div>}
           {phone && <div style={{ position: "fixed", left: -99999, top: 0, width: 400 }} aria-hidden="true"><ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} svgRef={svgRef} /></div>}
         </div>
       ) : (
-        <div className="rp-body">
-          <nav className="rp-rail" aria-label={mode.kind === "pitch" ? "Pitch tools" : "Add"}>
+        <div className={`rp-body${sideOpen ? " side" : ""}`}>
+          <h1 className="rp-sr">Match report editor</h1>
+          <nav className="rp-rail rp-phone-rail" aria-label={mode.kind === "pitch" ? "Pitch tools" : "Add"}>
             {mode.kind === "pitch" ? <>
               <div className="rp-rail-cap">PITCH</div>
               {TOOLS.map(t => (
@@ -835,6 +1016,8 @@ export default function ReportPage() {
               <button className="rp-tool" onClick={() => navigate("/report")} title="A new report from a template (this one stays in My reports)"><LayoutTemplate size={18} />New</button>
             </>}
           </nav>
+          {sideOpen && <Side userId={user?.id ?? null} report={report} selId={sel.bid} brand={brand} say={say}
+            onSelect={bid => { setModeState({ kind: "page" }); setSel({ bid, mid: null }) }} onAdd={it => addItem(it)} />}
           <div className="rp-mid">
             {status === "conflict" && (
               <div className="rp-banner" role="alert">
@@ -848,7 +1031,21 @@ export default function ReportPage() {
               onPickPhoto={bid => { fileFor.current = bid; fileRef.current?.click() }} onDropFiles={(files, at) => {
                 const slot = report.blocks.find(b => b.kind === "photo" && !b.src && at[0] >= b.x && at[0] <= b.x + (b as PhotoBlock).w && at[1] >= b.y && at[1] <= b.y + (b as PhotoBlock).h)
                 addPhotos(files, at, slot?.id ?? null)
-              }} hint={hint} issue={shownIssue} />
+              }} onDropItem={(json, at) => { try { addItem(JSON.parse(json) as LibItem, at) } catch { /* not ours */ } }}
+              bar={b => b.kind !== "pitch" ? null : (
+                <div className="rp-pbar" role="toolbar" aria-label="Board tools">
+                  {TOOLS.filter(t => ["select", "player", "opp", "pass", "run", "zone"].includes(t.id)).map(t => (
+                    <button key={t.id} aria-label={t.name} title={`${t.name} (${t.key})`} onClick={() => { setMode({ kind: "pitch", bid: b.id }); setTool(t.id) }}>{t.icon}</button>
+                  ))}
+                  <span className="rp-pbar-sep" />
+                  <button className="rp-pbar-go" onClick={() => setMode({ kind: "pitch", bid: b.id })}>Board tools</button>
+                </div>)}
+              hint={hint} issue={shownIssue} />
+            <div className="rp-dock">
+              {mode.kind === "pitch"
+                ? <Dock groups={[[TOOLS[0]], TOOLS.slice(1, 3), TOOLS.slice(3, 5), TOOLS.slice(5)].map(g => g.map((t): DockItem => ({ id: t.id, icon: t.icon, label: t.name, key: t.key, pressed: tool === t.id, onClick: () => { setTool(t.id); if (t.id !== "select") setSel({ bid: sel.bid, mid: null }) } })))} />
+                : <Dock groups={ADD_GROUPS.map(g => g.map((id): DockItem => { const a = ADD.find(x => x.id === id)!; return { id: a.id, icon: a.icon, label: `Add ${a.name.toLowerCase()}`, onClick: () => add(a.id) } }))} />}
+            </div>
             <div className="rp-zoom">
               <button aria-label="Zoom out" onClick={() => setZoom(z => Math.max(0.5, z / 1.2))}><ZoomOut size={14} /></button>
               <span style={{ width: 44, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
@@ -856,10 +1053,11 @@ export default function ReportPage() {
               <button aria-label="Fit" title="Fit the page" onClick={() => setZoom(1)}><Maximize size={14} /></button>
             </div>
           </div>
-          <Panel report={report} block={pitch ?? block} mark={mark} mode={mode} tool={tool} setReport={patch => change(r => ({ ...r, ...patch }))} setBlock={setBlock} setMark={setMark}
+          <Panel report={report} block={pitch ?? block} mark={mark} mode={mode} tool={tool} where={(pitch ?? block) ? `Block ${report.blocks.findIndex(x => x.id === (pitch ?? block)!.id) + 1}` : undefined} setReport={patch => change(r => ({ ...r, ...patch }))} setBlock={setBlock} setMark={setMark}
             begin={begin} end={end} textRef={textRef} nameRef={nameRef} act={act} reformat={reformat}
             team={{ setTeam, place: (i, f) => placeTeam(i, f), moment: setMoment, count: countTeam, namesText: teamNames, roster: teamRoster, lineup: teamLineup }}
-            storyAuto={cardColours(brand).disc} mine={brand.color2 ? [brand.color, brand.color2, "#e9b949"] : brand.color !== DEFAULT_BRAND.color ? [brand.color, cardColours(brand).bottom, "#e9b949"] : null} />
+            storyAuto={cardColours(brand).disc} mine={brand.color2 ? [brand.color, brand.color2, "#e9b949"] : brand.color !== DEFAULT_BRAND.color ? [brand.color, cardColours(brand).bottom, "#e9b949"] : null}
+            onSaveTemplate={user ? saveAsTemplate : undefined} />
         </div>
       )}
 
@@ -867,6 +1065,16 @@ export default function ReportPage() {
       <input ref={fileRef} id="rp-files" type="file" accept="image/png,image/jpeg,image/webp" multiple style={{ display: "none" }}
         onChange={e => { addPhotos([...(e.target.files ?? [])], undefined, fileFor.current); fileFor.current = null; e.target.value = "" }} />
 
+      {notesOpen && <PasteNotes brand={brand} handle={handle} logo={logo} known={known} issue={nextIssue} onClose={() => setNotesOpen(false)}
+        onUse={(r, layout) => { startWith(r, "notes"); (window as any).posthog?.capture("report_from_notes", { layout }) }} />}
+      {allOpen && (
+        <div className="rp-scrim" onClick={() => setAllOpen(false)}>
+          <div className="rp-modal rp-all" role="dialog" aria-label="All templates" onClick={e => e.stopPropagation()}>
+            <header>All templates<span className="rp-sp" /><button className="rp-icon" aria-label="Close" onClick={() => setAllOpen(false)}><X size={16} /></button></header>
+            <div style={{ overflowY: "auto", minHeight: 0 }}>{picker}</div>
+          </div>
+        </div>
+      )}
       {listOpen && (
         <div className="rp-scrim" onClick={() => setListOpen(false)}>
           <div className="rp-modal" role="dialog" aria-label="My reports" onClick={e => e.stopPropagation()}>

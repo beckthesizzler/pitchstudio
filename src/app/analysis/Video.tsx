@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Camera, ChevronLeft, ChevronRight, Diamond, FileVideo, Pause, Play, Plus, Trash2, Check } from "lucide-react"
 import { Marks } from "./Marks"
+import { exportStarted } from "../lib/telemetry"
 import { MAX_MOMENTS, exportFontCSS, newId, type Moment, type VideoProject } from "./model"
 import { mp4File } from "../lib/mp4"
 import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, ACCENT_SOLID, ACCENT_INK } from "../theme"
@@ -211,6 +212,7 @@ export function VideoStudio({ project, file, missing, editing, onChoose, onSet, 
     if (typeof VideoEncoder === "undefined") { say("Video export needs Chrome, Edge or Safari 16.4 or newer."); return }
     stop(); if (editing) onOpenMoment(null)
     cancel.current = false; setMaking({ done: 0 })
+    exportStarted("analysis", "mp4")
     const v = document.createElement("video")
     v.muted = true; v.preload = "auto"; v.src = url
     try {

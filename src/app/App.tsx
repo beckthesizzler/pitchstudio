@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react"
 import React from "react"
+import { exportStarted, toolOpened } from "./lib/telemetry"
 import { toPng, toJpeg, toBlob, toCanvas as nodeToCanvas, getFontEmbedCSS } from "html-to-image"
 import {
   MousePointer2, UserPlus, ArrowUpRight, Type, Pentagon,
@@ -2343,6 +2344,7 @@ function TemplateModal({
 
 /* ─────────────────────────── Tactics Board ─────────────────── */
 function TacticsBoard() {
+  useEffect(() => { toolOpened("board") }, [])
   const navigateBoard = useNavigate()
 
   /* ── Canvas elements ── */
@@ -4305,6 +4307,7 @@ function TacticsBoard() {
   }
   const doExport = async (fmt: "png" | "jpeg" | "pdf" | "copy") => {
     if (!pitchRef.current) return
+    exportStarted("board", fmt)
     const node = pitchRef.current
     const keepSelection = selection
     const name = (title.trim() || "PitchStudio board").replace(/[\\/:*?"<>|]+/g, "").slice(0, 80) // the file is named after the board
@@ -4408,6 +4411,7 @@ function TacticsBoard() {
   }
   /** Makes the move into a looping GIF or an MP4 video, frame by frame, exactly as the board shows it (the end card too) */
   const exportMotion = async (fmt: "gif" | "mp4") => {
+    exportStarted("board", fmt)
     const tl = timeline, node = pitchRef.current
     if (!tl || !node || making) return
     if (fmt === "mp4" && typeof VideoEncoder === "undefined") { setExportNote("Video needs Chrome, Edge or Safari. GIF works everywhere."); return }

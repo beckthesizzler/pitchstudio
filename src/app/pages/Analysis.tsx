@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useLocation, useNavigate } from "react-router"
+import { exportStarted, toolOpened } from "../lib/telemetry"
 import { ChevronLeft, ChevronRight, Circle, Clapperboard, Copy, Download, FolderOpen, ImagePlus, Images, Loader2, Maximize, MousePointer2, MoveUpRight, PanelLeft, Pentagon, Plus, Redo2, Slash, Tag as TagIcon, Trash2, Type, Undo2, X, Flashlight, ZoomIn, ZoomOut } from "lucide-react"
 import { ExampleShot } from "../analysis/Example"
 import { supabase } from "../lib/supabase"
@@ -52,6 +53,7 @@ const BY_KEY: Record<string, Tool> = { v: "select", t: "tag", s: "spot", z: "zon
 type Row = { id: string; title: string; updated_at: string; data: unknown }
 
 export default function AnalysisPage() {
+  useEffect(() => { toolOpened("analysis") }, [])
   const navigate = useNavigate()
   const loc = useLocation()
   const openId = new URLSearchParams(loc.search).get("open")
@@ -435,6 +437,7 @@ export default function AnalysisPage() {
   const doExport = async (what: "png" | "jpg" | "all" | "grid" | "copy") => {
     setExportOpen(false)
     if (!shot || busy) return
+    exportStarted("analysis", what)
     const keep = cur, keepSel = sel
     setSel(null)
     try {

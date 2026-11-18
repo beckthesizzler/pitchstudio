@@ -16,6 +16,23 @@ export function track(event: string, props?: Props) {
   try { ph()?.capture?.(event, props) } catch { /* analytics must never break the app */ }
 }
 
+/* The scoreboard: how long from opening a tool to its first export. tool_opened when a tool opens, export_started when you
+   export, carrying the seconds since that tool opened, and first_export the first time you ever export from that tool
+   (kept in this browser). In PostHog: a funnel tool_opened → export_started, and the median of seconds_since_open. */
+const openedAt = new Map<string, number>()
+export function toolOpened(tool: string) {
+  openedAt.set(tool, Date.now())
+  track("tool_opened", { tool })
+}
+export function exportStarted(tool: string, format: string) {
+  const t0 = openedAt.get(tool), seconds = t0 ? Math.round((Date.now() - t0) / 1000) : null
+  track("export_started", { tool, format, seconds_since_open: seconds })
+  try {
+    const key = `ps-exported-${tool}`
+    if (!localStorage.getItem(key)) { localStorage.setItem(key, "1"); track("first_export", { tool, format, seconds_since_open: seconds }) }
+  } catch { /* private mode: no first-export marker */ }
+}
+
 const seen = new Map<string, number>()
 let sent = 0
 const LIMIT = 20 // per page load, so one broken loop cannot flood your analytics

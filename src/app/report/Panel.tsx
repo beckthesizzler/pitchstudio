@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type RefObject } from "react"
-import { AlignCenterHorizontal, AlignCenterVertical, ArrowDownToLine, ArrowUpToLine, CopyPlus, Crop, FlipHorizontal2, ImagePlus, Trash2 } from "lucide-react"
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react"
+import { Activity, AlignCenterHorizontal, AlignCenterVertical, ArrowDownToLine, ArrowUpToLine, BarChart3, CopyPlus, Crop, FlipHorizontal2, Gauge, Hash, ImagePlus, LayoutGrid, Lightbulb, ListOrdered, Square, Trash2, Type } from "lucide-react"
 import { FORMATS, MAX_POINTS, MAX_ROWS, PAPERS, defaultRoles, newId, type Block, type ClubPalette, type Mark, type Report } from "./model"
 import { dialScore, dialTilt } from "./Draw"
 import { eventText, parseEvent } from "./fill"
@@ -12,9 +12,21 @@ import { Row, Seg, Toggle } from "./ui"
 /* The panel on the right: everything about what is selected (or the page, when nothing is).
    Typing and sliders count as one change each for Undo: begin() when you start, end() when you finish. */
 
+export const KIND_ICON: Partial<Record<Block["kind"], ReactNode>> = { text: <Type size={19} />, pitch: <Square size={19} />, stats: <BarChart3 size={19} />, story: <ListOrdered size={19} />, photo: <ImagePlus size={19} />, series: <Hash size={19} />, timeline: <Activity size={19} />, idea: <Lightbulb size={19} />, dial: <Gauge size={19} /> }
+/** The selected block's name, big at the top of the panel: its own words where it has them */
+export function bigName(b: Block): string {
+  const first = (t: string) => t.split(String.fromCharCode(10))[0].trim().slice(0, 40)
+  switch (b.kind) {
+    case "text": return first(b.text)
+    case "dial": return `${dialScore(b.value)} of 10`
+    case "story": case "idea": return first(b.title)
+    default: return ""
+  }
+}
+
 export const STORY_COLOURS = ["#d7ff3c", "#ff4d5e", "#38bdf8", "#fbbf24", "#f472b6", "#a78bfa", "#22c55e", "#ffffff"]
 const TEXT_COLOURS: [string, string][] = [["ink", "Ink"], ["story", "Story"], ["muted", "Quiet"], ["#ffffff", "White"]]
-const NAMES: Record<Block["kind"], string> = { text: "Text", pitch: "Pitch", stats: "Key stats", story: "Story", photo: "Photo", series: "Series line", timeline: "Timeline", idea: "The idea", dial: "Balance dial", cards: "Player cards", lines: "Lines", spine: "Spine", shape: "Shape" }
+export const NAMES: Record<Block["kind"], string> = { text: "Text", pitch: "Pitch", stats: "Key stats", story: "Story", photo: "Photo", series: "Series line", timeline: "Timeline", idea: "The idea", dial: "Balance dial", cards: "Player cards", lines: "Lines", spine: "Spine", shape: "Shape" }
 /** The palettes to start from: [name, primary, secondary, accent]. "Your colours" comes from your Creator Card. */
 const MONO: [string, string, string, string] = ["Mono", "#121316", "#6b6e76", "#e9b949"]
 /** Inks for hand-written words and drawn lines */
@@ -36,10 +48,12 @@ export type PanelProps = {
   report: Report; block: Block | null; mark: Mark | null; mode: Mode; tool: PitchTool
   setReport: (patch: Partial<Report>) => void; setBlock: (patch: Partial<Block>, live?: boolean) => void; setMark: (patch: Partial<Mark>, live?: boolean) => void
   begin: () => void; end: () => void; textRef: RefObject<HTMLTextAreaElement | null>; nameRef: RefObject<HTMLInputElement | null>
+  where?: string // "Block 3": shown beside the block's kind
   act: (what: "dup" | "del" | "front" | "back" | "centre" | "middle" | "pitch" | "crop" | "done" | "photo" | "fitphoto" | "delmark" | "view" | "look" | "dir", arg?: string) => void
   team: Pick<TeamsProps, "setTeam" | "place" | "moment" | "count" | "namesText" | "roster" | "lineup">; reformat: (f: Report["format"]) => void
   storyAuto: string
   mine?: [string, string, string] | null // your card's colours
+  onSaveTemplate?: () => void // keep this layout in Start new
 }
 
 export function Panel(P: PanelProps) {
@@ -68,14 +82,17 @@ export function Panel(P: PanelProps) {
     </div>
   )
   const arrange = (
-    <div className="rp-acts">
-      <button className="rp-icon" onClick={() => P.act("dup")} aria-label="Duplicate" title="Duplicate (Ctrl D)"><CopyPlus size={16} /></button>
-      <button className="rp-icon" onClick={() => P.act("front")} aria-label="Bring to front" title="Bring to front"><ArrowUpToLine size={16} /></button>
-      <button className="rp-icon" onClick={() => P.act("back")} aria-label="Send to back" title="Send to back"><ArrowDownToLine size={16} /></button>
-      <button className="rp-icon" onClick={() => P.act("centre")} aria-label="Centre on the page" title="Centre on the page"><AlignCenterVertical size={16} /></button>
-      <button className="rp-icon" onClick={() => P.act("middle")} aria-label="Middle of the page" title="Middle of the page"><AlignCenterHorizontal size={16} /></button>
-      <span className="rp-sp" />
-      <button className="rp-icon bad" onClick={() => P.act("del")} aria-label="Delete" title="Delete (Del)"><Trash2 size={16} /></button>
+    <div className="rp-acts2">
+      <div className="rp-two">
+        <button className="rp-act" onClick={() => P.act("dup")} title="Duplicate (Ctrl D)"><CopyPlus size={15} /> Duplicate</button>
+        <button className="rp-act bad" onClick={() => P.act("del")} title="Delete (Del)"><Trash2 size={15} /> Delete</button>
+      </div>
+      <div className="rp-acts">
+        <button className="rp-icon" onClick={() => P.act("front")} aria-label="Bring to front" title="Bring to front"><ArrowUpToLine size={16} /></button>
+        <button className="rp-icon" onClick={() => P.act("back")} aria-label="Send to back" title="Send to back"><ArrowDownToLine size={16} /></button>
+        <button className="rp-icon" onClick={() => P.act("centre")} aria-label="Centre on the page" title="Centre on the page"><AlignCenterVertical size={16} /></button>
+        <button className="rp-icon" onClick={() => P.act("middle")} aria-label="Middle of the page" title="Middle of the page"><AlignCenterHorizontal size={16} /></button>
+      </div>
     </div>
   )
 
@@ -128,6 +145,14 @@ export function Panel(P: PanelProps) {
       </div>
     )
   }
+
+  const saveLayout = P.onSaveTemplate && (
+    <div className="rp-layout">
+      <p className="rp-cap">THIS LAYOUT</p>
+      <button className="rp-btn wide rp-line" onClick={P.onSaveTemplate}>Save as my template</button>
+      <p className="rp-note">It joins Start new with your blocks and colours, and empty words.</p>
+    </div>
+  )
 
   /* ── nothing selected: the page ── */
   if (!b) {
@@ -185,6 +210,7 @@ export function Panel(P: PanelProps) {
             <input type="color" className="rp-sw rp-any" aria-label={k === "ours" ? "Our actions" : "Their actions"} value={report.actions![k]} onFocus={begin} onBlur={end}
               onChange={e => P.setReport({ actions: { ...report.actions!, [k]: e.target.value.toLowerCase() } })} />{k === "ours" ? "Our actions" : "Their actions"}</label>)}
         </div>}
+        {saveLayout}
         <Row label="Your seal"><Seg label="Seal corner" value={report.seal} options={[["tl", "↖"], ["tr", "↗"], ["bl", "↙"], ["br", "↘"]]} set={v => P.setReport({ seal: v })} /></Row>
         <button className="rp-keysbtn" aria-expanded={showKeys} onClick={() => setShowKeys(v => !v)}><span aria-hidden="true">?</span> Keyboard shortcuts</button>
         {showKeys && <div className="rp-keys">
@@ -197,7 +223,13 @@ export function Panel(P: PanelProps) {
   /* ── a block ── */
   return (
     <div className="rp-insp" aria-label={NAMES[b.kind]}>
-      <p className="rp-cap">{NAMES[b.kind].toUpperCase()}</p>
+      <div className="rp-bh">
+        <span className="rp-bico" aria-hidden="true">{KIND_ICON[b.kind] ?? <LayoutGrid size={19} />}</span>
+        <div style={{ minWidth: 0 }}>
+          <p className="rp-cap" style={{ margin: 0 }}>{NAMES[b.kind]}{P.where ? ` · ${P.where}` : ""}</p>
+          <p className="rp-big">{bigName(b) || NAMES[b.kind]}</p>
+        </div>
+      </div>
       {b.kind === "text" && <>
         <Row label="Words"><textarea ref={P.textRef} id="rp-text" aria-label="Words" className="rp-inp" rows={b.style === "title" ? 2 : 4} value={b.text} maxLength={600} onFocus={begin} onBlur={end} onChange={e => P.setBlock({ text: e.target.value }, true)} /></Row>
         <Row label="Style"><Seg label="Text style" value={b.style} options={[["title", "Headline"], ["text", "Text"], ["label", "Label"]]} set={v => P.setBlock({ style: v, size: v === "title" ? Math.max(b.size, 64) : v === "label" ? Math.min(b.size, 22) : Math.min(Math.max(b.size, 18), 40) })} /></Row>
@@ -226,8 +258,14 @@ export function Panel(P: PanelProps) {
         {b.rot !== 0 && <button className="rp-btn sm" onClick={() => P.setBlock({ rot: 0 })}>Straighten ({Math.round(b.rot)}°)</button>}
       </>}
       {b.kind === "pitch" && <>
-        <button className="rp-btn pri wide" onClick={() => P.act("pitch")}>Edit players and passes</button>
-        <p className="rp-note">Or double-click the pitch.</p>
+        <p className="rp-cap">ON THIS PITCH</p>
+        <p className="rp-sum">{(() => {
+          const n = (k: string) => b.marks.filter(m => m.kind === k).length, pl = n("player"), ps = b.marks.filter(m => m.kind === "pass").length, z = n("zone")
+          const parts = [pl && `${pl} player${pl === 1 ? "" : "s"}`, ps && `${ps} arrow${ps === 1 ? "" : "s"}`, z && `${z} zone${z === 1 ? "" : "s"}`].filter(Boolean)
+          return parts.length ? parts.join(" · ") : "Nothing yet"
+        })()}</p>
+        <button className="rp-btn pri wide" onClick={() => P.act("pitch")}>Open the Board tools</button>
+        <p className="rp-note">Or double-click the pitch to draw with them.</p>
         <p className="rp-cap" style={{ marginTop: 16 }}>TEAMS</p>
         <Teams b={b} storyAuto={P.storyAuto} begin={begin} end={end} setBlock={P.setBlock} {...P.team} />
         <p className="rp-cap" style={{ marginTop: 20 }}>PITCH</p>
@@ -373,6 +411,7 @@ export function Panel(P: PanelProps) {
       </>}
       {b.slot && b.kind !== "pitch" && b.locked && <p className="rp-note">Edited here, so the Fill form leaves this alone.</p>}
       {arrange}
+      {saveLayout}
     </div>
   )
 }

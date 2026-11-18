@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import type { Brand } from "../brand/brand"
 import { ReportView, blockBox, passGround, pathOf } from "./Draw"
 import { SIZES, mid, newId, projector, type Block, type Mark, type Pass, type PhotoBlock, type PitchBlock, type Pt, type Report } from "./model"
@@ -12,6 +12,8 @@ export type Mode = { kind: "page" } | { kind: "pitch"; bid: string } | { kind: "
 export type PitchTool = "select" | "player" | "opp" | "pass" | "run" | "pin" | "zone" | "ball"
 
 const V = "#d7ff3c" // the editor's own colour for selection and guides
+/** the drag type of a Library item (a board, a freeze-frame, a note) */
+export const ITEM = "application/x-pitchstudio-item"
 const rad = (d: number) => (d * Math.PI) / 180
 const rot = (q: Pt, a: number): Pt => [q[0] * Math.cos(a) - q[1] * Math.sin(a), q[0] * Math.sin(a) + q[1] * Math.cos(a)]
 const sub = (a: Pt, b: Pt): Pt => [a[0] - b[0], a[1] - b[1]]
@@ -96,12 +98,22 @@ type Drag =
   | { t: "newzone"; bid: string; a: Pt; b: Pt }
   | { t: "crop"; bid: string; start: Pt; orig: PhotoBlock }
 
-export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, setMode, tool, apply, begin, end, zoom, setZoom, svgRef, onEditText, onPickPhoto, onDropFiles, hint, issue }: {
+/** The page's 8 columns: an 80 margin and a 24 gutter at 1600 wide, in proportion at every format */
+export function columns(W: number) {
+  const k = W / 1600, M = 80 * k, G = 24 * k, cw = (W - 2 * M - 7 * G) / 8
+  return Array.from({ length: 8 }, (_, i) => ({ x: M + i * (cw + G), w: cw }))
+}
+
+export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, setMode, tool, apply, begin, end, zoom, setZoom, svgRef, onEditText, onPickPhoto, onDropFiles, onDropItem, bar, hint, issue }: {
   report: Report; brand: Brand; handle: string; logo: string | null; media: Record<string, string>; issue?: number | null
   sel: Sel; setSel: (s: Sel) => void; mode: Mode; setMode: (m: Mode) => void; tool: PitchTool
   apply: (fn: (r: Report) => Report) => void; begin: () => void; end: () => void
   zoom: number; setZoom: (z: number) => void; svgRef: RefObject<SVGSVGElement | null>
   onEditText: (bid: string, mid?: string) => void; onPickPhoto: (bid: string) => void; onDropFiles: (files: File[], at: Pt) => void; hint: string
+  /** something dragged in from the Library (a board, a freeze-frame, a note) */
+  onDropItem?: (item: string, at: Pt) => void
+  /** a small bar of tools over the selected block (the pitch's Board tools) */
+  bar?: (b: Block) => ReactNode
 }) {
   const [W, H] = SIZES[report.format]
   const viewRef = useRef<HTMLDivElement>(null)
@@ -151,11 +163,12 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
   const tol = 7 / Math.max(0.05, scale)
 
   /* ── snapping: the page's edges and middle, and every other block's edges and middle ── */
+  const cols = columns(W), colXs = cols.flatMap(c => [c.x, c.x + c.w])
   const snapMove = (o: Block, dx: number, dy: number, off: boolean) => {
-    const B = blockBox(o), M = 64 * (W / 1600)
+    const B = blockBox(o), M = 80 * (W / 1600)
     if (off) return { dx, dy, gx: null as number | null, gy: null as number | null }
     const others = report.blocks.filter(b => b.id !== o.id).map(blockBox)
-    const xs = [M, W / 2, W - M, ...others.flatMap(b => [b.x, b.x + b.w / 2, b.x + b.w])]
+    const xs = [M, W / 2, W - M, ...colXs, ...others.flatMap(b => [b.x, b.x + b.w / 2, b.x + b.w])]
     const ys = [M, H / 2, H - M, ...others.flatMap(b => [b.y, b.y + b.h / 2, b.y + b.h])]
     const best = (anchors: number[], targets: number[]) => {
       let bd = tol, out: { d: number; at: number } | null = null
@@ -171,8 +184,8 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
     const B = blockBox(o)
     let nb = resized(o, h, p, free)
     if (off || B.rot) return { b: nb, gx: null as number | null, gy: null as number | null }
-    const M = 64 * (W / 1600), others = report.blocks.filter(b => b.id !== o.id).map(blockBox)
-    const xs = [M, W / 2, W - M, ...others.flatMap(b => [b.x, b.x + b.w / 2, b.x + b.w])]
+    const M = 80 * (W / 1600), others = report.blocks.filter(b => b.id !== o.id).map(blockBox)
+    const xs = [M, W / 2, W - M, ...colXs, ...others.flatMap(b => [b.x, b.x + b.w / 2, b.x + b.w])]
     const ys = [M, H / 2, H - M, ...others.flatMap(b => [b.y, b.y + b.h / 2, b.y + b.h])]
     const near = (v: number, ts: number[]) => { let bd = tol, at: number | null = null; for (const t of ts) if (Math.abs(t - v) < bd) { bd = Math.abs(t - v); at = t } return at }
     const N = blockBox(nb), [hx, hy] = DIRS[h], ex = hx > 0 ? N.x + N.w : N.x, ey = hy > 0 ? N.y + N.h : N.y
@@ -492,8 +505,12 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
 
   return (
     <div ref={viewRef} className="rp-view" style={{ overflow: zoom > 1 ? "auto" : "hidden" }}
-      onDragOver={e => { if ([...e.dataTransfer.types].includes("Files")) e.preventDefault() }}
-      onDrop={e => { const files = [...e.dataTransfer.files].filter(f => f.type.startsWith("image/")); if (!files.length) return; e.preventDefault(); e.stopPropagation(); onDropFiles(files, toRep(e)) }}>
+      onDragOver={e => { const t = [...e.dataTransfer.types]; if (t.includes("Files") || (onDropItem && t.includes(ITEM))) { e.preventDefault(); e.dataTransfer.dropEffect = "copy" } }}
+      onDrop={e => {
+        const item = onDropItem ? e.dataTransfer.getData(ITEM) : ""
+        if (item) { e.preventDefault(); e.stopPropagation(); onDropItem!(item, toRep(e)); return }
+        const files = [...e.dataTransfer.files].filter(f => f.type.startsWith("image/")); if (!files.length) return; e.preventDefault(); e.stopPropagation(); onDropFiles(files, toRep(e))
+      }}>
       {fit > 0 && (
         <div className="rp-wrap" style={{ width: W * scale, height: H * scale, cursor, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel} onDragStart={e => e.preventDefault()}
@@ -504,10 +521,17 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
             {cropUi()}
             {hovered && frame(hovered, false)}
             {selBlock && mode.kind === "page" && frame(selBlock, true)}
-            {guides.x !== null && <line x1={guides.x} y1={-4000} x2={guides.x} y2={H + 4000} stroke="#ff3dbb" strokeWidth={sw} />}
-            {guides.y !== null && <line x1={-4000} y1={guides.y} x2={W + 4000} y2={guides.y} stroke="#ff3dbb" strokeWidth={sw} />}
+            {(drag?.t === "move" || drag?.t === "size") && cols.map((c, i) => <rect key={i} x={c.x} y={0} width={c.w} height={H} fill="#ff3dbb" fillOpacity={0.06} />)}
+            {guides.x !== null && <g><line x1={guides.x} y1={-4000} x2={guides.x} y2={H + 4000} stroke="#0b0d10" strokeOpacity={0.35} strokeWidth={sw * 3} /><line x1={guides.x} y1={-4000} x2={guides.x} y2={H + 4000} stroke={V} strokeWidth={sw * 1.5} /></g>}
+            {guides.y !== null && <g><line x1={-4000} y1={guides.y} x2={W + 4000} y2={guides.y} stroke="#0b0d10" strokeOpacity={0.35} strokeWidth={sw * 3} /><line x1={-4000} y1={guides.y} x2={W + 4000} y2={guides.y} stroke={V} strokeWidth={sw * 1.5} /></g>}
           </svg>
           {hint && <div className="rp-hint" role="status">{hint}</div>}
+          {bar && selBlock && mode.kind === "page" && !drag && (() => {
+            const B = blockBox(selBlock), node = bar(selBlock)
+            if (!node) return null
+            const top = B.y * scale > 64 ? B.y * scale - 58 : B.y * scale + 10
+            return <div className="rp-bbar" style={{ left: Math.max(0, B.x * scale), top }} onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>{node}</div>
+          })()}
         </div>
       )}
     </div>
