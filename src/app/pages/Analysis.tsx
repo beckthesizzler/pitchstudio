@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useLocation, useNavigate } from "react-router"
 import { ChevronLeft, ChevronRight, Circle, Clapperboard, Copy, Download, FolderOpen, ImagePlus, Images, Loader2, Maximize, MousePointer2, MoveUpRight, PanelLeft, Pentagon, Plus, Redo2, Slash, Tag as TagIcon, Trash2, Type, Undo2, X, Flashlight, ZoomIn, ZoomOut } from "lucide-react"
+import { ExampleShot } from "../analysis/Example"
 import { supabase } from "../lib/supabase"
 import { stripHandleSuffix } from "../lib/account"
 import { relTime } from "../lib/time"
@@ -12,9 +13,9 @@ import { Stage, START_DEFAULTS, type Defaults, type Tool } from "../analysis/Sta
 import { Inspector } from "../analysis/Inspector"
 import { Library, copyKept, DRAG_SHOT, DRAG_LIB, type LibShot } from "../analysis/Library"
 import { Dock, STAGE_CSS, type DockItem } from "../board/Stage"
-import { VideoStudio } from "../analysis/Video"
+import { VideoStudio, useClipFrames, stripTimes, frameKey, fmtTime } from "../analysis/Video"
 import { findVideo, keepVideo, probeVideo, videoKey, videoProblem } from "../analysis/videoStore"
-import { MAX_MARKS, MAX_SHOTS, combineShots, downloadShot, exportFontCSS, moveMark, newId, prepareShot, readAnalysis, removeShots, unit, uploadShot, type Mark, type Shot, type VideoProject } from "../analysis/model"
+import { MAX_MARKS, MAX_SHOTS, combineShots, downloadShot, exportFontCSS, moveMark, newId, prepareShot, readAnalysis, removeShots, unit, uploadShot, type Mark, type Shot, type TagStyle, type VideoProject } from "../analysis/model"
 import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT, SCRIM } from "../theme"
 
 /* Live Game Analysis ("/analysis"): draw on up to 10 match shots (tags, spotlights, perspective zones, arrows, lines, text),
@@ -31,6 +32,9 @@ const TOOLS: { id: Tool; name: string; key: string; icon: ReactNode }[] = [
   { id: "line", name: "Line", key: "L", icon: <Slash size={18} /> },
   { id: "text", name: "Text", key: "X", icon: <Type size={18} /> },
 ]
+// the dock: pick, mark a player, mark an area, show a movement, write
+const TOOL_GROUPS: Tool[][] = [["select"], ["tag", "spot"], ["zone", "oval"], ["arrow", "line"], ["text"]]
+const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
 const HINTS: Record<Tool, string> = {
   select: "Click a mark to change it. Drag to move it.",
   tag: "Click a player's feet to tag them, then type the name.",
@@ -90,6 +94,13 @@ export default function AnalysisPage() {
   const [handle, setHandle] = useState("")
   const [logo, setLogo] = useState<string | null>(null)
   const defaults = useRef<Defaults>(JSON.parse(JSON.stringify(START_DEFAULTS)))
+  const [tagLook, setTagLook] = useState<TagStyle>(START_DEFAULTS.tag.style) // how new tags look
+  const pickTagLook = (v: TagStyle) => { setTagLook(v); defaults.current.tag.style = v }
+  // new tags take your card's colour (studio volt until you choose one)
+  const tagEdge = brand.color && brand.color !== DEFAULT_BRAND.color ? brand.color : START_DEFAULTS.tag.color
+  const edgeSet = useRef(START_DEFAULTS.tag.color)
+  useEffect(() => { if (defaults.current.tag.color === edgeSet.current) defaults.current.tag.color = edgeSet.current = tagEdge }, [tagEdge]) // unless you picked another colour
+  const openMomentRef = useRef<((id: string) => void) | null>(null)
   const stageRef = useRef<SVGSVGElement>(null)
   const textRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -488,6 +499,33 @@ export default function AnalysisPage() {
   const failed = Object.values(uploads).includes("fail")
   const upCount = Object.values(uploads).filter(v => v === "up").length
 
+  /* ── the video's moments, listed on the right with a picture of each ── */
+  const clipFrames = useClipFrames(mode === "video" ? videoFile : null, video ? [...stripTimes(video.dur), ...video.moments.map(m => m.t)] : [])
+  const momentName = (m: VideoProject["moments"][number], i: number) => {
+    const t = m.items.find(x => x.kind === "tag" && x.label.trim()) ?? m.items.find(x => x.kind === "text" && x.text.trim()) ?? m.items.find(x => x.kind === "zone" && x.label.trim())
+    const words = !t ? "" : t.kind === "text" ? t.text.split("\n")[0] : t.kind === "tag" || t.kind === "zone" ? t.label : ""
+    return words.trim().slice(0, 40) || `Moment ${i + 1}`
+  }
+  const inClip = video ? video.moments.filter(m => m.t >= video.inT && m.t <= video.outT).length : 0
+  const momentsPanel = video ? (
+    <>
+      <p className="an-cap">Moments · {video.moments.length}</p>
+      {video.moments.length ? (
+        <div className="an-moms">
+          {video.moments.map((m, i) => (
+            <button key={m.id} className={`an-mom${m.id === editing ? " on" : ""}`} disabled={!videoFile} onClick={() => openMomentRef.current?.(m.id)} aria-label={`Open moment ${i + 1}, ${momentName(m, i)}, at ${fmtTime(m.t)}`}>
+              {clipFrames[frameKey(m.t)] ? <img src={clipFrames[frameKey(m.t)]} alt="" /> : <span className="ph"><b>{i + 1}</b></span>}
+              <span style={{ minWidth: 0 }}><span className="t">{momentName(m, i)}</span><span className="d">{fmtTime(m.t)} · {m.hold}s</span></span>
+            </button>
+          ))}
+        </div>
+      ) : <p className="an-note">Play the clip and press Add a moment where it should freeze. Then draw on it with the same tools as a shot.</p>}
+      <p className="an-cap" style={{ marginTop: 24 }}>Export</p>
+      <button className="an-make" disabled={!videoFile || !!busy} onClick={() => exportVideo.current?.()}><Download size={16} /> Make the video (MP4)</button>
+      <p className="an-note" style={{ marginTop: 10 }}>Clip from {fmtTime(video.inT)} to {fmtTime(video.outT)}{inClip ? `, with your ${inClip === 1 ? "moment" : `${inClip} moments`} freezing and drawing` : ""}. Drawn in your browser, without sound.</p>
+    </>
+  ) : null
+
   if (phase === "loading") return <div className="an-page" style={{ minHeight: "100vh", background: SURFACE_BASE }} />
 
   return (
@@ -497,11 +535,19 @@ export default function AnalysisPage() {
       <style>{`
         .an-page { height: 100vh; display: grid; grid-template-rows: 56px 1fr auto; background: ${SURFACE_BASE}; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; overflow: hidden; }
         .an-page * { box-sizing: border-box; }
-        .an-top { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid ${DS_BORDER}; min-width: 0; }
+        .an-top { position: relative; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid ${DS_BORDER}; min-width: 0; }
+        .an-name { display: flex; flex-direction: column; justify-content: center; min-width: 0; flex: 0 1 320px; margin-left: 2px; }
+        .an-dot { width: 7px; height: 7px; border-radius: 50%; background: ${TEXT_MUTED}; flex-shrink: 0; }
+        .an-dot.ok { background: #3fb950; } .an-dot.busy { background: #e3b341; } .an-dot.bad { background: ${DS_ERROR}; }
+        .an-link { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border: none; border-radius: 10px; background: none; color: ${TEXT_MUTED}; font: 500 14px 'Inter', sans-serif; cursor: pointer; white-space: nowrap; }
+        .an-link:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
+        .an-show-sm { display: none; }
+        .an-icon.ghost { border-color: transparent; background: none; color: ${TEXT_MUTED}; } .an-icon.ghost:not(:disabled):hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_1}; }
+        @media (min-width: 1100px) { .an-mode { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); } }
         .an-home { background: none; border: none; padding: 4px; cursor: pointer; display: flex; border-radius: 8px; }
-        .an-title { flex: 0 1 300px; min-width: 80px; height: 36px; background: transparent; border: 1px solid transparent; border-radius: 8px; color: ${TEXT_PRIMARY}; font: 600 15px 'Inter', sans-serif; padding: 0 10px; }
+        .an-title { width: 100%; min-width: 80px; height: 26px; background: transparent; border: 1px solid transparent; border-radius: 7px; color: ${TEXT_PRIMARY}; font: 600 15px 'Inter', sans-serif; padding: 0 6px; }
         .an-title:hover { border-color: ${DS_BORDER}; } .an-title:focus { outline: none; border-color: ${ACCENT_SOLID}; background: ${SURFACE_1}; }
-        .an-status { font-size: 12px; color: ${TEXT_MUTED}; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+        .an-status { font-size: 12px; color: ${TEXT_MUTED}; white-space: nowrap; display: flex; align-items: center; gap: 6px; padding: 0 7px; min-height: 18px; overflow: hidden; text-overflow: ellipsis; }
         .an-status.bad { color: ${DS_ERROR}; }
         .an-status button { background: none; border: 1px solid ${DS_ERROR}; color: ${DS_ERROR}; border-radius: 999px; padding: 3px 10px; font: 600 12px 'Inter', sans-serif; cursor: pointer; }
         .an-sp { flex: 1; }
@@ -509,7 +555,7 @@ export default function AnalysisPage() {
         .an-icon:disabled { opacity: .4; cursor: default; }
         .an-icon.bad { color: ${DS_ERROR}; }
         .an-btn { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; font: 600 13px 'Inter', sans-serif; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
-        .an-btn.pri { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; border-color: ${ACCENT_SOLID}; }
+        .an-btn.pri { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; border-color: ${ACCENT_SOLID}; border-radius: 10px; padding: 0 16px; }
         .an-btn:disabled { opacity: .45; cursor: default; }
         .an-menu { position: absolute; right: 0; top: 42px; z-index: 30; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER_STRONG}; border-radius: 12px; padding: 6px; min-width: 230px; box-shadow: 0 14px 40px rgba(0,0,0,.35); }
         .an-menu button { display: flex; width: 100%; align-items: center; gap: 10px; background: none; border: none; color: ${TEXT_PRIMARY}; font: 500 13px 'Inter', sans-serif; padding: 9px 10px; border-radius: 8px; cursor: pointer; text-align: left; }
@@ -530,15 +576,53 @@ export default function AnalysisPage() {
         .an-hint { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: rgba(12,14,18,.82); color: #f5f5f7; font: 500 12.5px 'Inter', sans-serif; padding: 7px 12px; border-radius: 999px; pointer-events: none; white-space: nowrap; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; }
         .an-zoom { display: flex; align-items: center; gap: 6px; justify-content: flex-end; padding: 6px 12px; color: #c9ccd2; font: 500 12px 'Inter', sans-serif; }
         .an-zoom button { width: 28px; height: 28px; border-radius: 8px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: #f5f5f7; display: grid; place-items: center; cursor: pointer; }
+        .an-startwrap { flex: 1; min-height: 0; overflow-y: auto; display: flex; padding: 22px 44px 26px; }
+        .an-start { margin: auto; width: min(800px, 100%); text-align: center; }
+        .an-k { margin: 0 0 10px; font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .an-start .an-k { text-align: left; }
+        .an-ex { border-radius: 14px; overflow: hidden; box-shadow: 0 24px 60px -18px rgba(0,0,0,.7); outline: 3px solid transparent; outline-offset: 4px; transition: outline-color .14s; }
+        .an-start.over .an-ex, .an-page.over .an-ex { outline-color: ${ACCENT_SOLID}; }
+        .an-h { margin: 26px 0 8px; font: 400 clamp(28px, 3.3vw, 46px)/1.02 'Anton', 'Bebas Neue', sans-serif; letter-spacing: .01em; text-transform: uppercase; color: #f5f5f7; }
+        .an-b { margin: 0 auto 20px; max-width: 520px; font-size: 15px; line-height: 1.5; color: #c9ccd2; }
+        .an-go { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        .an-cta { display: inline-flex; align-items: center; gap: 9px; height: 48px; padding: 0 26px; border: none; border-radius: 12px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 16px 'Inter', sans-serif; cursor: pointer; transition: transform .15s, filter .15s; }
+        .an-cta:hover { filter: brightness(1.05); transform: translateY(-1px); }
+        .an-ghost { display: inline-flex; align-items: center; gap: 9px; height: 48px; padding: 0 22px; border: 1px solid ${DS_BORDER_STRONG}; border-radius: 12px; background: none; color: ${TEXT_PRIMARY}; font: 600 14px 'Inter', sans-serif; cursor: pointer; }
+        .an-ghost:hover { background: ${SURFACE_1}; }
+        .an-cta:focus-visible, .an-ghost:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+        .an-or { display: block; margin: 14px auto 0; max-width: 560px; font-size: 13px; line-height: 1.55; color: ${TEXT_MUTED}; }
+        .an-or kbd { font: 500 12px 'JetBrains Mono', ui-monospace, monospace; border: 1px solid ${DS_BORDER_STRONG}; border-radius: 5px; padding: 1px 5px; color: ${TEXT_PRIMARY}; }
         .an-empty { margin: auto; text-align: center; color: #c9ccd2; max-width: 460px; padding: 30px; border: 2px dashed rgba(255,255,255,.18); border-radius: 18px; }
         .an-empty.over, .an-page.over .an-empty { border-color: #d7ff3c; background: rgba(215,255,60,.06); }
         .an-empty h2 { color: #f5f5f7; font-size: 22px; margin: 14px 0 6px; letter-spacing: -.02em; }
         .an-empty p { font-size: 14px; line-height: 1.55; margin: 0 0 18px; }
         .an-empty small { display: block; margin-top: 16px; font-size: 12px; color: #8b8f98; }
         .an-insp { border-left: 1px solid ${DS_BORDER}; padding: 16px; overflow-y: auto; min-height: 0; }
-        .an-cap { font-size: 12px; letter-spacing: .14em; font-weight: 700; color: ${TEXT_MUTED}; margin: 0 0 12px; }
+        .an-cap { font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; margin: 0 0 12px; }
+        .an-head { display: flex; align-items: center; gap: 12px; margin: 0 0 20px; }
+        .an-ico { width: 44px; height: 44px; border-radius: 12px; background: ${SURFACE_2}; display: grid; place-items: center; color: ${TEXT_PRIMARY}; flex-shrink: 0; }
+        .an-big { margin: 4px 0 0; font: 400 28px/1.04 'Anton', 'Bebas Neue', sans-serif; letter-spacing: .01em; text-transform: uppercase; color: ${TEXT_PRIMARY}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .an-looks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .an-looks button { background: none; border: none; padding: 0; text-align: left; cursor: pointer; color: ${TEXT_MUTED}; font: 500 12.5px 'Inter', sans-serif; }
+        .an-looks svg { display: block; width: 100%; height: auto; border-radius: 10px; outline: 1px solid ${DS_BORDER}; outline-offset: 0; transition: outline-color .14s; }
+        .an-looks button:hover svg { outline-color: ${DS_BORDER_STRONG}; }
+        .an-looks button.on svg { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
+        .an-looks button.on span { color: ${TEXT_PRIMARY}; font-weight: 600; }
+        .an-looks button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; border-radius: 10px; }
+        .an-looks span { display: block; margin-top: 7px; }
+        .an-moms { display: flex; flex-direction: column; gap: 4px; }
+        .an-mom { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px; border-radius: 12px; border: 1px solid transparent; background: none; color: ${TEXT_PRIMARY}; text-align: left; cursor: pointer; }
+        .an-mom:hover:not(:disabled) { background: ${SURFACE_1}; } .an-mom.on { background: ${SURFACE_1}; border-color: ${DS_BORDER_STRONG}; }
+        .an-mom:disabled { opacity: .55; cursor: default; }
+        .an-mom img, .an-mom .ph { width: 76px; height: 43px; border-radius: 7px; object-fit: cover; flex-shrink: 0; background: #0b0c0f; display: grid; place-items: center; }
+        .an-mom.on img { outline: 2px solid ${ACCENT_SOLID}; }
+        .an-mom .ph b { font: 700 12px 'Inter', sans-serif; color: ${TEXT_MUTED}; }
+        .an-mom .t { display: block; font: 600 14px 'Inter', sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .an-mom .d { display: block; margin-top: 3px; font: 500 12px 'JetBrains Mono', ui-monospace, monospace; color: ${TEXT_MUTED}; }
+        .an-make { display: flex; width: 100%; align-items: center; justify-content: center; gap: 8px; height: 46px; border: none; border-radius: 12px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 14px 'Inter', sans-serif; cursor: pointer; }
+        .an-make:disabled { opacity: .45; cursor: default; }
         .an-row { display: flex; flex-direction: column; gap: 7px; margin-bottom: 15px; }
-        .an-lab { font-size: 12px; color: ${TEXT_MUTED}; }
+        .an-lab { font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
         .an-inp { width: 100%; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; border-radius: 10px; color: ${TEXT_PRIMARY}; font: 500 14px 'Inter', sans-serif; padding: 9px 11px; resize: vertical; }
         .an-inp:focus { outline: none; border-color: ${ACCENT_SOLID}; box-shadow: 0 0 0 3px ${ACCENT_SOFT}; }
         .an-cols { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -550,20 +634,32 @@ export default function AnalysisPage() {
         .an-seg button.on { background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
         .an-slide { display: flex; align-items: center; gap: 10px; } .an-slide input { flex: 1; accent-color: ${ACCENT_TEXT}; } .an-slide span { font-size: 12px; color: ${TEXT_MUTED}; width: 38px; text-align: right; }
         .an-note { font-size: 12px; color: ${TEXT_MUTED}; line-height: 1.5; margin: 0 0 12px; }
-        .an-acts { display: flex; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid ${DS_BORDER}; }
+        .an-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 20px; }
+        .an-act { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 42px; border-radius: 10px; border: 1px solid ${DS_BORDER_STRONG}; background: none; color: ${TEXT_PRIMARY}; font: 600 13.5px 'Inter', sans-serif; cursor: pointer; }
+        .an-act:hover { background: ${SURFACE_1}; } .an-act.bad { color: ${DS_ERROR}; }
+        .an-act.sm { height: 36px; border-color: ${DS_BORDER}; color: ${TEXT_MUTED}; font-weight: 500; font-size: 12.5px; }
         .an-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 12px; color: ${TEXT_MUTED}; }
         .an-keys div { display: flex; align-items: center; gap: 6px; } .an-keys kbd { font: 600 12px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 5px; padding: 2px 5px; white-space: nowrap; }
-        .an-steps { margin: 0; padding-left: 18px; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.9; }
-        .an-strip { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-top: 1px solid ${DS_BORDER}; background: ${SURFACE_BASE}; overflow-x: auto; outline: 2px solid transparent; outline-offset: -3px; transition: outline-color .14s, background .14s; }
+        .an-steps { margin: 0; padding: 0; list-style: none; counter-reset: st; display: flex; flex-direction: column; gap: 12px; }
+        .an-steps li { counter-increment: st; display: flex; align-items: flex-start; gap: 12px; color: ${TEXT_PRIMARY}; font-size: 14px; line-height: 1.4; }
+        .an-steps li::before { content: counter(st); width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; font: 600 12px 'Inter', sans-serif; margin-top: -3px; }
+        .an-steps li.on { font-weight: 600; } .an-steps li.on::before { background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; }
+        .an-strip { display: flex; gap: 10px; align-items: center; padding: 16px 20px 18px; border-top: 1px solid ${DS_BORDER}; background: ${SURFACE_BASE}; overflow-x: auto; outline: 2px solid transparent; outline-offset: -3px; transition: outline-color .14s, background .14s; }
         .an-strip.over { outline-color: ${ACCENT_SOLID}; background: var(--ps-accent-soft); }
-        .an-thumb { position: relative; width: 132px; height: 74px; border-radius: 9px; overflow: hidden; border: 2px solid transparent; cursor: pointer; flex-shrink: 0; background: #16181c; padding: 0; }
+        .an-thumb { position: relative; width: 98px; height: 56px; border-radius: 9px; overflow: hidden; border: 2px solid transparent; cursor: pointer; flex-shrink: 0; background: #16181c; padding: 0; }
         .an-thumb.on { border-color: ${ACCENT_SOLID}; }
         .an-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .an-num { position: absolute; left: 5px; top: 5px; background: rgba(0,0,0,.72); color: #fff; font: 700 12px 'Inter', sans-serif; border-radius: 6px; padding: 2px 6px; }
-        .an-over { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.55); color: #fff; font: 600 12px 'Inter', sans-serif; text-align: center; padding: 4px; }
-        .an-tbtn { position: absolute; top: 4px; width: 22px; height: 22px; border-radius: 6px; border: none; background: rgba(0,0,0,.72); color: #fff; display: grid; place-items: center; cursor: pointer; padding: 0; }
-        .an-add { width: 132px; height: 74px; border-radius: 9px; border: 1.5px dashed ${DS_BORDER_STRONG}; background: none; color: ${TEXT_MUTED}; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font: 600 12px 'Inter', sans-serif; cursor: pointer; flex-shrink: 0; }
-        .an-strip-note { font-size: 12px; color: ${TEXT_MUTED}; margin-left: 6px; white-space: nowrap; }
+        .an-over { position: absolute; inset: 0; pointer-events: none; display: grid; place-items: center; background: rgba(0,0,0,.55); color: #fff; font: 600 12px 'Inter', sans-serif; text-align: center; padding: 4px; }
+        .an-pick { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: none; background: none; cursor: pointer; display: block; }
+        .an-pick:focus-visible { outline: 2px solid #fff; outline-offset: -3px; border-radius: 7px; }
+        .an-tbtn { position: absolute; top: 2px; width: 24px; height: 24px; border-radius: 6px; border: none; background: rgba(0,0,0,.72); color: #fff; display: grid; place-items: center; cursor: pointer; padding: 0; }
+        .an-add { width: 98px; height: 56px; border-radius: 9px; border: 1.5px dashed ${DS_BORDER_STRONG}; background: none; color: ${TEXT_PRIMARY}; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font: 600 12.5px 'Inter', sans-serif; cursor: pointer; flex-shrink: 0; }
+        .an-add:hover { border-color: ${ACCENT_SOLID}; }
+        .an-slot { width: 98px; height: 56px; border-radius: 9px; border: 1.5px dashed ${DS_BORDER}; display: grid; place-items: center; font: 500 12px 'JetBrains Mono', ui-monospace, monospace; color: ${TEXT_MUTED}; flex-shrink: 0; cursor: pointer; }
+        .an-count { margin-left: auto; padding-left: 12px; align-self: flex-start; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+        .an-count b { font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; white-space: nowrap; }
+        .an-count span { font-size: 12px; color: ${TEXT_MUTED}; white-space: nowrap; }
         .an-confirm { position: absolute; inset: 0; background: rgba(0,0,0,.82); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #fff; font: 600 12px 'Inter', sans-serif; }
         .an-confirm div { display: flex; gap: 6px; } .an-confirm button { border: none; border-radius: 6px; padding: 4px 10px; font: 600 12px 'Inter', sans-serif; cursor: pointer; }
         .an-scrim { position: fixed; inset: 0; background: ${SCRIM}; z-index: 50; display: grid; place-items: center; padding: 20px; }
@@ -580,7 +676,7 @@ export default function AnalysisPage() {
         @media (max-width: 860px) {
           .an-page { height: auto; min-height: 100vh; overflow: visible; grid-template-rows: auto auto auto; }
           .an-top { flex-wrap: wrap; padding: 8px 12px; row-gap: 8px; }
-          .an-title { flex: 1 1 0; min-width: 0; }
+          .an-title { min-width: 0; }
           .an-sp { flex: 0 0 100%; height: 0; }
           .an-top [data-export] { margin-left: auto; }
           .an-hide-sm { display: none; }
@@ -591,6 +687,17 @@ export default function AnalysisPage() {
           .an-mid { height: 62vw; min-height: 240px; max-height: 70vh; }
           .an-insp { border-left: none; border-top: 1px solid ${DS_BORDER}; }
           .an-empty { padding: 18px; margin: 12px; } .an-empty h2 { font-size: 18px; }
+          .an-mid { display: flex; flex-direction: column; height: auto; min-height: 240px; max-height: none; }
+          .an-mid > .an-view { height: 58vw; min-height: 200px; padding: 8px; flex-shrink: 0; }
+          .an-dock { position: static; transform: none; margin: 8px auto 0; }
+          .an-mid .vs { height: auto; } .an-mid .vs-stage { height: 58vw; min-height: 200px; } .an-mid .vs-stage > .an-view { padding: 8px; }
+          .an-startwrap { padding: 16px 14px 22px; }
+          .an-h { margin-top: 18px; }
+          .an-cta, .an-ghost { flex: 1 1 100%; justify-content: center; }
+          .an-name { flex: 1 1 0; }
+          .an-hide-sm { display: none; } .an-show-sm { display: inline; }
+          .an-link { padding: 0 10px; }
+          .an-strip { padding: 12px 12px 14px; }
           .an-hint { font-size: 12px; top: 6px; padding: 5px 10px; white-space: normal; text-align: center; width: max-content; max-width: 92%; }
           .an-keysbox { display: none; }
         }
@@ -598,15 +705,18 @@ export default function AnalysisPage() {
       `}</style>
 
       <header className="an-top">
-        <button className="an-home" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
         {phase !== "missing" && <button className="an-icon" aria-label={libOpen ? "Hide the Library" : "Show the Library"} aria-pressed={libOpen} title="Library" onClick={() => showLibrary(!libOpen)}
           style={libOpen ? { color: ACCENT_TEXT } : undefined}><PanelLeft size={16} /></button>}
-        <input className="an-title" aria-label="Analysis title" value={title} maxLength={80} placeholder={pieceName("Analysis", "", "", made.current)} onChange={e => setTitle(e.target.value)} />
-        <span className={`an-status${failed || status === "error" ? " bad" : ""}`} aria-live="polite">
-          {failed || status === "error" ? <>Not saved <button onClick={retry}>Retry</button></>
-            : upCount ? <><Loader2 size={13} className="an-spin" /> Uploading {upCount === 1 ? "shot" : `${upCount} shots`}…</>
-              : status === "saving" ? "Saving…" : status === "saved" ? "Saved" : shots.length ? "" : "Not saved yet"}
-        </span>
+        <button className="an-home" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
+        <div className="an-name">
+          <input className="an-title" aria-label="Analysis title" value={title} maxLength={80} placeholder={pieceName("Analysis", "", "", made.current)} onChange={e => setTitle(e.target.value)} />
+          <span className={`an-status${failed || status === "error" ? " bad" : ""}`} aria-live="polite">
+            <i className={`an-dot${failed || status === "error" ? " bad" : upCount || status === "saving" ? " busy" : status === "saved" ? " ok" : ""}`} aria-hidden="true" />
+            {failed || status === "error" ? <>Not saved <button onClick={retry}>Retry</button></>
+              : upCount ? <><Loader2 size={12} className="an-spin" /> Uploading {upCount === 1 ? "shot" : `${upCount} shots`}…</>
+                : status === "saving" ? "Saving…" : status === "saved" ? (mode === "video" && video ? "Saved · clip kept on this computer" : "Saved") : "Not saved yet"}
+          </span>
+        </div>
         <span className="an-sp" />
         {phase !== "missing" && (
           <div className="st-seg st-glass an-mode" role="group" aria-label="Work on" style={{ boxShadow: "none" }}>
@@ -615,10 +725,10 @@ export default function AnalysisPage() {
           </div>
         )}
         <span className="an-sp" />
-        <button className="an-icon" onClick={undo} disabled={!past.current.length} aria-label="Undo" title="Undo (Ctrl Z)"><Undo2 size={16} /></button>
-        <button className="an-icon" onClick={redo} disabled={!future.current.length} aria-label="Redo" title="Redo (Ctrl Shift Z)"><Redo2 size={16} /></button>
-        <button className="an-btn" onClick={openList}><FolderOpen size={15} /><span className="an-hide-sm">My analyses</span></button>
-        <button className="an-btn" onClick={() => navigate("/analysis")} aria-label="New analysis"><Plus size={15} /><span className="an-hide-sm">New</span></button>
+        <button className="an-link" onClick={openList} aria-label="My analyses"><FolderOpen size={15} className="an-show-sm" /><span className="an-hide-sm">My analyses</span></button>
+        <button className="an-link" onClick={() => navigate("/analysis")} aria-label="New analysis"><Plus size={15} className="an-show-sm" /><span className="an-hide-sm">New</span></button>
+        <button className="an-icon ghost" onClick={undo} disabled={!past.current.length} aria-label="Undo" title="Undo (Ctrl Z)"><Undo2 size={16} /></button>
+        <button className="an-icon ghost" onClick={redo} disabled={!future.current.length} aria-label="Redo" title="Redo (Ctrl Shift Z)"><Redo2 size={16} /></button>
         <div style={{ position: "relative" }} data-export>
           <button className="an-btn pri" disabled={(!shot && !(mode === "video" && video && videoFile)) || !!busy} onClick={() => setExportOpen(o => !o)} aria-expanded={exportOpen}><Download size={15} /> Export</button>
           {exportOpen && mode === "video" && (
@@ -657,8 +767,8 @@ export default function AnalysisPage() {
           {libOpen && user && <Library userId={user.id} getShot={id => shotsRef.current.find(s => s.id === id) ?? null} onUse={addKeptShot} say={say} onKept={list => { keptRef.current = new Map(list.map(k => [k.id, k])) }} />}
 
           <div className="an-mid" style={{ position: "relative" }}>
-            {(mode === "shots" || shot) && (
-              <div className="an-dock" style={mode === "video" ? { bottom: 128 } : undefined}><Dock groups={[TOOLS.map((t): DockItem => ({ id: t.id, icon: t.icon, label: t.name, key: t.key, pressed: tool === t.id, disabled: !shot, onClick: () => pickTool(t.id) }))]} /></div>
+            {shot && (
+              <div className="an-dock" style={mode === "video" ? { bottom: 206 } : undefined}><Dock groups={TOOL_GROUPS.map(g => g.map((id): DockItem => { const t = TOOLS.find(x => x.id === id)!; return { id: t.id, icon: t.icon, label: t.name, key: t.key, pressed: tool === t.id, onClick: () => pickTool(t.id) } }))} /></div>
             )}
             {mode === "video" ? (
               <VideoStudio project={video} file={videoFile} missing={!!video && !videoFile} editing={editing}
@@ -666,7 +776,7 @@ export default function AnalysisPage() {
                 onSet={fn => { const v = videoRef.current; if (v) { begin(); setVideo(fn(v)); end() } }}
                 onOpenMoment={(id, frame) => { if (id && frame) setSrcs(x => ({ ...x, [id]: frame })); setEditing(id); setSel(null); setZoom(1) }}
                 onCapture={blob => { addFiles([new File([blob], "frame.jpg", { type: "image/jpeg" })]).then(() => { setMode("video"); say("Added to your shots.") }) }}
-                seal={sealFor} fileBase={fileBase} exportRef={exportVideo} say={say}>
+                seal={sealFor} fileBase={fileBase} exportRef={exportVideo} openRef={openMomentRef} frames={clipFrames} say={say}>
                 {shot && <Stage shot={shot} src={srcs[shot.id] || undefined} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
                   onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={sealNode} stageRef={stageRef} hint={hintFor(tool)} />}
               </VideoStudio>
@@ -675,12 +785,18 @@ export default function AnalysisPage() {
                 onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={sealNode} stageRef={stageRef}
                 hint={srcs[shot.id] === "" ? "This shot couldn't be loaded. Check your connection and reopen." : srcs[shot.id] ? hintFor(tool) : "Loading the shot…"} />
             ) : (
-              <div className={`an-empty${dragOver ? " over" : ""}`} data-empty="drop">
-                <ImagePlus size={34} color="#d7ff3c" style={{ margin: "0 auto", display: "block" }} />
-                <h2>Add your match shots</h2>
-                <p>Up to 10 screenshots from the game. Drop them here, paste one with Ctrl V, pick them, or drag one in from your Library.</p>
-                <button className="an-btn pri" style={{ margin: "0 auto" }} onClick={() => fileRef.current?.click()}><ImagePlus size={15} /> Choose pictures</button>
-                <small>Your shots stay private to your account. Only what you export is shared.</small>
+              <div className="an-startwrap">
+                <div className={`an-start${dragOver ? " over" : ""}`} data-empty="drop">
+                  <p className="an-k">Example · what you will make</p>
+                  <div className="an-ex"><ExampleShot color={tagEdge} /></div>
+                  <h2 className="an-h">Freeze the moment. Make it yours.</h2>
+                  <p className="an-b">Drop up to 10 screenshots, tag the players, and post it in five minutes.</p>
+                  <div className="an-go">
+                    <button className="an-cta" onClick={() => fileRef.current?.click()}><ImagePlus size={18} /> Add your match shots</button>
+                    <button className="an-ghost" onClick={() => { setMode("video"); setSel(null); videoInput.current?.click() }}><Clapperboard size={17} /> Open a video</button>
+                  </div>
+                  <small className="an-or">{TOUCH ? "Pick screenshots from your photos. " : <>Or press <kbd>{MAC ? "⌘" : "Ctrl"} V</kbd> to paste a shot from anywhere, or drag one in from your Library. </>}Your shots stay private: only what you export is shared.</small>
+                </div>
               </div>
             )}
             {shot && mode === "shots" && (
@@ -695,7 +811,10 @@ export default function AnalysisPage() {
 
           <Inspector mark={selMark} shot={shot} set={setMark} begin={begin} end={end} textRef={textRef}
             onDuplicate={dup} onDelete={del} onFront={() => restack(true)} onBack={() => restack(false)}
-            onDim={(v, live) => { if (!live) begin(); setDim(v); if (!live) end() }} video={mode === "video"} />
+            onDim={(v, live) => { if (!live) begin(); setDim(v); if (!live) end() }} video={mode === "video"}
+            where={mode === "video" ? (moment && video ? `Moment ${video.moments.indexOf(moment) + 1}` : undefined) : shot ? `Shot ${cur + 1}` : undefined}
+            tagLook={{ style: tagLook, color: tagEdge }} onTagLook={pickTagLook}
+            panel={mode === "video" && video ? momentsPanel : undefined} />
         </div>
       )}
 
@@ -705,19 +824,20 @@ export default function AnalysisPage() {
           onDragLeave={e => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setStripOver(false) }}
           onDrop={e => { const id = e.dataTransfer.getData(DRAG_LIB); if (!id) return; e.preventDefault(); e.stopPropagation(); setStripOver(false); window.dispatchEvent(new CustomEvent("ps-use-kept", { detail: id })) }}>
           {shots.map((s, i) => (
-            <div key={s.id} className={`an-thumb${i === cur ? " on" : ""}`} role="button" tabIndex={0} aria-label={`Shot ${i + 1}`} aria-pressed={i === cur}
-              draggable={!!s.path} onDragStart={e => { e.dataTransfer.setData(DRAG_SHOT, s.id); e.dataTransfer.effectAllowed = "copy" }}
-              onClick={() => { setCur(i); setSel(null) }} onKeyDown={e => { if (e.key === "Enter") { setCur(i); setSel(null) } }}>
-              {srcs[s.id] ? <img src={srcs[s.id]} alt="" /> : null}
-              <span className="an-num">{i + 1}</span>
+            <div key={s.id} className={`an-thumb${i === cur ? " on" : ""}`}
+              draggable={!!s.path} onDragStart={e => { e.dataTransfer.setData(DRAG_SHOT, s.id); e.dataTransfer.effectAllowed = "copy" }}>
+              <button className="an-pick" aria-label={`Shot ${i + 1}`} aria-pressed={i === cur} onClick={() => { setCur(i); setSel(null) }}>
+                {srcs[s.id] ? <img src={srcs[s.id]} alt="" draggable={false} /> : null}
+                <span className="an-num">{i + 1}</span>
+              </button>
               {uploads[s.id] === "up" && <span className="an-over"><Loader2 size={16} className="an-spin" /></span>}
               {uploads[s.id] === "fail" && <span className="an-over">Upload failed</span>}
               {srcs[s.id] === undefined && !uploads[s.id] && <span className="an-over">Loading…</span>}
               {srcs[s.id] === "" && <span className="an-over">Couldn't load</span>}
               {i === cur && <>
                 <button className="an-tbtn" style={{ right: 4 }} aria-label={`Delete shot ${i + 1}`} onClick={e => { e.stopPropagation(); setConfirmDel(s.id) }}><Trash2 size={12} /></button>
-                {i > 0 && <button className="an-tbtn" style={{ right: 56 }} aria-label="Move left" onClick={e => { e.stopPropagation(); moveShot(i, -1) }}><ChevronLeft size={13} /></button>}
-                {i < shots.length - 1 && <button className="an-tbtn" style={{ right: 30 }} aria-label="Move right" onClick={e => { e.stopPropagation(); moveShot(i, 1) }}><ChevronRight size={13} /></button>}
+                {i > 0 && <button className="an-tbtn" style={{ left: 3, top: "auto", bottom: 2 }} aria-label="Move left" onClick={e => { e.stopPropagation(); moveShot(i, -1) }}><ChevronLeft size={13} /></button>}
+                {i < shots.length - 1 && <button className="an-tbtn" style={{ right: 3, top: "auto", bottom: 2 }} aria-label="Move right" onClick={e => { e.stopPropagation(); moveShot(i, 1) }}><ChevronRight size={13} /></button>}
               </>}
               {confirmDel === s.id && (
                 <div className="an-confirm" onClick={e => e.stopPropagation()}>
@@ -728,9 +848,15 @@ export default function AnalysisPage() {
             </div>
           ))}
           {shots.length < MAX_SHOTS && (
-            <button className="an-add" onClick={() => fileRef.current?.click()}><ImagePlus size={18} />{shots.length ? "Add shot" : "Add shots"}</button>
+            <button className="an-add" onClick={() => fileRef.current?.click()}><Plus size={18} />Add shots</button>
           )}
-          <span className="an-strip-note">{shots.length}/{MAX_SHOTS} shots{shots.length ? (libOpen ? " · drag one onto a folder to keep it" : " · numbered in post order") : ""}</span>
+          {Array.from({ length: Math.max(0, MAX_SHOTS - shots.length - 1) }, (_, i) => (
+            <div key={i} className="an-slot" aria-hidden="true" onClick={() => fileRef.current?.click()}>{shots.length + i + 2}</div>
+          ))}
+          <div className="an-count">
+            <b>{shots.length} of {MAX_SHOTS}</b>
+            {shots.length > 0 && <span>{libOpen ? "Drag one onto a folder to keep it" : "Numbered in post order"}</span>}
+          </div>
         </div>
       )}
 

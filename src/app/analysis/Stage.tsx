@@ -16,7 +16,7 @@ export type Defaults = {
   text: { color: string; box: boolean }
 }
 export const START_DEFAULTS: Defaults = {
-  tag: { color: "#d7ff3c", ring: true, glow: false, style: "cast" },
+  tag: { color: "#d7ff3c", ring: true, glow: false, style: "sig" }, // the signature tag: the look that is always PitchStudio
   spot: { color: "#d7ff3c" },
   zone: { color: "#d7ff3c", opacity: 0.28, outline: false },
   oval: { color: "#ffffff", opacity: 0.25, outline: false },
@@ -277,7 +277,7 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
   const selMark = sel ? shot.items.find(x => x.id === sel) : undefined
   const r = 7 / scale, sw = 1.6 / scale // handles look the same size at any zoom
   const H = (id: string, p: Pt, shape: "c" | "s" | "d" = "c", label?: string) => (
-    <g key={id} data-h={id} style={{ cursor: "grab", pointerEvents: "all" }} aria-label={label}>
+    <g key={id} data-h={id} style={{ cursor: "grab", pointerEvents: "all" }} role="img" aria-label={label}>
       <circle cx={p[0]} cy={p[1]} r={r * 2.2} fill="transparent" />
       {shape === "c" && <circle cx={p[0]} cy={p[1]} r={r} fill="#ffffff" stroke="#111" strokeWidth={sw} />}
       {shape === "s" && <rect x={p[0] - r} y={p[1] - r} width={2 * r} height={2 * r} fill="#d7ff3c" stroke="#111" strokeWidth={sw} />}

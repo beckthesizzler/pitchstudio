@@ -23,8 +23,8 @@ function useWidth(deps: unknown[]) {
 }
 
 /* A player tag in one of four styles:
-   cast   broadcast: a ring at the player's feet and the name in bold, in the tag colour with a dark outline, no box (the default).
-   sig    the PitchStudio plate. A dark plate with its top left corner cut at 45 degrees (the Pitch Block's corner),
+   cast   broadcast: a ring at the player's feet and the name in bold, in the tag colour with a dark outline, no box.
+   sig    the PitchStudio plate (the default, the signature tag). A dark plate with its top left corner cut at 45 degrees (the Pitch Block's corner),
           a block of the tag colour down its left edge that follows the same cut, the name in spaced capitals,
           and a thin echo ring around the ground ring.
    plain  a rounded plate in the tag colour.
@@ -34,12 +34,12 @@ function TagMark({ m, U }: { m: Tag; U: number }) {
   const u = U * m.size
   const style = m.style ?? "sig", sig = style === "sig", bare = style === "bare", cast = style === "cast"
   const text = sig ? m.label.toUpperCase() : m.label
-  const fs = (sig ? 23 : cast ? 31 : bare ? 30 : 25) * u, ph = (sig ? 34 : cast ? 40 : 36) * u, pad = 12 * u
-  const bw = 6 * u, gap = 9 * u, cut = 9 * u // signature: block width, space after it, the cut corner
+  const fs = (sig ? 25 : cast ? 31 : bare ? 30 : 25) * u, ph = (sig ? 38 : cast ? 40 : 36) * u, pad = 12 * u
+  const bw = 7 * u, gap = 11 * u, cut = 11 * u // signature: block width, space after it, the cut corner
   const [ref, tw] = useWidth([text, fs, style])
   const lx = m.x + m.dx, ly = m.y + m.dy
   const textW = tw || text.length * fs * 0.5
-  const pw = sig ? bw + gap + textW + 11 * u : cast ? textW : textW + 2 * pad
+  const pw = sig ? bw + gap + textW + 14 * u : cast ? textW : textW + 2 * pad
   const ring = { rx: 24 * u, ry: 8 * u }
   const showLabel = text.trim().length > 0
   // the leader runs from the label down to just above the ring, when the label is above the player
@@ -64,7 +64,7 @@ function TagMark({ m, U }: { m: Tag; U: number }) {
         <ellipse cx={m.x} cy={m.y} rx={27 * u} ry={9.5 * u} fill={m.color} fillOpacity={0.14} stroke={m.color} strokeWidth={3.8 * u} />
       </>}
       {m.ring && !m.glow && !cast && <>
-        {sig && <ellipse cx={m.x} cy={m.y} rx={34 * u} ry={11.5 * u} fill="none" stroke={m.color} strokeOpacity={0.5} strokeWidth={1.5 * u} />}
+        {sig && <ellipse cx={m.x} cy={m.y} rx={36 * u} ry={12 * u} fill="none" stroke={m.color} strokeOpacity={0.6} strokeWidth={2 * u} />}
         <ellipse cx={m.x} cy={m.y} rx={ring.rx} ry={ring.ry} fill={m.color} fillOpacity={0.2} stroke={m.color} strokeWidth={3.5 * u} />
       </>}
       {leader && cast && <line x1={lx} y1={ly} x2={m.x} y2={top} stroke="rgba(0,0,0,0.55)" strokeWidth={6 * u} strokeLinecap="round" />}
@@ -72,10 +72,10 @@ function TagMark({ m, U }: { m: Tag; U: number }) {
       {!m.ring && !showLabel && <circle cx={m.x} cy={m.y} r={7 * u} fill={m.color} />}
       {showLabel && sig && (
         <g>
-          <polygon points={`${x0 + cut},${y0} ${x0 + pw},${y0} ${x0 + pw},${ly} ${x0},${ly} ${x0},${y0 + cut}`} fill="rgba(12,14,18,0.86)" stroke="rgba(255,255,255,0.1)" strokeWidth={u} strokeLinejoin="miter" />
+          <polygon points={`${x0 + cut},${y0} ${x0 + pw},${y0} ${x0 + pw},${ly} ${x0},${ly} ${x0},${y0 + cut}`} fill="rgba(12,14,18,0.92)" stroke="rgba(255,255,255,0.12)" strokeWidth={u} strokeLinejoin="miter" />
           <polygon points={`${x0},${y0 + cut} ${x0 + bw},${y0 + cut - bw} ${x0 + bw},${ly} ${x0},${ly}`} fill={m.color} />
-          <text ref={ref} x={x0 + bw + gap} y={ly - ph / 2} dominantBaseline="central" fill="#ffffff" fontSize={fs} fontWeight={700}
-            style={{ fontFamily: CONDENSED, letterSpacing: "0.06em" }}>{text}</text>
+          <text ref={ref} x={x0 + bw + gap} y={ly - ph / 2} dominantBaseline="central" fill="#ffffff" fontSize={fs} fontWeight={800}
+            style={{ fontFamily: CONDENSED, letterSpacing: "0.07em" }}>{text}</text>
         </g>
       )}
       {showLabel && style === "plain" && (
