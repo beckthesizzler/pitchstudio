@@ -1,5 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, Component, lazy, Suspense } from "react"
-import type { ReactNode } from "react"
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react"
 import React from "react"
 import { toPng, toJpeg, toBlob, toCanvas as nodeToCanvas, getFontEmbedCSS } from "html-to-image"
 import {
@@ -14,35 +13,23 @@ import {
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
-  Grid3x3, Rows3, Pencil, Waypoints, Eye, EyeOff, Play, Sun, Moon, PanelBottom, SlidersHorizontal, TextCursorInput,
+  Grid3x3, Rows3, Pencil, ChevronLeft, Waypoints, Eye, EyeOff, Play, Sun, Moon, PanelBottom, SlidersHorizontal, TextCursorInput,
 } from "lucide-react"
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router"
+import { useNavigate, useLocation } from "react-router"
 import { supabase } from "./lib/supabase"
 import { stripHandleSuffix } from "./lib/account"
 import {
   PS_VOLT, SURFACE_BASE, SURFACE_1, SURFACE_2, ACCENT_GRADIENT, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT,
   TEXT_PRIMARY, TEXT_MUTED, DS_ERROR, DS_ERROR_SOFT, DS_BORDER, DS_BORDER_STRONG, GLASS, SCRIM, useTheme,
 } from "./theme"
-import LandingPage from "./pages/Landing"
-import AuthPage, { recovery } from "./pages/Auth"
 import { STAGE_CSS, Dock, DockButton, ViewControls, PresentBar, AreaPicker, AreaMap, readDock, saveDock, readPanelSide, savePanelSide, type DockPlace, type DockItem, type PanelSide } from "./board/Stage"
 import { NameRun, TeamSheet, NAMES_CSS, splitNumber, type NameRunPlayer } from "./board/Names"
-import { reportError } from "./lib/telemetry" // also starts crash reporting
 import { shrinkForBoard, imageProblem } from "./lib/images"
-import HomePage from "./pages/Home"
 import { Mark } from "./brand/Mark"
 import { CreatorSeal, SealDisc } from "./brand/Signature"
 import { dayName, isAutoName, listName } from "./lib/names"
 import { takeIssue, peekIssue, issueLabel, issueDay as dayStamp } from "./lib/issues"
-import { DEFAULT_BRAND, readBrand, logoToDataUrl, type Brand } from "./brand/brand"
-import ProfilePage from "./pages/Profile"
-import { GoodbyePage } from "./pages/AccountData"
-const AnalysisPage = lazy(() => import("./pages/Analysis")) // only downloaded when someone opens Live Game Analysis
-const ReportPage = lazy(() => import("./pages/Report")) // only downloaded when someone opens Match Report
-const BrainDumpPage = lazy(() => import("./pages/BrainDump")) // only downloaded when someone opens Brain Dump
-const ShelfPage = lazy(() => import("./pages/Shelf")) // only downloaded when someone opens their shelf
-const PublicCardPage = lazy(() => import("./pages/PublicCard")) // a creator's public card, open to anyone
-const WelcomePage = lazy(() => import("./pages/Welcome")) // "Your studio is open", once, after sign-up
+import { DEFAULT_BRAND, readBrand, logoToDataUrl, inkFor, type Brand } from "./brand/brand"
 import Tour, { TOUR_KEY } from "./Tour"
 
 /* ─────────────────────────── Types ─────────────────────────── */
@@ -1117,6 +1104,18 @@ const PITCH_LOOKS = {
   paper: { a: "#f3eee1", b: "#ece6d5", line: "rgba(34,30,22,0.62)", w: 2.2, box: "rgba(34,30,22,0.08)", spot: "#1d1b16", bg: "#ddd6c3", mark: "#1d1b16" },
   cobalt: { a: "#185189", b: "#174d83", line: "#f4c44f", w: 2.4, box: "rgba(244,196,79,0.14)", spot: "#f4c44f", bg: "#0a1420", mark: "#ffffff" },
 } as const
+/** A small picture of a pitch look, for the look picker */
+function LookThumb({ look, green }: { look: BoardSettings["pitchStyle"]; green: boolean }) {
+  const lk = look === "classic" ? null : PITCH_LOOKS[look]
+  const a = lk ? lk.a : green ? "#1e6634" : "#ffffff", b = lk ? lk.b : green ? "#1a5a2d" : "#f4f4f2"
+  const line = lk ? lk.line : green ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.7)"
+  return (
+    <svg viewBox="0 0 120 76" aria-hidden="true">
+      {[0, 1, 2, 3, 4, 5].map(i => <rect key={i} x={i * 20} y="0" width="20" height="76" fill={i % 2 ? b : a} />)}
+      <g fill="none" stroke={line} strokeWidth="1.3"><rect x="4" y="4" width="112" height="68" /><path d="M60 4V72" /><circle cx="60" cy="38" r="10" /><rect x="4" y="22" width="17" height="32" /><rect x="99" y="22" width="17" height="32" /></g>
+    </svg>
+  )
+}
 function PitchSVG({ pitchColor, look = "classic", mark = false, upright = false }: { pitchColor: "green" | "white"; look?: BoardSettings["pitchStyle"]; mark?: boolean; upright?: boolean }) {
   const lk = look === "classic" ? null : PITCH_LOOKS[look]
   const L = lk ? lk.line : pitchColor === "white" ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.85)", W = lk ? lk.w : 2.5
@@ -2497,6 +2496,20 @@ function TacticsBoard() {
   const [accountName, setAccountName] = useState("")
   const [creatorHandle, setCreatorHandle] = useState("") // shown in the watermark, once you've chosen a handle yourself
   const [creatorBrand, setCreatorBrand] = useState<Brand>(DEFAULT_BRAND) // your Creator Card: the crest and look that sign your exports
+  const [myClub, setMyClub] = useState("") // your club, from your profile: the home team of every new board
+  /** A new, empty board starts with your club as the home team, in your card's colours. A saved board or a template keeps its own. */
+  useEffect(() => {
+    if (currentBoardIdRef.current || players.length || homeName.trim()) return
+    if (myClub) setHomeName(myClub)
+    const b = creatorBrand
+    if (!b.color2 && b.color === DEFAULT_BRAND.color) return
+    const c1 = b.color, c2 = b.color2 ?? b.color
+    setHomeColor(c1); setHomeC2(c2); setHomePat(b.color2 ? "sleeves" : "solid"); setHomeNum(inkFor(c1))
+    // the away side changes to white when your colour sits too close to its blue
+    const rgb = (h: string) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16))
+    const [r, g, bl] = rgb(c1), [r2, g2, b2] = rgb(awayColor)
+    if (Math.hypot(r - r2, g - g2, bl - b2) < 130) { setAwayColor("#f2f0ea"); setAwayC2("#f2f0ea"); setAwayPat("solid"); setAwayNum("#121316") }
+  }, [myClub, creatorBrand]) // eslint-disable-line react-hooks/exhaustive-deps
   const [creatorLogo, setCreatorLogo] = useState<string | null>(null) // your logo as a data address, so exports never wait on the network
   useEffect(() => {
     let off = false
@@ -2505,9 +2518,9 @@ function TacticsBoard() {
     return () => { off = true }
   }, [creatorBrand.logo])
   useEffect(() => {
-    if (!authUser) { setAccountName(""); setCreatorHandle(""); setCreatorBrand(DEFAULT_BRAND); return }
+    if (!authUser) { setAccountName(""); setCreatorHandle(""); setCreatorBrand(DEFAULT_BRAND); setMyClub(""); return }
     let cancelled = false
-    supabase.from("profiles").select("display_name, handle, brand").eq("id", authUser.id).maybeSingle()
+    supabase.from("profiles").select("display_name, handle, brand, favorite_club").eq("id", authUser.id).maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
         const raw = (data as any)?.display_name || (data as any)?.handle || ""
@@ -2515,6 +2528,7 @@ function TacticsBoard() {
         const handle: string = (data as any)?.handle || ""
         setCreatorHandle(handle && stripHandleSuffix(handle, authUser.id, authUser.email) === handle ? handle : "")
         setCreatorBrand(readBrand((data as any)?.brand))
+        setMyClub(String((data as any)?.favorite_club ?? "").trim().slice(0, 30))
         peekIssue(authUser.id).then(n => { if (!cancelled) setNextIssue(n) })
       })
     // your squads from your account; any kept only in this browser join them (the account's copy wins a name both have)
@@ -4620,7 +4634,46 @@ function TacticsBoard() {
   return (
     <div className="flex flex-col h-screen overflow-hidden select-none"
       style={{ fontFamily: "'Inter', sans-serif", background: SURFACE_BASE, color: TEXT_PRIMARY }}>
-      <style>{STAGE_CSS + NAMES_CSS}</style>
+      <style>{STAGE_CSS + NAMES_CSS + `
+        .ps-sec { height: 38px !important; font: 500 12px 'JetBrains Mono', monospace !important; letter-spacing: .16em !important; text-transform: uppercase; }
+        .ps-looks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .ps-looks button { display: flex; flex-direction: column; gap: 5px; padding: 4px 4px 6px; border-radius: 11px; border: 2px solid ${DS_BORDER}; background: ${SURFACE_2}; cursor: pointer; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; text-align: left; transition: border-color .15s, color .15s; }
+        .ps-looks button svg { width: 100%; height: auto; border-radius: 7px; display: block; }
+        .ps-looks button span { padding: 0 3px; }
+        .ps-looks button.on { border-color: #7cc4ff; color: ${TEXT_PRIMARY}; }
+        .ps-looks button:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
+        .ps-start-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 10; }
+        .ps-start-ghost { position: absolute; width: min(70%, 820px); opacity: .2; }
+        .ps-start { position: relative; pointer-events: auto; width: min(560px, calc(100% - 32px)); text-align: center; background: rgba(23,24,27,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; padding: 28px 30px 22px; box-shadow: 0 30px 70px -20px rgba(0,0,0,.7); backdrop-filter: blur(6px); }
+        .ps-start-k { margin: 0; font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .ps-start-h { margin: 10px 0 8px; font: 400 clamp(30px, 4vw, 40px)/1.02 'Anton', 'Bebas Neue', sans-serif; letter-spacing: .01em; color: #f5f5f7; }
+        .ps-start-b { margin: 0 auto 18px; max-width: 440px; font-size: 14px; line-height: 1.45; color: ${TEXT_MUTED}; }
+        .ps-start-go { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 26px; border: none; border-radius: 12px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 15px 'Inter', sans-serif; cursor: pointer; transition: transform .15s, filter .15s; }
+        .ps-start-go:hover { filter: brightness(1.05); transform: translateY(-1px); }
+        .ps-start-go:focus-visible, .ps-start-alt button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+        .ps-start-alt { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
+        .ps-start-alt button { height: 34px; padding: 0 13px; border-radius: 9px; border: 1px solid rgba(255,255,255,.13); background: transparent; color: #c9c9d1; font: 600 12.5px 'Inter', sans-serif; cursor: pointer; transition: border-color .15s, color .15s; }
+        .ps-start-alt button:hover { border-color: rgba(255,255,255,.3); color: #fff; }
+        .ps-start-tip { margin: 14px 0 0; font-size: 12px; color: #8a8a94; }
+        .ps-start-tip kbd { font: 500 12px 'JetBrains Mono', monospace; border: 1px solid rgba(255,255,255,.18); border-radius: 4px; padding: 0 5px; }
+        [data-theme="light"] .ps-start { background: rgba(255,255,255,.96); border-color: rgba(0,0,0,.1); }
+        [data-theme="light"] .ps-start-h { color: #121316; }
+        [data-theme="light"] .ps-start-alt button { color: #3a3b40; border-color: rgba(0,0,0,.14); }
+        .ps-back { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin: -2px 0 -4px -4px; padding: 4px 6px; border: none; border-radius: 7px; background: none; color: ${TEXT_MUTED}; font: 600 12.5px 'Inter', sans-serif; cursor: pointer; }
+        .ps-back:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; }
+        .ps-hero { display: flex; align-items: center; gap: 14px; padding: 2px 0 4px; }
+        .ps-hero b { font: 400 64px/0.9 'Anton', 'Bebas Neue', sans-serif; min-width: 38px; }
+        .ps-hero small { display: block; font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .12em; text-transform: uppercase; color: ${TEXT_MUTED}; }
+        .ps-hero strong { display: block; margin-top: 4px; font: 400 26px/1 'Anton', 'Bebas Neue', sans-serif; letter-spacing: .02em; text-transform: uppercase; color: ${TEXT_PRIMARY}; overflow-wrap: anywhere; }
+        .ps-namenum { display: grid; grid-template-columns: 1fr 64px; gap: 8px; }
+        .ps-namenum input { width: 100%; min-width: 0; box-sizing: border-box; }
+        .ps-hero + div > p { visibility: hidden; }
+        .ps-savestate { padding: 0 8px; font: 500 12px 'Inter', sans-serif; color: ${TEXT_MUTED}; white-space: nowrap; }
+        .ps-savestate::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: currentColor; opacity: .6; }
+        .ps-savestate[data-state="saved"]::before { background: ${ACCENT_SOLID}; opacity: 1; }
+        .ps-savestate[data-state="error"] { color: ${DS_ERROR}; }
+        @media (max-width: 600px) { .ps-savestate { display: none; } .ps-start { padding: 22px 18px 18px; } }
+        @media (prefers-reduced-motion: reduce) { .ps-start-go { transition: none; } }`}</style>
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
 
       {/* ── Top Header ── (on narrower screens Templates, My Boards, undo and redo move into the ⋯ menu) */}
@@ -4639,13 +4692,18 @@ function TacticsBoard() {
               className="bg-transparent outline-none font-bold text-sm min-w-0"
               style={{ borderBottom: `1px solid ${ACCENT_SOLID}`, color: TEXT_PRIMARY, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", width: 200 }} />
           ) : (
+            <div className="flex flex-col min-w-0">
             <button onClick={() => setEditingTitle(true)}
-              className="flex items-center gap-1.5 group px-2 py-1 rounded hover:bg-[var(--ps-hover)] transition-colors min-w-0"
+              className="flex items-center gap-1.5 group px-2 pt-0.5 rounded hover:bg-[var(--ps-hover)] transition-colors min-w-0"
               title="Click to rename">
               <span className="font-bold text-sm truncate max-w-40 xl:max-w-72"
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", opacity: title.trim() ? 1 : 0.6 }}>{title.trim() || autoName.current}</span>
               <Pencil size={11} className="opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" style={{ color: ACCENT_SOLID }} />
             </button>
+            <span className="ps-savestate" aria-live="polite" data-state={saveStatus === "error" ? "error" : saveStatus === "saving" ? "saving" : currentBoardId && !changedSinceSave ? "saved" : "unsaved"}>
+              {saveStatus === "saving" ? "Saving…" : saveStatus === "error" ? "Not saved. Try again" : currentBoardId && !changedSinceSave ? "Saved" : currentBoardId ? "Changes not saved yet" : "Not saved yet"}
+            </span>
+            </div>
           )}
         </div>
 
@@ -4683,7 +4741,7 @@ function TacticsBoard() {
                 style={{
                   background: saveStatus === "error" ? DS_ERROR : SURFACE_2,
                   color: saveStatus === "error" ? "#ffffff" : savedNow ? TEXT_MUTED : TEXT_PRIMARY,
-                  boxShadow: saveStatus !== "error" && !savedNow ? `inset 0 0 0 1px ${ACCENT_SOLID}` : "none",
+                  boxShadow: saveStatus !== "error" && !savedNow ? `inset 0 0 0 1px ${DS_BORDER_STRONG}` : "none",
                   opacity: saveStatus === "saving" ? 0.7 : 1,
                   borderRadius: currentBoardId ? "6px 0 0 6px" : 6,
                 }}>
@@ -5011,6 +5069,19 @@ function TacticsBoard() {
               })()
             ) : sel ? (
               <div className="p-3 flex flex-col gap-3">
+                <button className="ps-back" onClick={() => setSideTab("board")}><ChevronLeft size={14} /> Board settings</button>
+                {selP && !selP.kind && !selP.ghost && (() => {
+                  const team = teamOf(selP), k = team ? kitOf(team) : { c1: selP.bg, c2: selP.bg2 ?? selP.bg }
+                  const lum = (h: string) => { const m = /^#([0-9a-f]{6})$/i.exec(h || ""); if (!m) return 0.5; const n = parseInt(m[1], 16); return (0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255 }
+                  const ink = [k.c1, k.c2].find(c => lum(c) > 0.18 && lum(c) < 0.92) ?? TEXT_PRIMARY // the kit colour that reads on the panel
+                  const club = team === "home" ? homeName.trim() || "Home" : team === "away" ? awayName.trim() || "Away" : "Own kit"
+                  return (
+                    <div className="ps-hero">
+                      <b style={{ color: ink }}>{selP.num || "–"}</b>
+                      <span><small>Player · {club}</small><strong>{selP.name.trim() || "No name yet"}</strong></span>
+                    </div>
+                  )
+                })()}
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.08em" }}>
                     {selP ? (selP.kind === "marker" ? "✕ marker" : selP.kind === "ball" ? "Ball" : selP.ghost ? "Ghost" : "Player") : selA ? "Arrow" : selT ? "Text" : selS ? (selS.ids ? (selS.closed === false ? "Team line" : "Team shape") : "Shape") : selI ? "Image" : sel.kind === "zone" ? "Zone" : "Element"}
@@ -5049,20 +5120,22 @@ function TacticsBoard() {
 
                 {selP && selP.kind !== "marker" && selP.kind !== "ball" && (
                   <div className="flex flex-col gap-2">
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Name — shown below</span>
-                      <input value={selP.name} onChange={e => updP({ name: e.target.value })}
-                        placeholder="e.g. Cubarsí"
-                        className="rounded px-2 py-1 text-xs outline-none"
-                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs" style={{ color: TEXT_MUTED }}>Number — shown in circle</span>
-                      <input value={selP.num} onChange={e => updP({ num: e.target.value })}
-                        placeholder="e.g. 4"
-                        className="rounded px-2 py-1 text-xs outline-none"
-                        style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                    </label>
+                    <div className="ps-namenum">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs" style={{ color: TEXT_MUTED }}>Name</span>
+                        <input value={selP.name} onChange={e => updP({ name: e.target.value })}
+                          placeholder="e.g. Cubarsí" aria-label="Name, shown below"
+                          className="rounded px-2.5 outline-none"
+                          style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, height: 36, fontSize: 13.5, fontWeight: 600 }} />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs" style={{ color: TEXT_MUTED }}>Number</span>
+                        <input value={selP.num} onChange={e => updP({ num: e.target.value })}
+                          placeholder="4" aria-label="Number, shown in the circle"
+                          className="rounded px-2 outline-none text-center"
+                          style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, height: 36, fontSize: 13.5, fontWeight: 700 }} />
+                      </label>
+                    </div>
                     {(() => {
                       // The kit: the team's, a goalkeeper's, or the player's own. Colours only show for their own kit.
                       const team = teamOf(selP), tk = team ? kitOf(team) : null
@@ -5445,8 +5518,8 @@ function TacticsBoard() {
 
             <button aria-expanded={boardGroups.frame}
               onClick={() => setBoardGroups(g => ({ ...g, frame: !g.frame }))}
-              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
               {boardGroups.frame ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -5484,8 +5557,8 @@ function TacticsBoard() {
 
             <button data-tour="teams" aria-expanded={boardGroups.teams}
               onClick={() => setBoardGroups(g => ({ ...g, teams: !g.teams }))}
-              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
               {boardGroups.teams ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -5516,8 +5589,8 @@ function TacticsBoard() {
 
             <button aria-expanded={boardGroups.pitch}
               onClick={() => setBoardGroups(g => ({ ...g, pitch: !g.pitch }))}
-              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
               {boardGroups.pitch ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -5528,9 +5601,19 @@ function TacticsBoard() {
                 <Segmented label="Canvas" value={canvasMode} onChange={v => { undoPoint(); setCanvasMode(v) }}
                   options={[["full", "Full pitch"], ["half", "Half pitch"], ["blank", "Blank"]]} />
                 {canvasMode !== "blank" && (
-                  <Segmented label="Pitch style" value={pitchStyle}
-                    onChange={v => { undoPoint(); setPitchStyle(v); setBgColor(v === "classic" ? DEFAULT_BOARD_SETTINGS.bgColor : PITCH_LOOKS[v].bg) }}
-                    options={[["classic", "Classic"], ["night", "Night"], ["paper", "Paper"], ["cobalt", "Cobalt"]]} />
+                  <div>
+                    <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Pitch look</p>
+                    <div className="ps-looks" role="radiogroup" aria-label="Pitch look">
+                      {([["classic", "Grass"], ["paper", "Studio paper"], ["night", "Night"], ["cobalt", "Cobalt"]] as const).map(([v, name]) => (
+                        <button key={v} role="radio" aria-checked={pitchStyle === v} className={pitchStyle === v ? "on" : undefined}
+                          onClick={() => { undoPoint(); setPitchStyle(v); setBgColor(v === "classic" ? DEFAULT_BOARD_SETTINGS.bgColor : PITCH_LOOKS[v].bg) }}>
+                          <LookThumb look={v} green={pitchColor !== "white"} />
+                          <span>{name}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {pitchStyle === "paper" && <p className="text-xs mt-1.5" style={{ color: TEXT_MUTED }}>A warm page with thin lines. Turn on the editorial frame for the headline, score and caption.</p>}
+                  </div>
                 )}
                 {canvasMode !== "blank" && pitchStyle === "classic" && (
                   <Segmented label="Pitch colour" value={pitchColor} onChange={v => { undoPoint(); setPitchColor(v) }}
@@ -5622,8 +5705,8 @@ function TacticsBoard() {
 
             <button aria-expanded={boardGroups.editorial}
               onClick={() => setBoardGroups(g => ({ ...g, editorial: !g.editorial }))}
-              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
               {boardGroups.editorial ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -5667,8 +5750,8 @@ function TacticsBoard() {
 
             <button aria-expanded={boardGroups.animation}
               onClick={() => setBoardGroups(g => ({ ...g, animation: !g.animation }))}
-              className="w-full flex items-center gap-2 px-3 text-[13px] font-semibold transition-colors"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_PRIMARY, letterSpacing: "0.07em" }}
+              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
+              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
               onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
               onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
               {boardGroups.animation ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -5719,30 +5802,32 @@ function TacticsBoard() {
           onPointerUp={onCanvasMouseUp}
         >
           <h1 className="sr-only">Tactics Board</h1>
-          {/* Empty state overlay */}
+          {/* Empty board: one clear first move, with a faint finished board behind it to show what you're making */}
           {players.length === 0 && arrows.length === 0 && texts.length === 0 && shapes.length === 0 && images.length === 0 && customZones.length === 0 && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
-              <div style={{ textAlign: "center", background: GLASS, border: `1px solid ${DS_BORDER}`, borderRadius: 12, padding: "22px 20px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
-                <p style={{ fontSize: 18, fontWeight: 700, color: TEXT_PRIMARY, margin: 0 }}>Start your board</p>
-                <p style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 6, margin: "6px 0 0" }}>Paste a line-up, add a full team, place players one at a time, or draw a zone.</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, padding: "0 12px", justifyContent: "center", pointerEvents: "auto" }}>
-                  <button onClick={() => { setNewsText(""); setPasteFor("home") }}
-                    style={{ background: ACCENT_SOLID, border: `1px solid ${ACCENT_SOLID}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, color: ACCENT_INK, cursor: "pointer" }}>Paste a line-up</button>
+            <div className="ps-start-wrap">
+              <svg className="ps-start-ghost" viewBox="0 0 1050 680" aria-hidden="true" preserveAspectRatio="xMidYMid meet" style={{ color: pitchStyle === "paper" || (pitchStyle === "classic" && pitchColor === "white") ? "#1d1b16" : "#ffffff" }}>
+                <g fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round">
+                  <path d="M451 340L645 127" /><path d="M622 118L661 109L652 147" /><path d="M420 204L546 190" strokeDasharray="14 12" /><path d="M661 571L840 489" strokeDasharray="14 12" />
+                </g>
+                <rect x="378" y="231" width="210" height="218" rx="16" fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeDasharray="12 10" strokeWidth="3" />
+                {[[52, 340], [252, 95], [221, 252], [221, 428], [252, 585], [420, 204], [451, 340], [420, 476], [661, 109], [714, 340], [661, 571]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="20" fill="currentColor" />)}
+              </svg>
+              <div className="ps-start" role="region" aria-label="Start your board">
+                <p className="ps-start-k">Your studio · new board</p>
+                <p className="ps-start-h">START WITH YOUR XI.</p>
+                <p className="ps-start-b">Copy the club's line-up post and paste it: the formation, names and numbers land in place.</p>
+                <button className="ps-start-go" onClick={() => { setNewsText(""); setPasteFor("home") }}><UserPlus size={18} /> Paste a line-up</button>
+                <div className="ps-start-alt">
                   {([
                     { label: "Start from a drop", action: () => setShowTemplates(true) },
                     { label: "Add formation", action: () => addTeam("home") },
                     { label: "Place a player", action: () => setTool("homePlayer") },
                     { label: "Draw a zone", action: () => setTool("zone") },
                   ] as { label: string; action: () => void }[]).map(({ label, action }) => (
-                    <button key={label} onClick={action}
-                      style={{ background: SURFACE_2, border: `1px solid ${DS_BORDER}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, color: TEXT_PRIMARY, cursor: "pointer" }}
-                      onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.borderColor = ACCENT_SOLID}
-                      onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.borderColor = DS_BORDER}>
-                      {label}
-                    </button>
+                    <button key={label} onClick={action}>{label}</button>
                   ))}
                 </div>
-                <p style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 14 }}>Tip: hold Shift and click to select more than one player.</p>
+                <p className="ps-start-tip">Press <kbd>⌘V</kbd> any time to paste. The faint board behind this is what a finished one looks like.</p>
               </div>
             </div>
           )}
@@ -6503,7 +6588,7 @@ function TacticsBoard() {
       {pasteFor && (() => {
         const news = readTeamNews(newsText)
         const known = FORMATIONS.some(x => x.name === news.formation)
-        const read = !newsText.trim() ? "Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; …"
+        const read = !newsText.trim() ? `${myClub || "Your team"} (4-3-3): Goalkeeper; Right back, Centre back, …`
           : !news.names.length ? "No names yet"
           : [news.team, news.formation ? (known ? news.formation : `${news.formation} (not on the board yet)`) : "formation: keeps the current one", `${news.names.length} of 11 players`].filter(Boolean).join(" · ")
         const close = () => setPasteFor(null)
@@ -6520,7 +6605,7 @@ function TacticsBoard() {
               <p className="text-sm" style={{ color: TEXT_MUTED, margin: 0 }}>Copy it from the club's post or a match report. Goalkeeper first, a semicolon between the lines, and the formation comes with it.</p>
               <Segmented label="Team" value={pasteFor} onChange={v => setPasteFor(v)} options={[["home", homeName.trim() || "Home"], ["away", awayName.trim() || "Away"]]} />
               <textarea autoFocus value={newsText} onChange={e => setNewsText(e.target.value)} rows={5} aria-label="Line-up"
-                placeholder={"Barcelona (4-3-3): García; Koundé, Araujo, Cubarsí, Balde; Pedri, De Jong, Fermín; Yamal, Jesus, Raphinha"}
+                placeholder={`${myClub || "Your team"} (4-3-3): Goalkeeper; Right back, Centre back, Centre back, Left back; Midfielder, Midfielder, Midfielder; Right winger, Striker, Left winger`}
                 className="rounded px-3 py-2 text-sm outline-none resize-y" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, fontSize: 16 }} />
               <p className="text-xs" aria-live="polite" style={{ color: news.names.length ? ACCENT_TEXT : TEXT_MUTED, margin: 0 }}>{read}</p>
               <div className="flex justify-end gap-2">
@@ -7482,168 +7567,5 @@ function ClearConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onC
   )
 }
 
-/* ─────────────────────────── Error Boundary ────────────────── */
-const CHUNK_RELOAD_KEY = "ps_chunk_reload_attempted"
-
-function isChunkError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false
-  const msg = err.message ?? ""
-  const name = (err as any).name ?? ""
-  return (
-    msg.includes("Failed to fetch dynamically imported module") ||
-    msg.includes("Importing a module script failed") ||
-    msg.includes("Unable to preload CSS") ||
-    name === "ChunkLoadError" ||
-    /Loading chunk \d+ failed/.test(msg)
-  )
-}
-
-class AppErrorBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: ReactNode }) {
-    super(props)
-    this.state = { hasError: false }
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true }
-  }
-
-  componentDidCatch(error: Error, info?: { componentStack?: string | null }) {
-    reportError(error, "screen", { stack: (info?.componentStack ?? "").slice(0, 600) })
-    if (isChunkError(error)) {
-      if (!sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
-        sessionStorage.setItem(CHUNK_RELOAD_KEY, "1")
-        window.location.reload()
-        return
-      }
-    }
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{
-          width: "100vw", height: "100vh", background: SURFACE_BASE,
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          gap: 16, fontFamily: "'Inter', sans-serif",
-        }}>
-          <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 15, margin: 0 }}>
-            Something went wrong. Please reload.
-          </p>
-          <button
-            onClick={() => window.location.reload()}
-            style={{
-              padding: "9px 22px", borderRadius: 8,
-              background: ACCENT_SOLID, color: ACCENT_INK,
-              fontSize: 14, fontWeight: 600, border: "none", cursor: "pointer",
-            }}>
-            Reload
-          </button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
-/* ─────────────────────────── Home route ─────────────────────── */
-/** "/" shows the landing page to visitors and Home (the menu to the whole studio) to signed-in users. */
-function HomeRoute({ signedIn }: { signedIn: boolean }) {
-  return signedIn ? <HomePage /> : <LandingPage />
-}
-
-/** "/board" is the Tactics Board (sign-in only). A new visit opens a fresh board; "/board?open=ID" opens a saved one. */
-function BoardRoute({ signedIn }: { signedIn: boolean }) {
-  const loc = useLocation()
-  if (!signedIn) return <Navigate to="/" replace />
-  return <TacticsBoard key={loc.key} />
-}
-
-/** "/analysis" is Live Game Analysis (sign-in only). A new visit starts a new analysis; "/analysis?open=ID" opens a saved one. */
-function AnalysisRoute({ signedIn }: { signedIn: boolean }) {
-  const loc = useLocation()
-  if (!signedIn) return <Navigate to="/" replace />
-  return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><AnalysisPage key={loc.key} /></Suspense>
-}
-
-/** "/report" is Match Report (sign-in only). A new visit starts a new report; "/report?open=ID" opens a saved one. */
-function ReportRoute({ signedIn }: { signedIn: boolean }) {
-  const loc = useLocation()
-  if (!signedIn) return <Navigate to="/" replace />
-  return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><ReportPage key={loc.key} /></Suspense>
-}
-
-/** "/shelf" is your shelf (sign-in only): everything you've made, in your order */
-function ShelfRoute({ signedIn }: { signedIn: boolean }) {
-  if (!signedIn) return <Navigate to="/" replace />
-  return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><ShelfPage /></Suspense>
-}
-
-/** "/braindump" is Brain Dump (sign-in only): the wall of notes */
-function BraindumpRoute({ signedIn }: { signedIn: boolean }) {
-  if (!signedIn) return <Navigate to="/" replace />
-  return <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><BrainDumpPage /></Suspense>
-}
-
-/* ─────────────────────────── Root (entry) ───────────────────── */
-export default function Root() {
-  const [authUser, setAuthUser] = useState<import("@supabase/supabase-js").User | null>(null)
-  const [authLoading, setAuthLoading] = useState(true)
-
-  useEffect(() => {
-    // Never leave people on a blank screen: if the session check stalls or fails,
-    // stop waiting after 6 seconds and show the site. A late session still signs them in.
-    const done = () => { clearTimeout(timer); setAuthLoading(false) }
-    const timer = setTimeout(done, 6000)
-    supabase.auth.getSession()
-      .then(({ data: { session } }) => setAuthUser(session?.user ?? null))
-      .catch(() => { /* treat as signed out */ })
-      .finally(done)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setAuthUser(session?.user ?? null)
-      // Link analytics to the account (user id only, never the email); forget it on sign-out
-      const ph = (window as any).posthog
-      if (session?.user) ph?.identify?.(session.user.id)
-      else if (event === "SIGNED_OUT") ph?.reset?.()
-    })
-    return () => { clearTimeout(timer); subscription.unsubscribe() }
-  }, [])
-
-  if (authLoading) {
-    return (
-      <div style={{ width: "100vw", height: "100vh", background: SURFACE_BASE, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <style>{`@media (prefers-reduced-motion: no-preference) { .ps-boot { animation: ps-boot-pulse 1.4s ease-in-out infinite; } }
-          @keyframes ps-boot-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }`}</style>
-        <span className="ps-boot" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, letterSpacing: 2, color: TEXT_MUTED, userSelect: "none" }}>
-          PITCHSTUDIO
-        </span>
-      </div>
-    )
-  }
-
-  return (
-    <AppErrorBoundary>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={recovery.pending && authUser ? <Navigate to="/reset" replace /> : <HomeRoute signedIn={!!authUser} />} />
-          <Route path="/board" element={<BoardRoute signedIn={!!authUser} />} />
-          <Route path="/braindump" element={<BraindumpRoute signedIn={!!authUser} />} />
-          <Route path="/analysis" element={<AnalysisRoute signedIn={!!authUser} />} />
-          <Route path="/report" element={<ReportRoute signedIn={!!authUser} />} />
-          <Route path="/shelf" element={<ShelfRoute signedIn={!!authUser} />} />
-          <Route path="/signin" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signin" />} />
-          <Route path="/signup" element={authUser ? <Navigate to="/" replace /> : <AuthPage mode="signup" />} />
-          <Route path="/reset" element={<AuthPage mode="reset" />} />
-          <Route path="/goodbye" element={<GoodbyePage />} />
-          <Route path="/profile" element={authUser ? <ProfilePage /> : <Navigate to="/" replace />} />
-          <Route path="/welcome" element={authUser ? <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><WelcomePage /></Suspense> : <Navigate to="/" replace />} />
-          <Route path="/c/:handle" element={<Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><PublicCardPage /></Suspense>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </AppErrorBoundary>
-  )
-}
+/** The Tactics Board: its own download, loaded only when someone opens /board (the page list lives in Root.tsx) */
+export default TacticsBoard

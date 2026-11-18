@@ -15,8 +15,8 @@ import { Row, Seg, Toggle } from "./ui"
 export const STORY_COLOURS = ["#d7ff3c", "#ff4d5e", "#38bdf8", "#fbbf24", "#f472b6", "#a78bfa", "#22c55e", "#ffffff"]
 const TEXT_COLOURS: [string, string][] = [["ink", "Ink"], ["story", "Story"], ["muted", "Quiet"], ["#ffffff", "White"]]
 const NAMES: Record<Block["kind"], string> = { text: "Text", pitch: "Pitch", stats: "Key stats", story: "Story", photo: "Photo", series: "Series line", timeline: "Timeline", idea: "The idea", dial: "Balance dial", cards: "Player cards", lines: "Lines", spine: "Spine", shape: "Shape" }
-/** The club palettes to start from: [name, primary, secondary, accent] */
-const PRESETS: [string, string, string, string][] = [["Barça", "#a11d48", "#1f4ba0", "#e9b949"], ["Mono", "#121316", "#6b6e76", "#e9b949"]]
+/** The palettes to start from: [name, primary, secondary, accent]. "Your colours" comes from your Creator Card. */
+const MONO: [string, string, string, string] = ["Mono", "#121316", "#6b6e76", "#e9b949"]
 /** Inks for hand-written words and drawn lines */
 export const INKS: [string, string][] = [["#1f3e8c", "Blue"], ["#b3261e", "Red"], ["#2e7d32", "Green"], ["#6e1e3a", "Claret"], ["#1a1916", "Black"]]
 const REF_COLOURS: [string, string][] = [["ink", "Ink"], ["story", "Story"], ["muted", "Quiet"], ["a", "Club 1"], ["b", "Club 2"], ["c", "Club 3"]]
@@ -39,6 +39,7 @@ export type PanelProps = {
   act: (what: "dup" | "del" | "front" | "back" | "centre" | "middle" | "pitch" | "crop" | "done" | "photo" | "fitphoto" | "delmark" | "view" | "look" | "dir", arg?: string) => void
   team: Pick<TeamsProps, "setTeam" | "place" | "moment" | "count" | "namesText" | "roster" | "lineup">; reformat: (f: Report["format"]) => void
   storyAuto: string
+  mine?: [string, string, string] | null // your card's colours
 }
 
 export function Panel(P: PanelProps) {
@@ -153,7 +154,7 @@ export function Panel(P: PanelProps) {
         <p className="rp-cap" style={{ marginTop: 18 }}>CLUB PALETTE</p>
         <div className="rp-cols" style={{ marginBottom: 10 }}>
           <button className={`rp-chip${!report.palette ? " on" : ""}`} aria-pressed={!report.palette} onClick={() => P.setReport({ palette: null, stripe: false })}>Story colour</button>
-          {PRESETS.map(([n, a, b, c]) => { const on = report.palette?.a === a && report.palette?.b === b && report.palette?.c === c
+          {[...(P.mine ? [["Your colours", ...P.mine] as [string, string, string, string]] : []), MONO].map(([n, a, b, c]) => { const on = report.palette?.a === a && report.palette?.b === b && report.palette?.c === c
             return <button key={n} className={`rp-chip${on ? " on" : ""}`} aria-pressed={on} onClick={() => { const pal = { a, b, c }; P.setReport({ palette: pal, roles: report.roles?.length ? report.roles : defaultRoles(pal) }) }}>
               <span style={{ display: "inline-flex", gap: 2, marginRight: 6, verticalAlign: "-2px" }}>{[a, b, c].map(x => <i key={x} style={{ width: 10, height: 10, borderRadius: 3, background: x, display: "inline-block" }} />)}</span>{n}</button> })}
         </div>

@@ -40,6 +40,7 @@ export default function WelcomePage() {
 
   const go = (to: string, what: string) => { (window as any).posthog?.capture("welcome_choice", { what }); navigate(to, { replace: true }) }
   const shareX = () => {
+    ;(supabase as any).from("profiles").update({ card_public: true }).eq("id", me?.id).then(() => {}) // sharing the link makes the card public, so the link works
     const text = `My studio is open. PitchStudio ${studio ? studioLabel(studio) : ""}: tactics boards, match reports and ideas, all in one place, all free. ${SITE}/c/${me?.handle || ""}`
     window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text.replace(/\s+/g, " "))}`, "_blank", "noopener")
     ;(window as any).posthog?.capture("card_shared", { to: "x", from: "welcome" })
@@ -82,10 +83,10 @@ export default function WelcomePage() {
             <div className="wl-prog" aria-hidden="true"><i /><i /><i /></div>
             <span className="wl-cap">STEP 3 OF 3</span>
             <h1>YOUR STUDIO<br />IS OPEN.</h1>
-            <p className="wl-lead">You're <b>Studio {studio ? studioLabel(studio) : "Nº …"}</b>. Every tool is yours and free, and this card signs everything you make. Your first post is a line-up away.</p>
+            <p className="wl-lead">You're <b>Studio {studio ? studioLabel(studio) : "Nº …"}</b>. Every tool is yours and free, and this card signs everything you make. Pick your club first: it becomes your home team on every board and report.</p>
             <div className="wl-acts">
-              <button className="wl-btn pri" onClick={() => go("/board?start=lineup", "first_post")}>Make your first post <ArrowRight size={17} /></button>
-              <button className="wl-btn" onClick={() => go("/profile?welcome=1", "card")}>Make the card yours <small>· photo, colours</small></button>
+              <button className="wl-btn pri" onClick={() => go("/profile?welcome=1", "card")}>Make it yours <small>· club, colours, photo</small> <ArrowRight size={17} /></button>
+              <button className="wl-btn" onClick={() => go("/board?start=lineup", "first_post")}>Make your first post</button>
               {me.handle && <button className="wl-btn" onClick={shareX}>Share that you're in</button>}
               <button className="wl-skip" onClick={() => go("/", "home")}>Look around first</button>
             </div>

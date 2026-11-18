@@ -11,7 +11,7 @@ import { DEFAULT_BRAND, cardColours, logoToDataUrl, readBrand, type Brand } from
 import { Canvas, clampCrop, moveBlock, type Mode, type PitchTool, type Sel } from "../report/Canvas"
 import { Panel, PITCH_HINTS } from "../report/Panel"
 import { ReportView, blockBox } from "../report/Draw"
-import { BLANK_GAME, SHAPES, TEMPLATES, makeShape, makeTemplate, nextGameFrom, type ShapeId, type TemplateId } from "../report/templates"
+import { BLANK_GAME, SAMPLES_AS_OF, SAMPLES_BY, SHAPES, TEMPLATES, makeShape, makeTemplate, nextGameFrom, type ShapeId, type TemplateId } from "../report/templates"
 import { FillForm } from "../report/FillForm"
 import { applyFill, journalToGame, lockEdited, reflow, unlock as unlockSection } from "../report/fill"
 import { peekIssue, takeIssue } from "../lib/issues"
@@ -62,6 +62,21 @@ const headlineOf = (r: Report) => {
   return t ? String(t.text).split(String.fromCharCode(10))[0] : ""
 }
 
+/** Draws a picture only when it comes near the screen: the start page shows many report pictures, and a phone sees one or two */
+function OnScreen({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || near) return
+    if (typeof IntersectionObserver === "undefined") { setNear(true); return }
+    const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { setNear(true); io.disconnect() } }, { rootMargin: "300px" })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [near])
+  return <div ref={ref} style={{ display: "contents" }}>{near ? children : null}</div>
+}
+
 export default function ReportPage() {
   const navigate = useNavigate()
   const loc = useLocation()
@@ -90,6 +105,7 @@ export default function ReportPage() {
   const [exportOpen, setExportOpen] = useState(false)
   const [busy, setBusy] = useState("")
   const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
+  const [club, setClub] = useState("") // your club, from your profile: "Your team" in a new report
   const [handle, setHandle] = useState("")
   const [logo, setLogo] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -130,11 +146,12 @@ export default function ReportPage() {
       const u = session?.user
       if (!u) { navigate("/", { replace: true }); return }
       setUser({ id: u.id, email: u.email ?? "" })
-      supabase.from("profiles").select("handle, brand").eq("id", u.id).maybeSingle().then(({ data }) => {
+      supabase.from("profiles").select("handle, brand, favorite_club").eq("id", u.id).maybeSingle().then(({ data }) => {
         if (off) return
         const h: string = (data as any)?.handle || ""
         setHandle(h && stripHandleSuffix(h, u.id, u.email) === h ? h : "")
         setBrand(readBrand((data as any)?.brand))
+        setClub(String((data as any)?.favorite_club ?? "").trim().slice(0, 30))
       })
       peekIssue(u.id).then(n => { if (!off) setNextIssue(n) })
       if (!openId) {
@@ -689,7 +706,8 @@ export default function ReportPage() {
         .rp-own { margin-top: 40px; padding: 24px; max-width: 1180px; border-radius: 20px; border: 2px dashed var(--ps-bd2, ${DS_BORDER}); }
         .rp-own h2 { margin: 0 0 6px; font-size: 26px; letter-spacing: -.01em; }
         .rp-own > p { margin: 0 0 18px; color: ${TEXT_MUTED}; font-size: 15px; max-width: 640px; line-height: 1.5; }
-        .rp-tpl .th { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #0f1114; display: grid; align-items: center; }
+        .rp-tpl .th { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #0f1114; display: grid; align-items: center;  }
+        .rp-tpl .rp-by { display: block; margin: 0 4px 8px; font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .04em; color: ${TEXT_MUTED}; }
         .rp-tpl b { display: block; font-size: 15px; margin: 12px 4px 4px; } .rp-tpl span { display: block; font-size: 12.5px; color: ${TEXT_MUTED}; margin: 0 4px 6px; line-height: 1.45; }
         .rp-banner { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 20; background: ${SURFACE_1}; border: 1px solid ${DS_ERROR}; border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.4); max-width: calc(100% - 24px); }
         .rp-scrim { position: fixed; inset: 0; background: ${SCRIM}; z-index: 50; display: grid; place-items: center; padding: 20px; }
@@ -771,8 +789,8 @@ export default function ReportPage() {
           <div className="rp-tpls">
             {TEMPLATES.filter(t => t.id !== "blank").map(t => (
               <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
-                <div className="th" style={{ aspectRatio: t.id === "journal" ? "16 / 9" : t.id === "game" || t.id === "formation" ? "4 / 5" : "1" }}><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></div>
-                <b>{t.name} <i className="rp-def">Default</i></b><span>{t.note}</span>
+                <div className="th" style={{ aspectRatio: t.id === "journal" ? "16 / 9" : t.id === "game" || t.id === "formation" ? "4 / 5" : "1" }}><OnScreen><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></div>
+                <b>{t.name} <i className="rp-def">Default</i></b><span>{t.note}</span><small className="rp-by">Example by @{SAMPLES_BY} · {SAMPLES_AS_OF}</small>
               </button>
             ))}
           </div>
@@ -782,7 +800,7 @@ export default function ReportPage() {
             <div className="rp-tpls small">
               {SHAPES.map(s => (
                 <button key={s.id} className="rp-tpl" data-template={`own:${s.id}`} onClick={() => start(`own:${s.id}`)}>
-                  <div className="th"><ReportView report={makeShape(s.id)} brand={brand} handle={handle} logo={logo} media={{}} /></div>
+                  <div className="th"><OnScreen><ReportView report={makeShape(s.id)} brand={brand} handle={handle} logo={logo} media={{}} /></OnScreen></div>
                   <b>{s.name}</b><span>{s.note}</span>
                 </button>
               ))}
@@ -792,7 +810,7 @@ export default function ReportPage() {
       ) : view === "fill" && report.fill ? (
         <div className="rp-fill">
           <div className="rp-fill-form">
-            <FillForm report={report} fill={report.fill} set={setFill} begin={begin} end={end} unlock={sec => change(r => unlockSection(r, sec))} phone={phone} title={title}
+            <FillForm club={club} report={report} fill={report.fill} set={setFill} begin={begin} end={end} unlock={sec => change(r => unlockSection(r, sec))} phone={phone} title={title}
               preview={<ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} />}
               full={<ReportView report={report} brand={brand} handle={handle} logo={logo} media={media} issue={shownIssue} />}
               onDesign={() => setView("design")} onToGame={report.fill.template === "journal" ? toGame : undefined} />
@@ -841,7 +859,7 @@ export default function ReportPage() {
           <Panel report={report} block={pitch ?? block} mark={mark} mode={mode} tool={tool} setReport={patch => change(r => ({ ...r, ...patch }))} setBlock={setBlock} setMark={setMark}
             begin={begin} end={end} textRef={textRef} nameRef={nameRef} act={act} reformat={reformat}
             team={{ setTeam, place: (i, f) => placeTeam(i, f), moment: setMoment, count: countTeam, namesText: teamNames, roster: teamRoster, lineup: teamLineup }}
-            storyAuto={cardColours(brand).disc} />
+            storyAuto={cardColours(brand).disc} mine={brand.color2 ? [brand.color, brand.color2, "#e9b949"] : brand.color !== DEFAULT_BRAND.color ? [brand.color, cardColours(brand).bottom, "#e9b949"] : null} />
         </div>
       )}
 

@@ -48,6 +48,7 @@ export default function ProfilePage() {
   const [bio, setBio] = useState("")
   const [country, setCountry] = useState("")
   const [favoriteClub, setFavoriteClub] = useState("")
+  const [cardPublic, setCardPublic] = useState(false) // your card at /c/handle: off until you share it
   const [favoritePlayer, setFavoritePlayer] = useState("")
   const [identity, setIdentity] = useState("")
   const [saving, setSaving] = useState(false)
@@ -98,6 +99,7 @@ export default function ProfilePage() {
         setBio(d.bio ?? "")
         setCountry(d.country ?? "")
         setFavoriteClub(d.favorite_club ?? "")
+        ;(supabase as any).from("profiles").select("card_public").eq("id", session.user.id).maybeSingle().then(({ data: c }: { data: { card_public?: boolean } | null }) => setCardPublic(!!c?.card_public))
         setFavoritePlayer(d.favorite_player ?? "")
         setIdentity(d.identity ?? "")
         if (d.brand) { const b = readBrand(d.brand); setBrand(b); setHadBrand(true); setSavedLogo(b.logo); savedLogoPhoto.current = b.photo }
@@ -183,7 +185,7 @@ export default function ProfilePage() {
     savedSnap.current = JSON.stringify([displayName, cleanHandle, bio, country, favoriteClub, favoritePlayer, identity, next, false, false])
     setSaveMsg("saved")
     ;(window as any).posthog?.capture("profile_updated", sendBrand ? { card: true } : undefined)
-    if (welcome) { navigate("/", { replace: true }); return }
+    if (welcome) { navigate("/board?start=lineup", { replace: true }); return }
     setTimeout(() => setSaveMsg(null), 2000)
   }
 
@@ -244,7 +246,14 @@ export default function ProfilePage() {
   }
   const save = (url: string, file: string) => { const a = document.createElement("a"); a.href = url; a.download = file; a.click() }
   const copyPost = async () => { try { await navigator.clipboard.writeText(postText); return true } catch { return false } }
-  const shareX = () => { window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`, "_blank", "noopener"); (window as any).posthog?.capture("card_shared", { to: "x" }) }
+  /** Shows or hides your card at its link. Sharing a link turns it on, so the link works. */
+  const setPublic = async (on: boolean) => {
+    setCardPublic(on)
+    const { error } = await (supabase as any).from("profiles").update({ card_public: on }).eq("id", userId)
+    if (error) { setCardPublic(!on); setShareMsg("Couldn't change that. Try again.") }
+  }
+  const goPublic = () => { if (!cardPublic) { setPublic(true); setShareMsg("Your card is public now, so the link works.") } }
+  const shareX = () => { goPublic(); window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(postText)}`, "_blank", "noopener"); (window as any).posthog?.capture("card_shared", { to: "x" }) }
   const shareImage = async (kind: "story" | "card") => {
     if (!exportRef.current || downloading) return
     setDownloading(true); setShareMsg("")
@@ -252,12 +261,14 @@ export default function ProfilePage() {
       const card = await cardPng(), who = normalizeHandle(handle) || "creator"
       const url = kind === "story" ? await cardOnBackground(card, 1080, 1920, 860, who) : await cardOnBackground(card, 1080, 1350, 760, who)
       save(url, kind === "story" ? `${who}-story.png` : `${who}-card.png`)
+      if (kind === "story") goPublic()
       if (kind === "story") setShareMsg((await copyPost()) ? "Story image saved, and the post is copied. Paste it in Instagram." : "Story image saved.")
       ;(window as any).posthog?.capture(kind === "story" ? "card_shared" : "creator_card_downloaded", kind === "story" ? { to: "instagram" } : undefined)
     } catch (e) { console.error(e); setShareMsg("The image couldn't be made. Try again.") }
     setDownloading(false)
   }
   const shareLinkedIn = async () => {
+    goPublic()
     window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(`${SITE}/c/${normalizeHandle(handle)}`)}`, "_blank", "noopener")
     setShareMsg((await copyPost()) ? "The post is copied. Paste it in LinkedIn." : "")
     ;(window as any).posthog?.capture("card_shared", { to: "linkedin" })
@@ -320,6 +331,14 @@ export default function ProfilePage() {
         .pf-pair { display: inline-flex; gap: 3px; padding: 5px; border-radius: 10px; border: 2px solid transparent; background: ${SURFACE_2}; cursor: pointer; }
         .pf-pair i { width: 18px; height: 26px; border-radius: 5px; display: block; box-shadow: inset 0 0 0 1px rgba(128,128,128,.25); }
         .pf-pair.on { border-color: ${ACCENT_SOLID}; }
+        .pf-public { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; margin: 0 0 12px; border: 1px solid ${DS_BORDER}; border-radius: 12px; background: ${SURFACE_2}; cursor: pointer; }
+        .pf-public input { appearance: none; flex-shrink: 0; width: 40px; height: 24px; border-radius: 999px; background: ${DS_BORDER}; position: relative; cursor: pointer; margin: 0; transition: background .15s; }
+        .pf-public input::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+        .pf-public input:checked { background: ${ACCENT_SOLID}; }
+        .pf-public input:checked::after { transform: translateX(16px); }
+        .pf-public input:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
+        .pf-public b { display: block; font-size: 14px; } .pf-public small { display: block; font-size: 12.5px; color: ${TEXT_MUTED}; margin-top: 2px; overflow-wrap: anywhere; }
+        .pf-club { margin-top: 22px; }
         .pf-photo { border-style: dashed; border-color: var(--ps-bd2); display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
         .pf-photo > .cc-row { margin: 0; }
         .pf-photo-row { flex: 1 1 280px; display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -401,7 +420,7 @@ export default function ProfilePage() {
 
       {welcome && (
         <div className="pf-welcome" role="status"><div>
-          <span style={{ flex: 1 }}><b>Welcome to the studio.</b> Make your card first: it signs everything you export.</span>
+          <span style={{ flex: 1 }}><b>Welcome to the studio.</b> Pick your club and colours: they become your home team everywhere, and your card signs everything you export.</span>
           <button className="pf-btn" style={{ height: 36 }} onClick={() => { try { sessionStorage.setItem("ps-card-later", "1") } catch { /* private mode */ } navigate("/", { replace: true }) }}>Skip for now</button>
         </div></div>
       )}
@@ -481,6 +500,7 @@ export default function ProfilePage() {
             })}
           </div>
 
+          <div className="pf-club">{field("favoriteClub", "MY CLUB", favoriteClub, setFavoriteClub, { max: 30, hint: "Your home team on every new board and match report." })}</div>
           <p className="pf-sec" style={{ marginTop: 22 }}>MY COLOURS</p>
           <div className="cc-row pf-pairs" style={{ marginBottom: 12 }}>
             {PAIRS.map(p => {
@@ -496,6 +516,10 @@ export default function ProfilePage() {
 
           <div className="pf-panel pf-share" style={{ marginBottom: 22 }}>
             <p className="pf-cap">SHARE THAT YOU'RE IN</p>
+            <label className="pf-public">
+              <input type="checkbox" role="switch" checked={cardPublic} onChange={e => setPublic(e.target.checked)} />
+              <span><b>Show my card publicly</b><small>{cardPublic ? `Anyone with the link can see it: pitchstudio-brown.vercel.app/c/${normalizeHandle(handle)}` : "Only you can see it. Sharing turns it on, so your link works."}</small></span>
+            </label>
             <textarea aria-label="Your post" value={postText} maxLength={280} onChange={e => setPost(e.target.value)} />
             <div className="row">
               <button className="pf-btn pri" onClick={shareX}>Post on X</button>
@@ -505,7 +529,7 @@ export default function ProfilePage() {
             </div>
             <p className="pf-hint" style={{ margin: "10px 0 0" }} aria-live="polite">{shareMsg || "X opens with the text and link filled in. Instagram and LinkedIn: we copy the text and save the image, you paste."}</p>
             {!hadBrand && <p className="pf-hint" style={{ margin: "6px 0 0" }}>Save your card first, so the link shows it.</p>}
-            <button className="pf-btn" style={{ height: 34, marginTop: 10 }} onClick={async () => setShareMsg((await copyPost()) ? "Copied." : "Couldn't copy. Select the text instead.")}><Copy size={13} /> Copy the post</button>
+            <button className="pf-btn" style={{ height: 34, marginTop: 10 }} onClick={async () => { goPublic(); setShareMsg((await copyPost()) ? "Copied. Your card is public, so the link works." : "Couldn't copy. Select the text instead.") }}><Copy size={13} /> Copy the post</button>
           </div>
 
           <button className="pf-more" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)}>More about you <ChevronDown size={18} style={{ transform: moreOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} /></button>
@@ -525,7 +549,6 @@ export default function ProfilePage() {
                   </select>
                 </div>
               </div>
-              {field("favoriteClub", "Favourite club", favoriteClub, setFavoriteClub)}
               {field("favoritePlayer", "Favourite player", favoritePlayer, setFavoritePlayer)}
             </div>
             <div className="pf-panel">

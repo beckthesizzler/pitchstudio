@@ -56,7 +56,7 @@ export default function PublicCardPage() {
       `}</style>
       <div className="pc-top" onClick={() => navigate("/")} role="link" aria-label="PitchStudio home"><Mark size={26} color={ACCENT_SOLID} /><span>PITCHSTUDIO</span></div>
       {card === null ? null : card === "missing" ? (
-        <div className="pc-none"><h2 style={{ margin: "0 0 14px", fontSize: 26 }}>No studio by that name.</h2><button onClick={() => navigate("/")}>Go to PitchStudio</button></div>
+        <div className="pc-none"><h2 style={{ margin: "0 0 14px", fontSize: 26 }}>This card isn't here.</h2><p style={{ margin: "0 0 18px", opacity: .7 }}>It may be private, or the name may have changed.</p><button onClick={() => navigate("/")}>Go to PitchStudio</button></div>
       ) : (
         <div className="pc-wrap">
           <div className="pc-3d" onPointerMove={e => { if (e.pointerType === "touch" || still) return; const r = e.currentTarget.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height; setTilt({ ry: (x - 0.5) * 22, rx: (0.5 - y) * 18, x, y }) }} onPointerLeave={() => setTilt(null)}>

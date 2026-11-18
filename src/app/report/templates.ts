@@ -103,6 +103,8 @@ export function nextGameFrom(prev: Report, handle: string): Report {
 }
 
 /* ── Formation Change: your eleven in two shapes ── */
+/** The default templates' sample content is real analysis by PitchStudio's maker, dated so it reads as an archive piece once a squad changes */
+export const SAMPLES_BY = "bbenditlike", SAMPLES_AS_OF = "Nov 2026"
 export const SAMPLE_FORMATION: FormationFill = { template: "formation", title: "MY DREAM XI", shapeA: "4-3-3", shapeB: "3-4-3",
   lineup: ["Joan García", "Koundé", "Araujo", "Cubarsí", "Balde", "Pedri", "De Jong", "Fermín", "Yamal", "Jesus", "Raphinha"], alt: ["", "", "", "", "", "Gavi", "", "", "", "", ""],
   roles: { Pedri: "mutant", Fermín: "mutant", Raphinha: "mutant", "De Jong": "anchor", Yamal: "special" }, note: "Illustrative lineup and positions, not tracking data." }

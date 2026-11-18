@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { ArrowLeft, ArrowRight, Maximize2, Plus, Trash2, Unlock, X } from "lucide-react"
 import { SHAPES4, type FormationFill, type GameFill, type Fill, type JournalFill, type Report } from "./model"
 import { lineupOf, placeFormation, TOP_FORMATIONS } from "./team"
@@ -12,6 +12,7 @@ import { TimelineEdit } from "./Panel"
 type Step = { id: string; name: string; ask: string; body: ReactNode }
 export type FillFormProps = {
   report: Report; fill: Fill; set: (f: Fill, live?: boolean) => void; begin: () => void; end: () => void
+  club?: string // your club, from your profile
   unlock: (section: string) => void; phone: boolean; preview: ReactNode; full: ReactNode; title: string
   onDesign: () => void; onToGame?: () => void
 }
@@ -38,6 +39,13 @@ export function FillForm(P: FillFormProps) {
   const [step, setStep] = useState(0)
   const [big, setBig] = useState(false)
   const [done, total] = filledCount(fill)
+  // a new report starts with your club as your team
+  const clubbed = useRef(false)
+  useEffect(() => {
+    if (clubbed.current || !P.club || fill.template === "formation" || fill.home) return
+    clubbed.current = true
+    set({ ...fill, home: P.club } as Fill, false)
+  }, [P.club, fill]) // eslint-disable-line react-hooks/exhaustive-deps
   const field = (label: string, value: string, put: (v: string) => void, o: { max?: number; ph?: string; area?: number } = {}) => (
     <label className="ff-field"><span>{label}</span>
       {o.area ? <textarea className="rp-inp" rows={o.area} value={value} maxLength={o.max ?? 400} placeholder={o.ph} onFocus={begin} onBlur={end} onChange={e => put(e.target.value)} />
@@ -59,17 +67,17 @@ export function FillForm(P: FillFormProps) {
     const dial = { value: f.dial, left: "CHAOS", right: "CONTROL" }
     return [
       { id: "match", name: "The match", ask: "Who played, and where?", body: <>{lockNote("match")}
-        <div className="ff-three">{field("Your team", f.home, v => put({ home: v }), { max: 30, ph: "Barcelona" })}{field("Score", f.score, v => put({ score: v }), { max: 12, ph: "3–0" })}{field("Opponent", f.away, v => put({ away: v }), { max: 30, ph: "Aston Villa" })}</div>
-        {field("Competition, ground, date", f.meta, v => put({ meta: v }), { ph: "Champions League · Matchday 4 · Camp Nou · 3 Nov" })}</> },
+        <div className="ff-three">{field("Your team", f.home, v => put({ home: v }), { max: 30, ph: P.club || "Your team" })}{field("Score", f.score, v => put({ score: v }), { max: 12, ph: "3–0" })}{field("Opponent", f.away, v => put({ away: v }), { max: 30, ph: "Opponent" })}</div>
+        {field("Competition, ground, date", f.meta, v => put({ meta: v }), { ph: "Competition · Matchday · Ground · Date" })}</> },
       { id: "headline", name: "Headline", ask: "What's the story in one line?", body: <>{lockNote("headline")}{field("Headline", f.headline, v => put({ headline: v }), { ph: "Villa played into the trap" })}<p className="rp-note">It shrinks to fit one line, however long.</p></> },
       { id: "state", name: "Game state", ask: "What changed the game, and when?", body: <>{lockNote("state")}
         <TimelineEdit events={f.events} set={events => put({ events }, false)} big={P.phone} chips={P.phone} /></> },
       { id: "shape", name: "Shape and players", ask: "How did you line up?", body: <>{lockNote("shape")}
         <div className="ff-field"><span>Formation</span>{chips(f.shape, SHAPES4, v => put({ shape: v, lineup: keepSpots(f.shape, v, f.lineup) }, false), "Formation")}</div>
-        {field("Our XI, keeper first", csv(f.lineup) ? f.lineup.join(", ").replace(/(, )+$/, "") : "", v => { const a = fromCsv(v, 11); while (a.length < 11) a.push(""); put({ lineup: a }) }, { area: 2, max: 400, ph: "Joan García, Koundé, Araujo, Cubarsí, Cancelo, …" })}
+        {field("Our XI, keeper first", csv(f.lineup) ? f.lineup.join(", ").replace(/(, )+$/, "") : "", v => { const a = fromCsv(v, 11); while (a.length < 11) a.push(""); put({ lineup: a }) }, { area: 2, max: 400, ph: "Goalkeeper, right back, centre back, centre back, left back, …" })}
         <div className="ff-seats">{seats.map((pos, i) => <span key={i}><b>{pos}</b>{f.lineup[i] || "—"}</span>)}</div>
-        {field("Key players (garnet)", csv(f.keys), v => put({ keys: fromCsv(v, 11).filter(Boolean) }), { ph: "Pedri, Fermín, Raphinha, Yamal" })}
-        {field("Point of Difference (gold ring)", f.pod, v => put({ pod: v }), { max: 32, ph: "Yamal" })}
+        {field("Key players (highlighted)", csv(f.keys), v => put({ keys: fromCsv(v, 11).filter(Boolean) }), { ph: "Up to 4 names, with commas" })}
+        {field("Point of Difference (gold ring)", f.pod, v => put({ pod: v }), { max: 32, ph: "One name" })}
         {field("Why they made the difference", f.podWhy, v => put({ podWhy: v }), { area: 2, max: 160 })}</> },
       { id: "idea", name: "The idea", ask: "What was the plan?", body: <>{lockNote("idea")}
         {field("On-ball structure", f.onball, v => put({ onball: v }), { area: 3 })}
