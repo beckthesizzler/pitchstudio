@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useLocation, useNavigate } from "react-router"
-import { ArrowLeft, Bold, Check, GitFork, Heading, Highlighter, Italic, Link2, List, ListOrdered, Loader2, MoreHorizontal, PenLine, Plus, Search, Sprout, Trash2, Type, Unlink, X } from "lucide-react"
+import { useLocation, useNavigate, useParams } from "react-router"
+import { ArrowLeft, Bold, Check, GitFork, Heading, Highlighter, Italic, Link2, List, ListOrdered, Loader2, MoreHorizontal, Layers, Palette, PenLine, Plus, Search, Sprout, Trash2, Type, Unlink, X } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { reportError, track } from "../lib/telemetry"
 import { listName, type PieceKind } from "../lib/names"
@@ -12,14 +12,20 @@ import { COLORS, COLS, STATUSES, clean, col, firstLine, hex, madeLabel, nameOf, 
 import { Banner, PIN, Popover, STACK_W, THREAD, TILTS, Threads, layoutColumn, plantStage, type Row } from "../braindump/Wall"
 import { PLANT_CSS, Plant, TreeView, type Stage } from "../braindump/Plant"
 import { GROW_CSS, GrowPanel } from "../braindump/Grow"
+import { FREE_CSS, FreeWall, NOTE_H, NOTE_W, type Move } from "../braindump/Canvas"
+import { LOOK_CSS, LookPanel } from "../braindump/Look"
+import { TREE_CSS, WallTree } from "../braindump/WallTree"
+import { DEFAULT_LOOK, WALL_COLS, mainWall, photoUrl, readWall, uploadPhoto, wallSurface, type Look, type View, type Wall } from "../braindump/walls"
+import { AllWalls } from "../braindump/AllWalls"
 import { ACCENT_SOLID, ACCENT_INK, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_BORDER_STRONG, DS_ERROR } from "../theme"
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
-/* Dump & Arrange ("/braindump"): your wall of ideas. Pin a note as fast as it comes; it lands in "Just pinned". Piles are
-   columns on the wall (a pile is a note of kind "tree"). Drag a note onto another and a red thread ties them; every tie
-   grows the pile's plant from seed to tree, and the plant opens the tree view (/braindump?tree=ID&view=tree). Open any
-   note and it's a page to think on: writing with a highlighter, and mind maps and diagrams drawn as if by hand. */
+/* Dump & Arrange ("/braindump"): your wall of ideas. Pin a note as fast as it comes. On the Wall every note sits where
+   you put it; piles (notes of kind "tree") are frames you move and resize. Columns shows the same notes as one column
+   per pile. Drag a note onto another and a red thread ties them; every tie grows the pile's plant from seed to tree,
+   and the plant opens the tree view (/braindump?tree=ID&view=tree). Open any note and it's a page to think on: writing
+   with a highlighter, and mind maps and diagrams drawn as if by hand. Each wall keeps its own look. */
 
 const MARKS = [["#fff27a", "Yellow"], ["#ffc2dc", "Pink"], ["#c9f5b6", "Green"], ["#bfe3ff", "Blue"]] as const
 const STATUS_CAPS: Record<Status, string> = { idea: "IDEA", making: "MAKING", made: "MADE" }
@@ -42,7 +48,16 @@ type Column = { id: string; pile: Note | null; rows: Row[]; height: number; ties
 type Menu = { kind: "note" | "pile"; id: string; x: number; y: number; sub?: "made" | "delete" }
 type Piece = { ref: string; kind: PieceKind; title: string; updated: string }
 
+/** "/braindump" is All walls; "/braindump/w/:wallId" is one wall ("main": your main wall) */
 export default function BrainDumpPage() {
+  const { wallId } = useParams()
+  return wallId ? <WallPage key={wallId} wallId={wallId} /> : <AllWalls />
+}
+
+type Crumb = { id: string; title: string }
+type Inside = { wall: string; notes: number } // a note that opens into a wall: which one, and how many notes it holds
+
+function WallPage({ wallId }: { wallId: string }) {
   const navigate = useNavigate()
   const loc = useLocation()
   const params = new URLSearchParams(loc.search)
@@ -67,6 +82,46 @@ export default function BrainDumpPage() {
   const [sel, setSel] = useState<string | null>(null) // the note picked on the wall: it shows in the panel on the right
   const [selDel, setSelDel] = useState(false) // the panel's delete waiting for a yes
   const [tries, setTries] = useState(0)
+  const [wall, setWall] = useState<Wall | null>(null)
+  const [lookOpen, setLookOpen] = useState(false)
+  const [photo, setPhoto] = useState<string | null>(null) // the link to see this wall's photo
+  const [moving, setMoving] = useState(false) // something is being dragged on the free wall
+  const centre = useRef({ x: 200, y: 200 }) // the middle of what you're looking at, on the free wall
+  const showOnWall = useRef<((id: string) => void) | null>(null)
+  const wallTimer = useRef(0)
+  const [treeEdit, setTreeEdit] = useState<string | null>(null) // a step being typed on the Tree
+  const here = `/braindump/w/${wall?.id ?? wallId}` // this wall's address
+  const [crumbs, setCrumbs] = useState<Crumb[]>([]) // the walls above this one, top first
+  const [inside, setInside] = useState<Map<string, Inside>>(new Map())
+  /** The path up to All walls, and which notes on this wall open into walls of their own */
+  const loadAround = async (w: Wall) => {
+    const db = supabase as any
+    const [path, ws, cards] = await Promise.all([
+      w.main ? Promise.resolve({ data: [] }) : db.rpc("wall_path", { w: w.id }),
+      db.from("walls").select("id, note_id").limit(1000),
+      db.rpc("wall_cards"),
+    ])
+    if (Array.isArray(path.data)) setCrumbs((path.data as any[]).filter(x => x.id !== w.id).map(x => ({ id: String(x.id), title: String(x.title ?? "") })))
+    const count = new Map<string, number>(((cards.data ?? []) as any[]).map(c => [String(c.wall_id), Number(c.notes) || 0]))
+    setInside(new Map(((ws.data ?? []) as any[]).filter(x => x.note_id).map(x => [String(x.note_id), { wall: String(x.id), notes: count.get(String(x.id)) ?? 0 }])))
+  }
+  /** A note's page, or (for a note that's a wall) the wall itself */
+  const openNote = (id: string) => { const w = inside.get(id); if (w) navigate(`/braindump/w/${w.wall}`); else setOpen(id) }
+  /** Turns a note into a wall of its own (named after the note, looking like this one) and goes in */
+  const makeWall = async (noteId: string, made?: Note) => {
+    const n = made ?? notesRef.current.find(x => x.id === noteId)
+    if (!n || !wall) return
+    if (inside.has(noteId)) { openNote(noteId); return }
+    const id = nid()
+    const { error } = await (supabase as any).from("walls").insert({ id, title: (n.title.trim() || nameOf(n)).slice(0, 80), note_id: noteId, look: { ...wall.look, photo: null, bg: wall.look.bg === "photo" ? DEFAULT_LOOK.bg : wall.look.bg } })
+    if (error) { setToast(/limit/.test(error.message || "") ? "You have 1,000 walls. Delete a few to make another." : "Couldn't make the wall. Try again."); return }
+    track("wall_made", { from: "note" })
+    navigate(`/braindump/w/${id}`)
+  }
+  const newWallInside = async () => {
+    const n = await add("note", null, "New wall", false, view === "wall" ? spot() : null)
+    if (n) makeWall(n.id, n)
+  }
   const failed = useRef(new Set<string>())
   const focused = useRef<HTMLDivElement | null>(null)
   const quickRef = useRef<HTMLInputElement>(null)
@@ -87,13 +142,25 @@ export default function BrainDumpPage() {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user) { navigate("/", { replace: true }); return }
       setUser({ id: session.user.id })
-      const { data, error } = await (supabase as any).from("notes").select(COLS).eq("user_id", session.user.id).order("pos", { ascending: true }).limit(2000)
+      let w: Wall | null = null
+      try {
+        if (wallId === "main") w = await mainWall()
+        else { const r = await (supabase as any).from("walls").select(WALL_COLS).eq("id", wallId).maybeSingle(); if (r.error) throw r.error; w = r.data ? readWall(r.data) : null }
+      } catch (e) { reportError(e, "wall_load") }
+      if (off) return
+      if (!w) { if (wallId !== "main") { navigate("/braindump", { replace: true }); return } setLoadFailed(true); setNotes(n => n ?? []); return }
+      if (wallId === "main") window.history.replaceState(window.history.state, "", `/braindump/w/${w.id}${window.location.search}`) // the address names the wall
+      setWall(w)
+      loadAround(w)
+      const q = (supabase as any).from("notes").select(COLS).eq("user_id", session.user.id)
+      const { data, error } = await (w.main ? q.or(`wall_id.is.null,wall_id.eq.${w.id}`) : q.eq("wall_id", w.id)).order("pos", { ascending: true }).limit(20000)
       if (off) return
       if (error) { reportError(error, "notes_load"); setLoadFailed(true); setNotes(n => n ?? []); return }
       setLoadFailed(false)
       setNotes((data ?? []).map(readNote))
-      const sp = new URLSearchParams(window.location.search), want = sp.get("tree")
-      if (want && sp.get("view") !== "tree") setTimeout(() => showPile(want), 120) // opened from your shelf: that pile, lit up
+      const sp = new URLSearchParams(window.location.search), want = sp.get("tree"), pick = sp.get("note")
+      if (want && sp.get("view") !== "tree") setTimeout(() => showPile(want), 160) // opened from your shelf: that frame, lit up
+      if (pick) setTimeout(() => { setSel(pick); showOnWall.current?.(pick); setFlash(pick) }, 200) // found by search on All walls
     })
     return () => { off = true }
   }, [navigate, tries]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -156,12 +223,18 @@ export default function BrainDumpPage() {
   }, [columns]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── saving: a moment after every change ── */
+  const inFlight = useRef(0)
   const save = async (id: string) => {
     timers.current.delete(id)
     const n = notesRef.current.find(x => x.id === id)
     if (!n) return
     setStatus("saving")
-    const { error } = await (supabase as any).from("notes").update({ title: n.title.slice(0, 120), color: n.color, pos: n.pos, parent_id: n.parent_id, body: n.body, status: n.status, made_ref: n.made_ref, updated_at: new Date().toISOString() }).eq("id", id)
+    if (inFlight.current >= 6) { timers.current.set(id, window.setTimeout(() => save(id), 120)); return } // a few at a time: laying out a big wall saves hundreds of spots
+    inFlight.current++
+    let error: any = null
+    try { ({ error } = await (supabase as any).from("notes").update({ title: n.title.slice(0, 120), color: n.color, pos: n.pos, parent_id: n.parent_id, body: n.body, status: n.status, made_ref: n.made_ref, x: n.x, y: n.y, w: n.w, h: n.h }).eq("id", id)) }
+    catch (e) { error = e }
+    finally { inFlight.current-- }
     if (error) { failed.current.add(id); setStatus("error"); reportError(error, "note_save"); return }
     failed.current.delete(id)
     if (!timers.current.size && !failed.current.size) setStatus("saved")
@@ -173,19 +246,30 @@ export default function BrainDumpPage() {
     setStatus("saving")
     window.clearTimeout(timers.current.get(id)); timers.current.set(id, window.setTimeout(() => save(id), wait))
   }
-  const add = async (kind: Kind, parent: string | null, title = "", front = false): Promise<Note | null> => {
-    if (!user) return null
-    if (notesRef.current.length >= 2000) { setToast("You've reached 2,000 notes. Delete a few to add more."); return null }
+  /** Puts things where they were dropped on the free wall (and saves them a moment later) */
+  const place = (moves: Move[], wait = 300) => {
+    if (!moves.length) return
+    const m = new Map(moves.map(x => [x.id, x]))
+    setNotes(ns => (ns ?? []).map(n => { const v = m.get(n.id); return v ? { ...n, x: v.x, y: v.y, ...(v.w !== undefined ? { w: v.w, h: v.h ?? n.h } : {}) } : n }))
+    setStatus("saving")
+    for (const id of m.keys()) { window.clearTimeout(timers.current.get(id)); timers.current.set(id, window.setTimeout(() => save(id), wait)) }
+  }
+  /** A spot for a new note on the free wall: the middle of the view, a little lower each time so they don't stack exactly */
+  const nextSpot = useRef(0)
+  const spot = () => { const k = nextSpot.current++ % 6; return { x: Math.round(centre.current.x + k * 18), y: Math.round(centre.current.y + k * 22) } }
+  const add = async (kind: Kind, parent: string | null, title = "", front = false, at: { x: number; y: number } | null = null): Promise<Note | null> => {
+    if (!user || !wall) return null
     const sib = notesRef.current.filter(n => (n.parent_id ?? null) === parent && n.kind === kind)
     const pos = front ? Math.min(0, ...sib.map(n => n.pos)) - 1 : Math.max(0, ...sib.map(n => n.pos)) + 1
     const used = notesRef.current.filter(n => n.kind === kind).length
     const color = kind === "tree" ? (["lime", "aqua", "pink", "orange", "lilac", "yellow"] as Color[])[used % 6] : COLORS[used % COLORS.length].id
-    const n: Note = { id: nid(), kind, parent_id: parent, title, color, pos, body: [newText()], updated_at: new Date().toISOString(), status: "idea", made_ref: null }
+    const size = kind === "tree" && at ? { w: NOTE_W + 44, h: 190 } : { w: null, h: null }
+    const n: Note = { id: nid(), kind, parent_id: parent, title, color, pos, body: [newText()], updated_at: new Date().toISOString(), status: "idea", made_ref: null, wall_id: wall.id, x: at?.x ?? null, y: at?.y ?? null, ...size }
     setNotes(ns => [...(ns ?? []), n])
-    const { error } = await (supabase as any).from("notes").insert({ id: n.id, kind, parent_id: parent, title, color, pos, body: n.body })
+    const { error } = await (supabase as any).from("notes").insert({ id: n.id, kind, parent_id: parent, title, color, pos, body: n.body, wall_id: wall.id, x: n.x, y: n.y, w: n.w, h: n.h })
     if (error) {
       setNotes(ns => (ns ?? []).filter(x => x.id !== n.id))
-      setToast(/limit/.test(error.message || "") ? "You've reached 2,000 notes." : kind === "tree" ? "Couldn't start the pile. Try again." : "Couldn't pin that note. Try again.")
+      setToast(/limit/.test(error.message || "") ? "You've reached 20,000 notes. Delete a few to add more." : kind === "tree" ? "Couldn't start the frame. Try again." : "Couldn't pin that note. Try again.")
       return null
     }
     track(kind === "tree" ? "tree_planted" : "note_created")
@@ -195,18 +279,53 @@ export default function BrainDumpPage() {
     const t = quick.trim()
     if (!t) return
     setQuick("")
-    const n = await add("note", null, t.slice(0, 120), true)
+    const n = await add("note", null, t.slice(0, 120), true, view === "wall" ? spot() : null)
     quickRef.current?.focus()
-    if (n) document.querySelector('[data-col="pinned"]')?.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" })
+    if (n && view !== "wall") document.querySelector('[data-col="pinned"]')?.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" })
   }
   const newPile = async () => {
-    const t = await add("tree", null, "", true)
+    const t = await add("tree", null, "", true, view === "wall" ? spot() : null)
     if (t) { setRenaming(t.id); setTimeout(() => showPile(t.id, false), 40) }
   }
   /** Scrolls the wall to a pile's column, and lights it up */
   const showPile = (id: string, light = true) => {
-    document.querySelector(`[data-col="${id}"]`)?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" })
+    if (view === "wall" && !treeView) showOnWall.current?.(id)
+    else document.querySelector(`[data-col="${id}"]`)?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" })
     if (light) setFlash(id)
+  }
+  /* ── the wall itself: its name, its look, the view it opens in ── */
+  const view: View = wall?.view ?? "wall"
+  const changeWall = (patch: Partial<Wall>, wait = 500) => {
+    setWall(w => (w ? { ...w, ...patch } : w))
+    window.clearTimeout(wallTimer.current)
+    wallTimer.current = window.setTimeout(async () => {
+      const w = wallRef2.current
+      if (!w) return
+      const { error } = await (supabase as any).from("walls").update({ title: w.title.slice(0, 80), look: w.look, view: w.view }).eq("id", w.id)
+      if (error) { reportError(error, "wall_save"); setToast("Couldn't save the wall's look. Try again.") }
+    }, wait)
+  }
+  const wallRef2 = useRef<Wall | null>(null)
+  wallRef2.current = wall
+  const [tried, setTried] = useState<Set<View>>(() => { try { return new Set(JSON.parse(localStorage.getItem("ps-wall-tried") || "[]")) } catch { return new Set() } }) // the views you've opened at least once
+  const [startHidden, setStartHidden] = useState(() => { try { return localStorage.getItem("ps-wall-start") === "hidden" } catch { return false } })
+  const setView = (v: View) => {
+    if (treeView) navigate(here)
+    if (!tried.has(v)) { const t = new Set(tried).add(v); setTried(t); try { localStorage.setItem("ps-wall-tried", JSON.stringify([...t])) } catch { /* not kept */ } }
+    if (v !== view) { changeWall({ view: v }, 0); track("wall_view", { view: v }) }
+  }
+  useEffect(() => {
+    let off = false
+    const path = wall?.look.bg === "photo" ? wall.look.photo : null
+    if (!path) { setPhoto(null); return }
+    photoUrl(path).then(u => { if (!off) setPhoto(u) })
+    return () => { off = true }
+  }, [wall?.look.bg, wall?.look.photo])
+  const addPhoto = async (f: File) => {
+    if (!user || !wall) return
+    const path = await uploadPhoto(user.id, f)
+    changeWall({ look: { ...wall.look, bg: "photo", photo: path } }, 0)
+    track("wall_photo")
   }
   /** Moves a note (and everything tied under it) to hang off a pile, another note, or nothing (Just pinned). To the end of that list. */
   const moveTo = (id: string, parent: string | null) => {
@@ -259,7 +378,7 @@ export default function BrainDumpPage() {
     const keep = new Set(moved.map(k => k.id))
     setNotes(ns => (ns ?? []).filter(x => x.id !== id).map(x => (keep.has(x.id) ? { ...x, parent_id: to } : x)))
     if (open === id) setOpen(null)
-    if (treeView === id) navigate("/braindump", { replace: true })
+    if (treeView === id) navigate(here, { replace: true })
     if (n.kind === "tree" && moved.length) setToast(`${moved.length} note${moved.length === 1 ? "" : "s"} back in Just pinned`)
   }
   /** A pile you started but never named or filled goes away when you leave its name tag */
@@ -326,8 +445,9 @@ export default function BrainDumpPage() {
       if (e.key !== "Escape" || e.defaultPrevented) return
       if (menu) { setMenu(null); return }
       if (drag) { press.current = null; setDrag(null); return }
+      if (lookOpen && !open) { setLookOpen(false); return }
       if (open) { if (!(e.target as HTMLElement)?.closest?.(".bd-map, .bd-dia")) close(); return }
-      if (treeView) { navigate("/braindump"); return }
+      if (treeView) { navigate(here); return }
       if (sel) { setSel(null); setSelDel(false) }
     }
     window.addEventListener("keydown", k)
@@ -424,18 +544,25 @@ export default function BrainDumpPage() {
       <div key={n.id} className={`bd-slip d${Math.min(r.depth, 2)}${drag?.id === n.id ? " lifted" : ""}${canTake ? " can" : ""}${over && canTake ? " over" : ""}${term && !hit(n) ? " dim" : ""}`}
         data-drop={`note:${n.id}`} style={{ left: r.x, top: r.y, width: r.w, height: r.h, transform: `rotate(${TILTS[i % 3]}deg)`, transformOrigin: `${PIN.x}px ${PIN.y}px`, ["--paper" as any]: c.c, ["--pin" as any]: c.root }}>
         <button className="bd-slip-face" onPointerDown={e => slipDown(e, n.id)} aria-pressed={sel === n.id}
-          onClick={() => { if (dragged.current) return; if (PHONE()) setOpen(n.id); else { setSel(n.id); setSelDel(false) } }} onDoubleClick={() => { if (!dragged.current) setOpen(n.id) }}
+          onClick={() => { if (dragged.current) return; if (PHONE()) openNote(n.id); else { setSel(n.id); setSelDel(false) } }} onDoubleClick={() => { if (!dragged.current) openNote(n.id) }}
           onContextMenu={e => { e.preventDefault(); if (press.current?.touch || dragged.current) return; setMenu({ kind: "note", id: n.id, x: e.clientX, y: e.clientY }) }}
           onKeyDown={e => { if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); const b = e.currentTarget.getBoundingClientRect(); setMenu({ kind: "note", id: n.id, x: b.left + 20, y: b.bottom }) } }}
           aria-label={`${nameOf(n)}, ${n.status}${n.made_ref ? `, became a ${madeLabel(n.made_ref)}` : ""}`}>
           <span className="t">{nameOf(n)}</span>
-          <span className="m">{STATUS_CAPS[n.status]}{n.made_ref && <b>{madeLabel(n.made_ref)}</b>}</span>
+          <span className="m">{inside.has(n.id) ? <b>▤ Wall · {inside.get(n.id)!.notes}</b> : <>{STATUS_CAPS[n.status]}{n.made_ref && <b>{madeLabel(n.made_ref)}</b>}</>}</span>
         </button>
         <span className="bd-slip-pin" aria-hidden="true" />
       </div>
     )
   }
 
+  /** A frame's name tag: type straight into it to rename */
+  const pileName = (p: Note) => renaming === p.id
+    ? <input className="bd-tag-name" value={p.title} maxLength={120} autoFocus placeholder="Name this frame" aria-label="Frame name"
+        onChange={e => change(p.id, y => ({ ...y, title: e.target.value }))} onBlur={() => doneNaming(p.id)}
+        onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); doneNaming(p.id) } }} />
+    : <button className="bd-tag-name" onClick={() => setRenaming(p.id)} title="Rename the frame">{nameOf(p)}</button>
+  const wallSurfaceOf = (l: Look) => wallSurface(l, photo).background
   const column = (c: Column) => {
     const p = c.pile, st = stageOf(c), over = !!drag && dragOverCol === c.id
     const drop = p ? `pile:${p.id}` : "pinned"
@@ -445,17 +572,11 @@ export default function BrainDumpPage() {
         <div className="bd-tag" data-drop={drop} style={{ ["--dot" as any]: p ? col(p.color).root : "#8a8378" }}
           onContextMenu={e => { if (!p) return; e.preventDefault(); setMenu({ kind: "pile", id: p.id, x: e.clientX, y: e.clientY }) }}>
           <span className="bd-tag-pin" aria-hidden="true" />
-          {p
-            ? renaming === p.id
-              ? <input className="bd-tag-name" value={p.title} maxLength={120} autoFocus placeholder="Name this pile" aria-label="Pile name"
-                  onChange={e => change(p.id, y => ({ ...y, title: e.target.value }))} onBlur={() => doneNaming(p.id)}
-                  onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); doneNaming(p.id) } }} />
-              : <button className="bd-tag-name" onClick={() => setRenaming(p.id)} title="Rename the pile">{nameOf(p)}</button>
-            : <span className="bd-tag-name">Just pinned <em>{c.rows.length || ""}</em></span>}
+          {p ? pileName(p) : <span className="bd-tag-name">Just pinned <em>{c.rows.length || ""}</em></span>}
           {p && <button className="bd-tag-more" aria-label={`More for ${nameOf(p)}`} onClick={e => { const b = e.currentTarget.getBoundingClientRect(); setMenu({ kind: "pile", id: p.id, x: b.left, y: b.bottom + 4 }) }}><MoreHorizontal size={15} /></button>}
         </div>
         {p && (
-          <button className="bd-grow" onClick={() => { setGrowing(true); navigate(`/braindump?tree=${p.id}&view=tree`) }} aria-label={`${st.label}, ${c.ties} tie${c.ties === 1 ? "" : "s"}. Grow this idea`} title="Grow this idea">
+          <button className="bd-grow" onClick={() => { setGrowing(true); navigate(`${here}?tree=${p.id}&view=tree`) }} aria-label={`${st.label}, ${c.ties} tie${c.ties === 1 ? "" : "s"}. Grow this idea`} title="Grow this idea">
             <Plant stage={st.id as Stage} pop={popped.has(c.id)} />
             <span><b>{st.label}</b><small>{c.ties} tie{c.ties === 1 ? "" : "s"}</small></span>
           </button>
@@ -480,6 +601,37 @@ export default function BrainDumpPage() {
   const sTie = sNote?.parent_id ? byId.get(sNote.parent_id) : undefined
   const treeTarget = sPile?.id ?? piles[0]?.id ?? null
   const step = nIdeas === 0 ? 0 : nThreads === 0 ? 1 : 2
+  /* ── getting started: five steps, ticked off as you do them, gone once they're all done (or you hide them) ── */
+  const steps = [
+    { done: nIdeas >= 1, t: "Pin a note", d: "Type it on the left, or double-click the wall." },
+    { done: nIdeas >= 3, t: "Pin two more", d: "Ideas are easier to see in a group." },
+    { done: nThreads >= 1, t: "Tie two notes", d: "Drag one note onto another.", go: () => setToast("Drag one note and drop it on another: a red thread ties them.") },
+    { done: tried.has("columns") && tried.has("tree"), t: "Switch to Columns, then Tree", d: "Same notes, seen two more ways.", go: () => setView(tried.has("columns") ? "tree" : "columns"), label: "Try" },
+    { done: inside.size > 0 || !!wall?.note_id, t: "Turn a note into a wall", d: "Right-click a note (long-press on a phone), then Turn into a wall.", go: () => setToast("Right-click a note (long-press on a phone), then pick Turn into a wall.") },
+  ]
+  const nDone = steps.filter(x => x.done).length, nextStep = steps.findIndex(x => !x.done)
+  const hideStart = () => { setStartHidden(true); try { localStorage.setItem("ps-wall-start", "hidden") } catch { /* not kept */ } }
+  const startPanel = !startHidden && nDone < steps.length && notes !== null && wall && !treeView ? (
+    <aside className="bd-panel bd-start" aria-label="Get started">
+      <div className="bd-ph"><div style={{ flex: 1 }}><p className="bd-k" style={{ marginTop: 2 }}>Get started</p></div>
+        <span className="bd-note" style={{ alignSelf: "center" }}>{nDone} of {steps.length}</span>
+        <button className="bd-link" style={{ marginLeft: 10, alignSelf: "center" }} onClick={hideStart}>Hide</button></div>
+      <div className="bar"><u style={{ width: `${(nDone / steps.length) * 100}%` }} /></div>
+      {steps.map((x, i) => (
+        <div key={x.t} className={`ck${x.done ? " done" : ""}${i === nextStep ? " next" : ""}`}>
+          <i aria-hidden="true">{x.done ? "✓" : ""}</i>
+          <div style={{ minWidth: 0 }}><b>{x.t}</b>{!x.done && <span>{x.d}</span>}</div>
+          {!x.done && x.go && <button onClick={x.go}>{x.label ?? "Show me"}</button>}
+          <span className="sr-only">{x.done ? "Done" : "Not done yet"}</span>
+        </div>
+      ))}
+      <p className="bd-k">Make it yours</p>
+      <div className="looks">{(["cork", "felt", "paper", "night"] as const).map(bg => (
+        <button key={bg} aria-label={`${bg} wall`} aria-pressed={wall.look.bg === bg} style={{ background: wallSurface({ ...wall.look, bg }, null).background }} onClick={() => changeWall({ look: { ...wall.look, bg } })} />
+      ))}<button aria-label="More looks" onClick={() => setLookOpen(true)} style={{ background: "none", color: TEXT_MUTED, font: "600 16px Inter" }}>…</button></div>
+      <p className="bd-note" style={{ marginTop: "auto", paddingTop: 18 }}>This list goes away by itself once you've done it all.</p>
+    </aside>
+  ) : null
   const panel = sNote && sNote.kind === "note" && !treeView ? (
     <aside className="bd-panel" aria-label={`Note: ${nameOf(sNote)}`}>
       <div className="bd-ph">
@@ -508,8 +660,9 @@ export default function BrainDumpPage() {
         {sNote.made_ref ? `${madeLabel(sNote.made_ref)}: change` : "Link what it became"}</button>
       <div className="bd-pacts">
         {sPile
-          ? <button className="bd-go" onClick={() => { setGrowing(true); navigate(`/braindump?tree=${sPile.id}&view=tree`) }}><Sprout size={17} /> Grow this idea</button>
-          : <p className="bd-note">Drag it into a pile to grow it into a question, your points and a report.</p>}
+          ? <button className="bd-go" onClick={() => { setGrowing(true); navigate(`${here}?tree=${sPile.id}&view=tree`) }}><Sprout size={17} /> Grow this idea</button>
+          : <p className="bd-note">Drag it into a frame to grow it into a question, your points and a report.</p>}
+        {inside.has(sNote.id) && <button className="bd-go" style={{ background: "#2b2c31", color: "#D7FF3C" }} onClick={() => openNote(sNote.id)}><Layers size={17} /> Open this wall · {inside.get(sNote.id)!.notes} notes</button>}
         <div className="bd-two">
           <button className="bd-act" onClick={() => setOpen(sNote.id)}><PenLine size={15} /> Open note</button>
           {selDel
@@ -523,19 +676,39 @@ export default function BrainDumpPage() {
   const mNote = menu?.kind === "note" ? byId.get(menu.id) : undefined
   const mPile = menu?.kind === "pile" ? byId.get(menu.id) : undefined
   return (
-    <div className={`bd${drag ? " dragging" : ""}`}>
+    <div className={`bd${drag ? " dragging" : ""}${moving ? " moving" : ""}`}>
       <style>{`
         .bd { height: 100vh; height: 100dvh; display: grid; grid-template-columns: 280px minmax(0, 1fr) auto; grid-template-rows: 60px minmax(0, 1fr); background: ${SURFACE_BASE}; color: ${TEXT_PRIMARY}; font-family: 'Inter', sans-serif; overflow: hidden; }
         .bd * { box-sizing: border-box; }
         .bd.dragging, .bd.dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+        .bd.moving .bd-panel { pointer-events: none; }
         .bd-side { display: flex; flex-direction: column; gap: 22px; min-height: 0; padding: 18px 16px 0; border-right: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; overflow-y: auto; }
         .bd-top { grid-column: 1 / -1; position: relative; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid ${DS_BORDER}; min-width: 0; }
         .bd-top-name b { display: block; font-size: 15px; font-weight: 600; } .bd-top-name > span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: ${TEXT_MUTED}; }
+        .bd-top-name { min-width: 0; }
+        .bd-path { display: flex; align-items: center; gap: 2px; min-width: 0; max-width: 34vw; overflow: hidden; white-space: nowrap; font: 500 13px 'Inter', sans-serif; color: ${TEXT_MUTED}; }
+        .bd-path span { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+        .bd-path i { font-style: normal; padding: 0 3px; opacity: .6; }
+        .bd-path button { border: none; background: none; padding: 2px 3px; border-radius: 6px; color: inherit; font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+        .bd-path button:hover { color: ${TEXT_PRIMARY}; background: ${SURFACE_2}; }
+        .bd-path b { display: inline; font: 600 15px 'Inter', sans-serif; color: ${TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; }
+        .bd-path span:not(:last-child) { flex-shrink: 1; }
         .bd-dot2 { width: 7px; height: 7px; border-radius: 50%; background: ${TEXT_MUTED}; } .bd-dot2.ok { background: #3fb950; } .bd-dot2.busy { background: #e3b341; } .bd-dot2.bad { background: ${DS_ERROR}; }
         .bd-modes { display: flex; padding: 3px; gap: 2px; border-radius: 12px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; }
         .bd-modes button { height: 32px; padding: 0 16px; border: none; border-radius: 9px; background: none; color: ${TEXT_MUTED}; font: 600 13px 'Inter', sans-serif; cursor: pointer; }
         .bd-modes button[aria-pressed="true"] { background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; }
         .bd-modes button:disabled { opacity: .4; cursor: default; }
+        .bd-modes button.new { position: relative; } .bd-modes button.new::after { content: ""; position: absolute; right: 6px; top: 6px; width: 6px; height: 6px; border-radius: 50%; background: ${ACCENT_SOLID}; }
+        .bd-start .ck { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: ${SURFACE_2}; margin-bottom: 8px; }
+        .bd-start .ck i { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid ${DS_BORDER_STRONG}; display: grid; place-items: center; font: 700 11px 'Inter', sans-serif; font-style: normal; margin-top: 1px; }
+        .bd-start .ck.done i { background: ${ACCENT_SOLID}; border-color: ${ACCENT_SOLID}; color: ${ACCENT_INK}; }
+        .bd-start .ck.done b { color: ${TEXT_MUTED}; text-decoration: line-through; font-weight: 500; }
+        .bd-start .ck b { display: block; font: 600 13.5px 'Inter', sans-serif; } .bd-start .ck span { display: block; font: 500 12px/1.4 'Inter', sans-serif; color: ${TEXT_MUTED}; margin-top: 2px; }
+        .bd-start .ck.next { box-shadow: inset 0 0 0 1.5px ${ACCENT_SOLID}; background: rgba(215,255,60,.06); }
+        .bd-start .ck button { margin-left: auto; align-self: center; border: none; background: none; padding: 4px 0 4px 6px; font: 600 12.5px 'Inter', sans-serif; color: ${ACCENT_SOLID}; cursor: pointer; white-space: nowrap; }
+        .bd-start .bar { height: 6px; border-radius: 3px; background: ${SURFACE_2}; overflow: hidden; margin: 0 0 12px; } .bd-start .bar u { display: block; height: 100%; background: ${ACCENT_SOLID}; }
+        .bd-start .looks { display: flex; gap: 7px; flex-wrap: wrap; } .bd-start .looks button { width: 40px; height: 30px; border-radius: 6px; border: 1px solid ${DS_BORDER_STRONG}; cursor: pointer; padding: 0; }
+        .bd-start .looks button[aria-pressed="true"] { box-shadow: 0 0 0 2px ${ACCENT_SOLID}; }
         @media (min-width: 1000px) { .bd-modes { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); } }
         .bd-top .bd-search { width: 260px; height: 38px; background: ${SURFACE_1}; }
         .bd-panel { width: 320px; min-height: 0; overflow-y: auto; border-left: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; padding: 20px; display: flex; flex-direction: column; }
@@ -647,6 +820,10 @@ export default function BrainDumpPage() {
         .bd-menu .del { color: ${DS_ERROR}; }
         ${PLANT_CSS}
         ${GROW_CSS}
+        ${FREE_CSS}
+        ${TREE_CSS}
+        ${LOOK_CSS}
+        .bd-lookbtn[aria-pressed="true"] { border-color: ${ACCENT_SOLID}; }
         @keyframes bd-in { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
         .bd-sheet { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bd-paper); color: #1b1a17; animation: bd-in .32s cubic-bezier(.2,.8,.2,1) both; }
         .bd-sheet .bd-swatch[aria-pressed="true"] { border-color: #1b1a17; box-shadow: 0 0 0 2px var(--bd-paper), 0 0 0 4px #1b1a17; }
@@ -689,7 +866,8 @@ export default function BrainDumpPage() {
         @media (max-width: 700px) {
           .bd-icon { width: 44px; height: 44px; } .bd-tag-name { min-height: 40px; } .bd-tag-more { width: 40px; height: 40px; }
           .bd { grid-template-columns: minmax(0, 1fr); grid-template-rows: 56px auto minmax(0, 1fr); }
-          .bd-top { padding: 0 8px; gap: 6px; } .bd-top .bd-search, .bd-top-name > span, .bd-panel { display: none; } .bd-top-name b { font-size: 14px; }
+          .bd-top { padding: 0 8px; gap: 6px; } .bd-top .bd-search, .bd-top-name, .bd-panel { display: none; }
+          .bd-modes button { padding: 0 11px; height: 36px; } .bd-lookbtn { width: 40px; padding: 0; } .bd-lookbtn span { display: none; }
           .bd-side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-right: none; border-bottom: 1px solid ${DS_BORDER}; overflow: visible; }
           .bd-side > .bd-pinbox { flex: 1; min-width: 0; } .bd-side .bd-cap, .bd-side .bd-hint, .bd-how, .bd-piles-box, .bd-foot { display: none; }
           .bd-side.search .bd-phone-search { display: flex; width: 100%; order: 5; }
@@ -709,16 +887,22 @@ export default function BrainDumpPage() {
       <header className="bd-top">
         <button className="bd-icon" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
         <div className="bd-top-name">
-          <b>Dump &amp; Arrange</b>
+          <nav className="bd-path" aria-label="Where you are">
+            <button onClick={() => navigate("/braindump")}>All walls</button>
+            {crumbs.map(c => <span key={c.id}><i aria-hidden="true">›</i><button onClick={() => navigate(`/braindump/w/${c.id}`)}>{c.title || "Wall"}</button></span>)}
+            <span><i aria-hidden="true">›</i><b aria-current="page">{wall?.title || "My ideas"}</b></span>
+          </nav>
           <span aria-live="polite"><i className={`bd-dot2${status === "error" ? " bad" : status === "saving" ? " busy" : status === "saved" ? " ok" : ""}`} aria-hidden="true" />
             {status === "saving" ? "Saving…" : status === "error" ? <button className="bd-retry" onClick={retry}>Not saved · Retry</button> : notes === null ? "Loading…" : "Saved"}</span>
         </div>
         <span style={{ flex: 1 }} />
         <div className="bd-modes" role="group" aria-label="View">
-          <button aria-pressed={!treeView} onClick={() => { if (treeView) navigate("/braindump") }}>Wall</button>
-          <button aria-pressed={!!treeView} disabled={!treeTarget} title={treeTarget ? "See a pile as a tree" : "Start a pile first"} onClick={() => { if (treeTarget && !treeView) { setGrowing(false); navigate(`/braindump?tree=${treeTarget}&view=tree`) } }}>Tree</button>
+          <button aria-pressed={!treeView && view === "wall"} onClick={() => setView("wall")}>Wall</button>
+          <button aria-pressed={!treeView && view === "columns"} onClick={() => setView("columns")} className={tried.has("columns") || view === "columns" ? "" : "new"}>Columns</button>
+          <button aria-pressed={!treeView && view === "tree"} onClick={() => setView("tree")} className={tried.has("tree") || view === "tree" ? "" : "new"}>Tree</button>
         </div>
         <label className="bd-search"><Search size={14} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search your notes" aria-label="Search your notes" />{q && <button className="bd-icon" style={{ width: 22, height: 22 }} aria-label="Clear search" onClick={() => setQ("")}><X size={13} /></button>}</label>
+        <button className="bd-btn bd-lookbtn" aria-label="Look of this wall" aria-pressed={lookOpen} disabled={!wall} onClick={() => { setLookOpen(o => !o); setSel(null) }}><Palette size={15} /><span>Look</span></button>
       </header>
       <aside className={`bd-side${q ? " search" : ""}`} aria-label="Pin and find">
         <div className="bd-pinbox">
@@ -728,24 +912,25 @@ export default function BrainDumpPage() {
           <div className="bd-hint">Enter pins it. Keep typing for the next.</div>
         </div>
         <button className="bd-icon bd-phone-only" aria-label="Search your notes" onClick={() => setQ(v => v || " ")}><Search size={17} /></button>
-        <button className="bd-icon bd-phone-only" aria-label="New pile" onClick={newPile} disabled={!user}><Plus size={18} /></button>
+        <button className="bd-icon bd-phone-only" aria-label="New frame" onClick={newPile} disabled={!user}><Plus size={18} /></button>
         <label className="bd-search bd-phone-search"><Search size={14} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search your notes" aria-label="Search your notes (phone)" />{q && <button className="bd-icon" style={{ width: 22, height: 22 }} aria-label="Clear search" onClick={() => setQ("")}><X size={13} /></button>}</label>
         <div className="bd-piles-box">
-          <div className="bd-cap"><span>Piles · {piles.length}</span></div>
+          <div className="bd-cap"><span>Frames · {piles.length}</span></div>
           <div className="bd-piles">
-            {notes !== null && piles.length === 0 && <p className="bd-none">No piles yet. Start one for notes that belong together.</p>}
+            {notes !== null && piles.length === 0 && <p className="bd-none">No frames yet. Start one for notes that belong together.</p>}
             {columns.filter(c => c.pile).map(c => (
-              <button key={c.id} className="bd-row" onClick={() => { if (treeView) navigate("/braindump"); setTimeout(() => showPile(c.id), treeView ? 80 : 0) }}>
+              <button key={c.id} className="bd-row" onClick={() => { if (treeView) navigate(here); setTimeout(() => showPile(c.id), treeView ? 80 : 0) }}>
                 <span className="bd-dot" style={{ background: hex(c.pile!.color) }} /><span className="t">{nameOf(c.pile!)}</span><small>{c.rows.length}</small><em>{stageOf(c).label}</em>
               </button>
             ))}
-            <button className="bd-row add" onClick={newPile} disabled={!user}><Plus size={15} /><span className="t">New pile</span></button>
+            <button className="bd-row add" onClick={newPile} disabled={!user}><Plus size={15} /><span className="t">New frame</span></button>
+            <button className="bd-row add" onClick={newWallInside} disabled={!user || !wall}><Layers size={15} /><span className="t">New wall inside this one</span></button>
           </div>
         </div>
         <div className="bd-how" aria-label="How it grows">
           <div className="bd-cap" style={{ margin: 0 }}><span>How it grows</span></div>
           <ol className="bd-steps">
-            {["Pin it the moment you think it.", "Drag one note onto another to tie a thread.", "Every thread grows the pile, from seed to tree.", "Grow it into a question, your points, then a report."].map((t, i) => <li key={i} className={i === step ? "on" : ""}><b>{i + 1}</b>{t}</li>)}
+            {["Pin it the moment you think it.", "Drag one note onto another to tie a thread.", "Every thread grows the frame, from seed to tree.", "Grow it into a question, your points, then a report."].map((t, i) => <li key={i} className={i === step ? "on" : ""}><b>{i + 1}</b>{t}</li>)}
           </ol>
         </div>
         <div className="bd-foot">
@@ -758,19 +943,55 @@ export default function BrainDumpPage() {
         {loadFailed && <div className="bd-failed" role="alert"><b>Your notes didn't load.</b><span>Nothing is lost. They're kept in your account.</span><button className="bd-btn" onClick={() => setTries(t => t + 1)}>Try again</button></div>}
         {tvPile && tvPile.kind === "tree" && tvCol
           ? <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
-              <TreeView pile={tvPile} kids={kids} under={under} stage={stageOf(tvCol).id as Stage} onBack={() => navigate("/braindump")} onOpen={setOpen} onNavigate={to => navigate(to)}
+              <TreeView pile={tvPile} kids={kids} under={under} stage={stageOf(tvCol).id as Stage} onBack={() => navigate(here)} onOpen={setOpen} onNavigate={to => navigate(to)}
                 onGrow={growing ? undefined : () => setGrowing(true)}
                 aside={growing ? <GrowPanel key={tvPile.id} pile={tvPile} kids={kids} making={makingFor === tvPile.id}
                   onQuestion={t => setQuestion(tvPile.id, t)} onAdd={parent => add("note", parent)} onTitle={(id, t) => change(id, n => ({ ...n, title: t }))}
                   onRemove={remove} onMake={() => makeReport(tvPile.id)} onClose={() => setGrowing(false)}
                   onLink={() => { loadPieces(); setMenu({ kind: "note", id: tvPile.id, x: 380, y: 160, sub: "made" }) }} /> : undefined} />
             </div>
-          : <div className="bd-wall">
-              <Banner />
+          : view === "tree"
+          ? (notes !== null
+              ? <WallTree notes={all} kids={kids} sel={sel} dim={n => !!term && !hit(n)} editing={treeEdit} onEdit={setTreeEdit}
+                  onTitle={(id, t) => change(id, n => ({ ...n, title: t }))}
+                  onDoneEdit={async (id, next) => {
+                    setTreeEdit(null)
+                    const n = notesRef.current.find(x => x.id === id)
+                    if (!n) return
+                    if (!n.title.trim() && !kids(n.id).length) { remove(id); return }
+                    if (next === "sibling") { const m = await add("note", n.parent_id); if (m) setTreeEdit(m.id) }
+                  }}
+                  onGrowFrom={async parent => { const m = await add("note", parent); if (m) { setTreeEdit(m.id); track("tree_grew") } }}
+                  slipDown={slipDown} dragId={drag?.id ?? null} overId={drag?.over ?? null}
+                  onSelect={id => { if (dragged.current) return; setLookOpen(false); if (PHONE()) openNote(id); else { setSel(id); setSelDel(false) } }}
+                  onOpen={id => { if (!dragged.current) openNote(id) }} inside={inside}
+                  onMenu={(kind, id, x, y) => setMenu({ kind, id, x, y })} />
+              : <div className="bd-wall"><div className="bd-empty" style={{ margin: "auto" }}>Loading…</div></div>)
+          : view === "wall"
+          ? (notes !== null && wall
+              ? <FreeWall wallKey={wall.id} notes={all} look={wall.look} photo={photo} kids={kids} pileOf={pileOf} under={under}
+                  banner={<Banner name={wall.title} onName={t => changeWall({ title: t })} />}
+                  sel={sel} dim={n => !!term && !hit(n)} flash={flash} popped={popped}
+                  stat={id => { const c = columns.find(x => x.id === id); const st = c ? stageOf(c) : plantStage(0); return { id: st.id as Stage, label: st.label, ties: c?.ties ?? 0 } }}
+                  name={pileName} statusCaps={n => <>{STATUS_CAPS[n.status]}{n.made_ref && <b>{madeLabel(n.made_ref)}</b>}</>}
+                  centre={centre} show={showOnWall} onDragging={setMoving}
+                  onPlace={m => place(m)}
+                  onFile={(id, pile, m) => { place(m, 0); file(id, pile) }}
+                  onTie={(id, to, m) => { place(m, 0); tie(id, to) }}
+                  onSelect={id => { if (!id) { setSel(null); return } setLookOpen(false); if (PHONE()) openNote(id); else { setSel(id); setSelDel(false) } }}
+                  onOpen={openNote} inside={inside}
+                  onMenu={(kind, id, x, y) => setMenu({ kind, id, x, y })}
+                  onAddAt={async (x, y, pile) => { const n = await add("note", pile, "", false, { x, y }); if (n) setOpen(n.id) }}
+                  onGrow={id => { setGrowing(true); navigate(`${here}?tree=${id}&view=tree`) }} />
+              : <div className="bd-wall"><div className="bd-empty" style={{ margin: "auto" }}>Loading…</div></div>)
+          : <div className="bd-wall" style={wall ? { background: wallSurfaceOf(wall.look) } : undefined}>
+              <Banner name={wall?.title ?? ""} onName={t => changeWall({ title: t })} />
               <div className="bd-cols" ref={wallRef}>{notes !== null && columns.map(column)}</div>{/* drawn once the notes are in: on a phone the wall snaps to its first column, so it must not open on an empty Just pinned that the piles then push aside */}
             </div>}
       </main>
-      {panel}
+      {lookOpen && wall && !treeView
+        ? <LookPanel look={wall.look} title={wall.title} photo={photo} onLook={(l: Look) => changeWall({ look: l })} onTitle={t => changeWall({ title: t })} onPhoto={addPhoto} onClose={() => setLookOpen(false)} />
+        : panel ?? startPanel}
 
       {drag && (() => { const n = byId.get(drag.id); return n ? <div className="bd-ghost" style={{ left: drag.x, top: drag.y, background: hex(n.color) }}>{nameOf(n)}</div> : null })()}
 
@@ -788,7 +1009,7 @@ export default function BrainDumpPage() {
             <button className="bd-row" onClick={() => setMenu({ ...menu, sub: undefined })}><ArrowLeft size={14} /><span className="t">Back</span></button>
           </> : menu.sub === "delete" ? <>
             <p>Delete “{nameOf(mNote)}”?</p>
-            <div className="warn">{kids(mNote.id).length ? "What hangs off it moves up to where it hung." : "This can't be undone."}</div>
+            <div className="warn">{inside.has(mNote.id) ? `It's a wall with ${inside.get(mNote.id)!.notes} note${inside.get(mNote.id)!.notes === 1 ? "" : "s"} (and any walls inside it). They're deleted too. This can't be undone.` : kids(mNote.id).length ? "What hangs off it moves up to where it hung." : "This can't be undone."}</div>
             <button className="bd-row del" onClick={() => remove(mNote.id)}><Trash2 size={14} /><span className="t">Delete note</span></button>
             <button className="bd-row" onClick={() => setMenu({ ...menu, sub: undefined })}><span className="t">Keep it</span></button>
           </> : <>
@@ -802,6 +1023,7 @@ export default function BrainDumpPage() {
             <p>Colour</p>
             <div className="bd-sw">{COLORS.map(c => <button key={c.id} className="bd-swatch" aria-label={`Colour ${c.id}`} aria-pressed={mNote.color === c.id} style={{ background: c.c }} onClick={() => change(mNote.id, n => ({ ...n, color: c.id }), 300)} />)}</div>
             <button className="bd-row" onClick={() => { setOpen(mNote.id); setMenu(null) }}><PenLine size={14} /><span className="t">Open its page</span></button>
+            <button className="bd-row" onClick={() => { setMenu(null); makeWall(mNote.id) }}><Layers size={14} /><span className="t">{inside.has(mNote.id) ? "Open its wall" : "Turn into a wall"}</span></button>
             <button className="bd-row del" onClick={() => setMenu({ ...menu, sub: "delete" })}><Trash2 size={14} /><span className="t">Delete…</span></button>
           </>}
         </Popover>
@@ -809,19 +1031,19 @@ export default function BrainDumpPage() {
       {menu && mPile && (
         <Popover x={menu.x} y={menu.y} label={`${nameOf(mPile)} menu`} onClose={() => setMenu(null)}>
           {menu.sub === "delete" ? <>
-            <p>Delete the pile “{nameOf(mPile)}”?</p>
+            <p>Delete the frame “{nameOf(mPile)}”?</p>
             <div className="warn">Its notes go back to Just pinned, still tied together.</div>
-            <button className="bd-row del" onClick={() => remove(mPile.id)}><Trash2 size={14} /><span className="t">Delete pile</span></button>
+            <button className="bd-row del" onClick={() => remove(mPile.id)}><Trash2 size={14} /><span className="t">Delete frame</span></button>
             <button className="bd-row" onClick={() => setMenu({ ...menu, sub: undefined })}><span className="t">Keep it</span></button>
           </> : <>
             <button className="bd-row" onClick={() => { setRenaming(mPile.id); setMenu(null) }}><Type size={14} /><span className="t">Rename</span></button>
             <button className="bd-row" onClick={() => { setOpen(mPile.id); setMenu(null) }}><PenLine size={14} /><span className="t">Write its question</span></button>
-            <button className="bd-row" onClick={() => { setGrowing(true); navigate(`/braindump?tree=${mPile.id}&view=tree`); setMenu(null) }}><Sprout size={14} /><span className="t">Grow this idea</span></button>
-            <button className="bd-row" onClick={() => { setGrowing(false); navigate(`/braindump?tree=${mPile.id}&view=tree`); setMenu(null) }}><GitFork size={14} /><span className="t">See the tree</span></button>
-            <button className="bd-row" onClick={async () => { setMenu(null); const n = await add("note", mPile.id); if (n) setOpen(n.id) }}><Plus size={14} /><span className="t">New note in this pile</span></button>
+            <button className="bd-row" onClick={() => { setGrowing(true); navigate(`${here}?tree=${mPile.id}&view=tree`); setMenu(null) }}><Sprout size={14} /><span className="t">Grow this idea</span></button>
+            <button className="bd-row" onClick={() => { setGrowing(false); navigate(`${here}?tree=${mPile.id}&view=tree`); setMenu(null) }}><GitFork size={14} /><span className="t">See the tree</span></button>
+            <button className="bd-row" onClick={async () => { setMenu(null); const n = await add("note", mPile.id); if (n) setOpen(n.id) }}><Plus size={14} /><span className="t">New note in this frame</span></button>
             <p>Colour</p>
-            <div className="bd-sw">{COLORS.map(c => <button key={c.id} className="bd-swatch" aria-label={`Pile colour ${c.id}`} aria-pressed={mPile.color === c.id} style={{ background: c.c }} onClick={() => change(mPile.id, n => ({ ...n, color: c.id }), 300)} />)}</div>
-            <button className="bd-row del" onClick={() => setMenu({ ...menu, sub: "delete" })}><Trash2 size={14} /><span className="t">Delete pile…</span></button>
+            <div className="bd-sw">{COLORS.map(c => <button key={c.id} className="bd-swatch" aria-label={`Frame colour ${c.id}`} aria-pressed={mPile.color === c.id} style={{ background: c.c }} onClick={() => change(mPile.id, n => ({ ...n, color: c.id }), 300)} />)}</div>
+            <button className="bd-row del" onClick={() => setMenu({ ...menu, sub: "delete" })}><Trash2 size={14} /><span className="t">Delete frame…</span></button>
           </>}
         </Popover>
       )}
@@ -830,7 +1052,7 @@ export default function BrainDumpPage() {
         <div className="bd-sheet" role="dialog" aria-label={nameOf(note)} style={{ ["--bd-paper" as any]: `color-mix(in srgb, ${hex(note.color)} 22%, #fbfaf6)` }}>
           <div className="bd-sheet-top" onPointerDown={e => { if ((e.target as HTMLElement).closest("button")) e.preventDefault() }}>
             <button className="bd-tb" onClick={close} aria-label="Back to Dump & Arrange"><ArrowLeft size={17} /> Dump &amp; Arrange</button>
-            <span className="bd-crumb">{note.kind === "tree" ? "The pile's page · first line is its question" : notePile ? <><span className="bd-dot" style={{ background: hex(notePile.color) }} /> {nameOf(notePile)}</> : "Just pinned"}</span>
+            <span className="bd-crumb">{note.kind === "tree" ? "The frame's page · first line is its question" : notePile ? <><span className="bd-dot" style={{ background: hex(notePile.color) }} /> {nameOf(notePile)}</> : "Just pinned"}</span>
             <span className="bd-status" aria-live="polite">{status === "saving" ? <><Loader2 size={12} className="an-spin" /> Saving</> : status === "saved" ? <><Check size={12} /> Saved</> : status === "error" ? <button className="bd-retry" onClick={retry}>Not saved yet · Try again</button> : ""}</span>
             <span style={{ flex: 1 }} />
             {note.kind === "note" && <>
@@ -853,12 +1075,12 @@ export default function BrainDumpPage() {
             {COLORS.map(c => <button key={c.id} className="bd-swatch" aria-label={`Note colour ${c.id}`} aria-pressed={note.color === c.id} style={{ background: c.c }} onClick={() => change(note.id, n => ({ ...n, color: c.id }))} />)}
             <span className="bd-sep" />
             {confirmDel === note.id
-              ? <><button className="bd-tb pill" style={{ background: DS_ERROR }} onClick={() => remove(note.id)}>{note.kind === "tree" ? "Delete pile" : "Delete note"}</button><button className="bd-tb" onClick={() => setConfirmDel(null)}>Keep</button></>
-              : <button className="bd-tb" aria-label={note.kind === "tree" ? "Delete pile" : "Delete note"} title="Delete" onClick={() => setConfirmDel(note.id)}><Trash2 size={16} /></button>}
+              ? <><button className="bd-tb pill" style={{ background: DS_ERROR }} onClick={() => remove(note.id)}>{note.kind === "tree" ? "Delete frame" : "Delete note"}</button><button className="bd-tb" onClick={() => setConfirmDel(null)}>Keep</button></>
+              : <button className="bd-tb" aria-label={note.kind === "tree" ? "Delete frame" : "Delete note"} title="Delete" onClick={() => setConfirmDel(note.id)}><Trash2 size={16} /></button>}
           </div>
           <div className="bd-page">
             <div className="bd-inner">
-              <input className="bd-title" value={note.title} maxLength={120} placeholder={note.kind === "tree" ? "Name this pile" : "Title"} aria-label="Title" autoFocus={!note.title}
+              <input className="bd-title" value={note.title} maxLength={120} placeholder={note.kind === "tree" ? "Name this frame" : "Title"} aria-label="Title" autoFocus={!note.title}
                 onChange={e => change(note.id, n => ({ ...n, title: e.target.value }))} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); (document.querySelector(".bd-words") as HTMLElement | null)?.focus() } }} />
               {note.body.map(b => b.type === "text" ? (
                 <div key={b.id} data-wrap={b.id}>

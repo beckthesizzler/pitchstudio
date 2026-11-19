@@ -21,14 +21,14 @@ import { ACCENT_SOLID, ACCENT_INK, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFA
 
 type Kind = "board" | "analysis" | "report" | "tree"
 type Piece = { key: string; kind: Kind; id: string; name: string; no: number; updated: string; thumb: React.ReactNode; href: string }
-const KINDS: { id: Kind | "all"; label: string }[] = [{ id: "all", label: "Everything" }, { id: "board", label: "Boards" }, { id: "analysis", label: "Analyses" }, { id: "report", label: "Reports" }, { id: "tree", label: "Piles" }]
-const KIND_NAME: Record<Kind, string> = { board: "Board", analysis: "Analysis", report: "Report", tree: "Pile" }
+const KINDS: { id: Kind | "all"; label: string }[] = [{ id: "all", label: "Everything" }, { id: "board", label: "Boards" }, { id: "analysis", label: "Analyses" }, { id: "report", label: "Reports" }, { id: "tree", label: "Frames" }]
+const KIND_NAME: Record<Kind, string> = { board: "Board", analysis: "Analysis", report: "Report", tree: "Frame" }
 const KIND_ICON: Record<Kind, React.ReactNode> = { board: <LayoutDashboard size={12} />, analysis: <ImageIcon size={12} />, report: <FileText size={12} />, tree: <Sprout size={12} /> }
 const MAKE = [
   { name: "Tactics board", what: "Players, moves and steps", href: "/board", icon: <LayoutDashboard size={16} /> },
   { name: "Live analysis", what: "Freeze a moment and draw", href: "/analysis", icon: <ImageIcon size={16} /> },
   { name: "Match report", what: "The game on one card", href: "/report", icon: <FileText size={16} /> },
-  { name: "Dump & Arrange", what: "Pin an idea, grow a pile", href: "/braindump", icon: <Sprout size={16} /> },
+  { name: "Dump & Arrange", what: "Pin ideas, arrange them freely", href: "/braindump", icon: <Sprout size={16} /> },
 ]
 const TREE_COLORS: Record<string, string> = { yellow: "#f7e36a", pink: "#f58cb4", peach: "#f9b27e", orange: "#f6a04a", lime: "#c8e86c", aqua: "#88dde0", teal: "#5ec6cb", lilac: "#c6b6fb" }
 
@@ -127,7 +127,7 @@ export default function ShelfPage() {
       for (const t of notes.filter(x => x.kind === "tree" && !x.parent_id)) {
         const kids = notes.filter(x => x.parent_id === t.id).sort((x, y) => x.pos - y.pos)
         const latest = [t, ...kids].map(x => x.updated_at).sort().pop() ?? t.updated_at
-        out.push({ key: "tree:" + t.id, kind: "tree", id: t.id, name: t.title?.trim() || "Name this pile", no: 0, updated: latest, href: `/braindump?tree=${t.id}`, thumb: <TreeThumb name={t.title?.trim() || "Name this pile"} color={t.color} ideas={kids.map(k => k.title?.trim() || plainText(k.first) || "New idea")} /> })
+        out.push({ key: "tree:" + t.id, kind: "tree", id: t.id, name: t.title?.trim() || "Name this frame", no: 0, updated: latest, href: `/braindump?tree=${t.id}`, thumb: <TreeThumb name={t.title?.trim() || "Name this frame"} color={t.color} ideas={kids.map(k => k.title?.trim() || plainText(k.first) || "New idea")} /> })
       }
       const saved: string[] = Array.isArray(prof.data?.shelf) ? prof.data.shelf.filter((k: unknown) => typeof k === "string") : []
       setOrder(saved)
@@ -255,7 +255,7 @@ export default function ShelfPage() {
         @keyframes sh-pulse { from { opacity: .55 } to { opacity: 1 } }
         .sh-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: ${TEXT_PRIMARY}; color: ${SURFACE_BASE}; padding: 10px 16px; border-radius: 999px; font: 500 13px 'Inter', sans-serif; z-index: 60; }
         .sh.dragging, .sh.dragging * { cursor: grabbing !important; user-select: none; }
-        @media (max-width: 720px) { .sh-wrap { padding: 26px 16px 70px; } .sh-h1 { font-size: 40px; } .sh-seg { overflow-x: auto; max-width: 100%; } .sh-stats { margin-left: 0; gap: 22px; } .sh-stats div b { font-size: 32px; } .sh-top .sh-search, .sh-top .sh-link { display: none; } .sh-bar .sh-search { display: flex; width: 100%; } }
+        @media (max-width: 720px) { .sh-wrap { padding: 26px 16px 70px; } .sh-h1 { font-size: 40px; } .sh-seg { overflow-x: auto; max-width: 100%; } .sh-stats { margin-left: 0; gap: 14px 22px; flex-wrap: wrap; } .sh-stats div b { font-size: 32px; } .sh-top .sh-search, .sh-top .sh-link { display: none; } .sh-bar .sh-search { display: flex; width: 100%; } }
         @media (min-width: 721px) { .sh-bar .sh-search { display: none; } }
         @media (prefers-reduced-motion: reduce) { .sh-card, .sh-skel { transition: none; animation: none; } }
       `}</style>
@@ -299,7 +299,7 @@ export default function ShelfPage() {
         ) : total === 0 ? (
           <div className="sh-empty">
             <b>Your shelf is waiting</b>
-            Every board, analysis, report and pile you make lands here, ready to put in your order.
+            Every board, analysis, report and frame you make lands here, ready to put in your order.
             <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 20, flexWrap: "wrap" }}>
               <button className="sh-btn pri" onClick={() => navigate("/board?start=lineup")}>Make your first post</button>
               <button className="sh-btn" onClick={() => navigate("/report")}>Start a report</button>
@@ -316,7 +316,7 @@ export default function ShelfPage() {
                   <button className="sh-face" aria-label={`Open ${p.name}`}
                     onPointerDown={e => { if (!canMove || e.button !== 0 || e.pointerType === "touch") return; e.preventDefault(); press.current = { key: p.key, x: e.clientX, y: e.clientY, on: false } }}
                     onClick={e => { if (e.detail === 0 || !canMove || (e.nativeEvent as PointerEvent).pointerType === "touch") navigate(p.href) }}>
-                    <div className="sh-pic">{p.thumb}{(p.no > 0 || p.kind === "tree") && <span className="sh-badge">{p.no > 0 ? issueLabel(p.no) : "Pile"}</span>}</div>
+                    <div className="sh-pic">{p.thumb}{(p.no > 0 || p.kind === "tree") && <span className="sh-badge">{p.no > 0 ? issueLabel(p.no) : "Frame"}</span>}</div>
                     <div className="sh-meta">
                       <div className="sh-name">{p.name}</div>
                       <div className="sh-meta2">{KIND_NAME[p.kind]} · {relTime(p.updated)}</div>

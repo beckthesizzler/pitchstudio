@@ -63,25 +63,15 @@ export function Threads({ rows, height }: { rows: Row[]; height: number }) {
   )
 }
 
-const WALL_KEY = "ps-wall-name", WALL_DEFAULT = "MY IDEAS"
-const readWall = () => { try { return localStorage.getItem(WALL_KEY)?.trim() || WALL_DEFAULT } catch { return WALL_DEFAULT } }
-
-/** The cloth banner across the top of the wall. Click it to rename the wall (kept in this browser). */
-export function Banner() {
-  const [name, setName] = useState(readWall)
+/** The cloth banner across the top of the wall: the wall's name. Click it to rename the wall. */
+export function Banner({ name, onName }: { name: string; onName: (v: string) => void }) {
   const [edit, setEdit] = useState<string | null>(null)
-  const done = (keep: boolean) => {
-    if (keep && edit !== null) {
-      const v = edit.trim() || WALL_DEFAULT
-      setName(v)
-      try { if (v === WALL_DEFAULT) localStorage.removeItem(WALL_KEY); else localStorage.setItem(WALL_KEY, v) } catch { /* storage blocked: kept for this visit */ }
-    }
-    setEdit(null)
-  }
+  const shown = name.trim() || "MY IDEAS"
+  const done = (keep: boolean) => { if (keep && edit !== null) onName(edit.trim().slice(0, 40) || "My ideas"); setEdit(null) }
   return (
     <div className="bd-banner-row">
       {edit === null
-        ? <button className="bd-banner" onClick={() => setEdit(name)} aria-label={`Wall name: ${name}. Rename`} title="Rename the wall">{name}</button>
+        ? <button className="bd-banner" onClick={() => setEdit(shown)} aria-label={`Wall name: ${shown}. Rename`} title="Rename the wall">{shown}</button>
         : <input className="bd-banner" value={edit} maxLength={40} autoFocus aria-label="Wall name" onFocus={e => e.currentTarget.select()}
             onChange={e => setEdit(e.target.value)} onBlur={() => done(true)}
             onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); done(true) } else if (e.key === "Escape") { e.preventDefault(); done(false) } }} />}
@@ -93,6 +83,8 @@ export function Banner() {
 export function Popover({ x, y, label, onClose, children }: { x: number; y: number; label: string; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   const [at, setAt] = useState({ left: x, top: y })
+  const [armed, setArmed] = useState(false) // a long press opens the menu under your finger: the tap that ends it mustn't pick an item
+  useEffect(() => { const t = setTimeout(() => setArmed(true), 350); return () => clearTimeout(t) }, [])
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
@@ -115,7 +107,7 @@ export function Popover({ x, y, label, onClose, children }: { x: number; y: numb
   return (
     <>
       <div className="bd-menu-back" onPointerDown={onClose} onContextMenu={e => { e.preventDefault(); onClose() }} />
-      <div ref={ref} className="bd-menu" role="menu" aria-label={label} style={at} onKeyDown={onKey}>{children}</div>
+      <div ref={ref} className="bd-menu" role="menu" aria-label={label} style={{ ...at, pointerEvents: armed ? undefined : "none" }} onKeyDown={onKey}>{children}</div>
     </>
   )
 }

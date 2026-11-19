@@ -10,7 +10,9 @@ export type Block = TextBlock | MapBlock | DiagramBlock
 export type Kind = "note" | "tree"
 export type Color = "yellow" | "pink" | "peach" | "orange" | "lime" | "aqua" | "teal" | "lilac"
 export type Status = "idea" | "making" | "made"
-export type Note = { id: string; kind: Kind; parent_id: string | null; title: string; color: Color; pos: number; body: Block[]; updated_at: string; status: Status; made_ref: string | null }
+export type Note = { id: string; kind: Kind; parent_id: string | null; title: string; color: Color; pos: number; body: Block[]; updated_at: string; status: Status; made_ref: string | null
+  /** The wall it sits on (null: your main wall), where it sits on it, and a frame's size. null x: not placed yet. */
+  wall_id: string | null; x: number | null; y: number | null; w: number | null; h: number | null }
 
 export const COLORS: { id: Color; c: string; root: string }[] = [
   { id: "yellow", c: "#f7e36a", root: "#c9a92a" }, { id: "pink", c: "#f58cb4", root: "#d4588a" }, { id: "peach", c: "#f9b27e", root: "#d9814a" },
@@ -21,7 +23,7 @@ export const col = (c: Color) => COLORS.find(x => x.id === c) ?? COLORS[0]
 export const hex = (c: Color) => col(c).c
 export const nid = () => { try { return crypto.randomUUID() } catch { return "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) } }
 export const newText = (html = ""): TextBlock => ({ type: "text", id: nid(), html })
-export const COLS = "id, kind, parent_id, title, color, pos, body, updated_at, status, made_ref"
+export const COLS = "id, kind, parent_id, title, color, pos, body, updated_at, status, made_ref, wall_id, x, y, w, h"
 
 export const STATUSES: { id: Status; label: string }[] = [{ id: "idea", label: "Idea" }, { id: "making", label: "Making" }, { id: "made", label: "Made" }]
 const MADE_REF = /^(board|report|analysis):[0-9a-fA-F-]{36}$/
@@ -60,11 +62,13 @@ function readBody(raw: unknown): Block[] {
   }
   return out.length ? out : [newText()]
 }
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null)
 export const readNote = (n: any): Note => ({
   id: String(n.id), kind: n.kind === "tree" ? "tree" : "note", parent_id: n.parent_id ?? null, title: String(n.title ?? ""),
   color: COLORS.some(c => c.id === n.color) ? n.color : "yellow", pos: Number(n.pos) || 0, body: readBody(n.body), updated_at: String(n.updated_at ?? new Date().toISOString()),
   status: STATUSES.some(s => s.id === n.status) ? n.status : "idea",
   made_ref: typeof n.made_ref === "string" && MADE_REF.test(n.made_ref) ? n.made_ref : null,
+  wall_id: typeof n.wall_id === "string" ? n.wall_id : null, x: num(n.x), y: num(n.y), w: num(n.w), h: num(n.h),
 })
 export const firstLine = (n: Note) => { const t = n.body.find((b): b is TextBlock => b.type === "text" && !!plain(b.html)); return t ? plain(t.html) : "" }
 /** What an idea or a pile is called before it's named: an idea by its first line, a pile by the name it's waiting for */

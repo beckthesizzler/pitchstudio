@@ -171,10 +171,10 @@ export function TreeView({ pile, kids, under, stage, onBack, onOpen, onNavigate,
             {L.lines.map((l, i) => <path key={i} d={l.d} stroke="#8A7A62" strokeWidth={l.width} fill="none" strokeLinecap="round" />)}
           </svg>
           <button className={`bd-tv-root${question ? "" : " ask"}`} style={{ left: L.cx, top: L.H - ROOT_ZONE + 74 }} onClick={() => onOpen(pile.id)}
-            title={question ? "Open the pile's page" : "Write the pile's question"}>
-            <small>THE QUESTION</small>{question || "What is this pile about?"}
+            title={question ? "Open the frame's page" : "Write the frame's question"}>
+            <small>THE QUESTION</small>{question || "What is this frame about?"}
           </button>
-          {L.empty && <p className="bd-tv-seed" style={{ left: L.cx, top: L.H - ROOT_ZONE - 120 }}>This pile is still a seed. Write a point in Grow this idea and it starts to grow.</p>}
+          {L.empty && <p className="bd-tv-seed" style={{ left: L.cx, top: L.H - ROOT_ZONE - 120 }}>This frame is still a seed. Write a point in Grow this idea and it starts to grow.</p>}
           {L.fruit && (() => {
             const [k, id] = L.fruit.ref.split(":"), meta = KIND[k], t = titles[L.fruit.ref]
             return meta && t !== null

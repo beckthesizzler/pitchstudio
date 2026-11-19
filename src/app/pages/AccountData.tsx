@@ -11,7 +11,7 @@ import { TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, DS_BORDER, DS_ERROR,
    database is not allowed to delete stored files itself; then one database call deletes the account, and with it
    the profile, boards, analyses, reports and Brain Dump ideas. */
 
-const BUCKETS = ["brand-logos", "analysis-shots", "report-media"] as const
+const BUCKETS = ["brand-logos", "analysis-shots", "report-media", "wall-photos"] as const
 
 /** Every file in your own folder of a bucket (folders inside are followed three levels down). */
 async function listAll(bucket: string, prefix: string, depth = 0): Promise<string[]> {
@@ -48,7 +48,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
     if (!userId || busy) return
     setBusy("download"); setMsg("")
     try {
-      const [p, b, a, r, lf, ls, nd] = await Promise.all([
+      const [p, b, a, r, lf, ls, nd, wl] = await Promise.all([
         supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
         supabase.from("boards").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         supabase.from("analyses").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
@@ -56,6 +56,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         (supabase as any).from("library_folders").select("*").eq("user_id", userId),
         (supabase as any).from("library_shots").select("*").eq("user_id", userId),
         (supabase as any).from("notes").select("*").eq("user_id", userId).order("pos", { ascending: true }),
+        (supabase as any).from("walls").select("*").eq("user_id", userId).order("pos", { ascending: true }),
       ])
       const failed = [p, b, a, r].find(x => x.error)
       if (failed) throw failed.error
@@ -67,7 +68,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         account: { id: userId, email },
         profile: p.data, boards: b.data ?? [], analyses: a.data ?? [], reports: r.data ?? [],
         library: { folders: lf.error ? [] : lf.data ?? [], shots: ls.error ? [] : ls.data ?? [] },
-        brain_dump: { trees: nd.error ? [] : (nd.data ?? []).filter((x: any) => x.kind === "tree"), ideas: nd.error ? [] : (nd.data ?? []).filter((x: any) => x.kind !== "tree") }, files,
+        brain_dump: { walls: wl.error ? [] : wl.data ?? [], trees: nd.error ? [] : (nd.data ?? []).filter((x: any) => x.kind === "tree"), ideas: nd.error ? [] : (nd.data ?? []).filter((x: any) => x.kind !== "tree") }, files,
       }
       const url = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }))
       const link = document.createElement("a")

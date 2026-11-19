@@ -175,6 +175,7 @@ export default function Root() {
           <Route path="/" element={recovery.pending && authUser ? <Navigate to="/reset" replace /> : <HomeRoute signedIn={!!authUser} />} />
           <Route path="/board" element={<BoardRoute signedIn={!!authUser} />} />
           <Route path="/braindump" element={<BraindumpRoute signedIn={!!authUser} />} />
+          <Route path="/braindump/w/:wallId" element={<BraindumpRoute signedIn={!!authUser} />} />
           <Route path="/analysis" element={<AnalysisRoute signedIn={!!authUser} />} />
           <Route path="/report" element={<ReportRoute signedIn={!!authUser} />} />
           <Route path="/shelf" element={<ShelfRoute signedIn={!!authUser} />} />

@@ -939,7 +939,7 @@ export default function ReportPage() {
         .rp-mine .rp-tpl { width: 100%; }
         .rp-mine-x { position: absolute; top: 8px; right: 8px; background: rgba(12,14,18,.8) !important; }
         .rp-startbtns { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
-        .rp-scrim { position: fixed; inset: 0; background: ${SCRIM}; z-index: 50; display: grid; place-items: center; padding: 20px; }
+        .rp-scrim { position: fixed; inset: 0; background: ${SCRIM}; z-index: 50; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 20px; }
         .rp-modal { background: ${SURFACE_1}; border: 1px solid ${DS_BORDER_STRONG}; border-radius: 18px; width: min(860px, 100%); max-height: 82vh; display: flex; flex-direction: column; }
         .rp-modal header { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid ${DS_BORDER}; font-weight: 700; }
         .rp-list { overflow-y: auto; padding: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
