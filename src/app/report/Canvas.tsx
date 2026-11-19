@@ -14,6 +14,8 @@ export type PitchTool = "select" | "player" | "opp" | "pass" | "run" | "pin" | "
 const V = "#d7ff3c" // the editor's own colour for selection and guides
 /** the drag type of a Library item (a board, a freeze-frame, a note) */
 export const ITEM = "application/x-pitchstudio-item"
+/** A block from the Add panel: the kind rides in the type itself, so the page can show where it will land while it's dragged */
+export const ADD_DRAG = "application/x-pitchstudio-add-"
 const rad = (d: number) => (d * Math.PI) / 180
 const rot = (q: Pt, a: number): Pt => [q[0] * Math.cos(a) - q[1] * Math.sin(a), q[0] * Math.sin(a) + q[1] * Math.cos(a)]
 const sub = (a: Pt, b: Pt): Pt => [a[0] - b[0], a[1] - b[1]]
@@ -104,7 +106,7 @@ export function columns(W: number) {
   return Array.from({ length: 8 }, (_, i) => ({ x: M + i * (cw + G), w: cw }))
 }
 
-export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, setMode, tool, apply, begin, end, zoom, setZoom, svgRef, onEditText, onPickPhoto, onDropFiles, onDropItem, bar, hint, issue }: {
+export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, setMode, tool, apply, begin, end, zoom, setZoom, svgRef, onEditText, onPickPhoto, onDropFiles, onDropItem, onDropAdd, dropLine, bar, hint, issue }: {
   report: Report; brand: Brand; handle: string; logo: string | null; media: Record<string, string>; issue?: number | null
   sel: Sel; setSel: (s: Sel) => void; mode: Mode; setMode: (m: Mode) => void; tool: PitchTool
   apply: (fn: (r: Report) => Report) => void; begin: () => void; end: () => void
@@ -112,6 +114,9 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
   onEditText: (bid: string, mid?: string) => void; onPickPhoto: (bid: string) => void; onDropFiles: (files: File[], at: Pt) => void; hint: string
   /** something dragged in from the Library (a board, a freeze-frame, a note) */
   onDropItem?: (item: string, at: Pt) => void
+  /** a block dragged in from the Add panel, and where it would land (a line across its column) while it's dragged */
+  onDropAdd?: (kind: string, at: Pt) => void
+  dropLine?: (kind: string, at: Pt) => { y: number; x1: number; x2: number } | null
   /** a small bar of tools over the selected block (the pitch's Board tools) */
   bar?: (b: Block) => ReactNode
 }) {
@@ -121,6 +126,7 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
   const dragRef = useRef<Drag | null>(null)
   const [drag, setDragState] = useState<Drag | null>(null)
   const [guides, setGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null })
+  const [landing, setLanding] = useState<{ y: number; x1: number; x2: number } | null>(null) // where a dragged-in block will land
   const [hover, setHover] = useState<string | null>(null)
   const [space, setSpace] = useState(false)
   const last = useRef({ t: 0, x: 0, y: 0, id: "" })
@@ -505,8 +511,16 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
 
   return (
     <div ref={viewRef} className="rp-view" style={{ overflow: zoom > 1 ? "auto" : "hidden" }}
-      onDragOver={e => { const t = [...e.dataTransfer.types]; if (t.includes("Files") || (onDropItem && t.includes(ITEM))) { e.preventDefault(); e.dataTransfer.dropEffect = "copy" } }}
+      onDragOver={e => {
+        const t = [...e.dataTransfer.types], add = onDropAdd ? t.find(x => x.startsWith(ADD_DRAG)) : undefined
+        if (add) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; const l = dropLine?.(add.slice(ADD_DRAG.length), toRep(e)) ?? null; setLanding(o => (o?.y === l?.y && o?.x1 === l?.x1 ? o : l)); return }
+        if (t.includes("Files") || (onDropItem && t.includes(ITEM))) { e.preventDefault(); e.dataTransfer.dropEffect = "copy" }
+      }}
+      onDragLeave={e => { if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) setLanding(null) }}
       onDrop={e => {
+        setLanding(null)
+        const add = onDropAdd ? [...e.dataTransfer.types].find(x => x.startsWith(ADD_DRAG)) : undefined
+        if (add) { e.preventDefault(); e.stopPropagation(); onDropAdd!(add.slice(ADD_DRAG.length), toRep(e)); return }
         const item = onDropItem ? e.dataTransfer.getData(ITEM) : ""
         if (item) { e.preventDefault(); e.stopPropagation(); onDropItem!(item, toRep(e)); return }
         const files = [...e.dataTransfer.files].filter(f => f.type.startsWith("image/")); if (!files.length) return; e.preventDefault(); e.stopPropagation(); onDropFiles(files, toRep(e))
@@ -524,6 +538,7 @@ export function Canvas({ report, brand, handle, logo, media, sel, setSel, mode, 
             {(drag?.t === "move" || drag?.t === "size") && cols.map((c, i) => <rect key={i} x={c.x} y={0} width={c.w} height={H} fill="#ff3dbb" fillOpacity={0.06} />)}
             {guides.x !== null && <g><line x1={guides.x} y1={-4000} x2={guides.x} y2={H + 4000} stroke="#0b0d10" strokeOpacity={0.35} strokeWidth={sw * 3} /><line x1={guides.x} y1={-4000} x2={guides.x} y2={H + 4000} stroke={V} strokeWidth={sw * 1.5} /></g>}
             {guides.y !== null && <g><line x1={-4000} y1={guides.y} x2={W + 4000} y2={guides.y} stroke="#0b0d10" strokeOpacity={0.35} strokeWidth={sw * 3} /><line x1={-4000} y1={guides.y} x2={W + 4000} y2={guides.y} stroke={V} strokeWidth={sw * 1.5} /></g>}
+            {landing && <g data-landing="1"><line x1={landing.x1} y1={landing.y} x2={landing.x2} y2={landing.y} stroke="#0b0d10" strokeOpacity={0.4} strokeWidth={sw * 7} strokeLinecap="round" /><line x1={landing.x1} y1={landing.y} x2={landing.x2} y2={landing.y} stroke={V} strokeWidth={sw * 4} strokeLinecap="round" /></g>}
           </svg>
           {hint && <div className="rp-hint" role="status">{hint}</div>}
           {bar && selBlock && mode.kind === "page" && !drag && (() => {

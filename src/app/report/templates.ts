@@ -7,15 +7,15 @@ import { blockBox } from "./Draw"
 
 const NL = String.fromCharCode(10)
 type Side = "below" | "above" | "left" | "right"
-const pl = (team: 0 | 1, p: Pt, num: string, name: string, hi: boolean, side: Side = "below"): Mark => ({ id: newId(), kind: "player", team, p, num, name, side, hi })
-const pass = (a: Pt, b: Pt, weight: 1 | 2 | 3, hi: boolean, o: { run?: boolean; c?: Pt; air?: boolean } = {}): Mark =>
+export const pl = (team: 0 | 1, p: Pt, num: string, name: string, hi: boolean, side: Side = "below"): Mark => ({ id: newId(), kind: "player", team, p, num, name, side, hi })
+export const pass = (a: Pt, b: Pt, weight: 1 | 2 | 3, hi: boolean, o: { run?: boolean; c?: Pt; air?: boolean } = {}): Mark =>
   ({ id: newId(), kind: "pass", a, b, c: o.c ?? null, run: !!o.run, weight, hi, head: "end", air: !!o.air })
 const pin = (p: Pt, n: number): Mark => ({ id: newId(), kind: "pin", p, n: String(n) })
-const text = (x: number, y: number, w: number, t: string, style: "title" | "text" | "label", size: number, align: "left" | "center" | "right" = "left", color = "ink", plate: string | null = null): Block =>
+export const text = (x: number, y: number, w: number, t: string, style: "title" | "text" | "label", size: number, align: "left" | "center" | "right" = "left", color = "ink", plate: string | null = null): Block =>
   ({ id: newId(), kind: "text", x, y, w, rot: 0, text: t, style, size, align, color: style === "label" && color === "ink" ? "muted" : color, plate })
-const pitch = (x: number, y: number, w: number, view: "full" | "half", marks: Mark[], o: Partial<PitchBlock> = {}): PitchBlock =>
+export const pitch = (x: number, y: number, w: number, view: "full" | "half", marks: Mark[], o: Partial<PitchBlock> = {}): PitchBlock =>
   ({ id: newId(), kind: "pitch", x, y, w, view, dir: "up", look: "flat", teams: DEFAULT_TEAMS("Barcelona", "Athletic"), marks, crest: true, ms: 1, legend: false, ...o })
-const slot = (x: number, y: number, w: number, h: number): Block =>
+export const slot = (x: number, y: number, w: number, h: number): Block =>
   ({ id: newId(), kind: "photo", x, y, w, h, rot: 0, src: "", nw: w, nh: h, ix: 0, iy: 0, iw: w, shape: "rect", edge: "hard", border: "none", shadow: false, flip: false })
 
 export type TemplateId = "game" | "report" | "formation" | "journal" | "blank" | "breakdown" | "stadium"

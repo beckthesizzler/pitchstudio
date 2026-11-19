@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import { Activity, AlignCenterHorizontal, AlignCenterVertical, ArrowDownToLine, ArrowUpToLine, BarChart3, CopyPlus, Crop, FlipHorizontal2, Gauge, Hash, ImagePlus, LayoutGrid, Lightbulb, ListOrdered, Square, Trash2, Type } from "lucide-react"
-import { FORMATS, MAX_POINTS, MAX_ROWS, PAPERS, defaultRoles, newId, type Block, type ClubPalette, type Mark, type Report } from "./model"
+import { FORMATS, MAX_POINTS, MAX_ROWS, PAPERS, defaultRoles, newId, type Block, type ClubPalette, type LookId, type Mark, type Report } from "./model"
+import { LOOKS, lookPage } from "./own"
+import type { Brand } from "../brand/brand"
 import { dialScore, dialTilt } from "./Draw"
 import { eventText, parseEvent } from "./fill"
 import { lum } from "../brand/brand"
@@ -54,6 +56,7 @@ export type PanelProps = {
   storyAuto: string
   mine?: [string, string, string] | null // your card's colours
   onSaveTemplate?: () => void // keep this layout in Start new
+  looks?: { brand: Brand; set: (id: LookId) => void } // one click restyles the whole page
 }
 
 export function Panel(P: PanelProps) {
@@ -158,8 +161,19 @@ export function Panel(P: PanelProps) {
   if (!b) {
     return (
       <div className="rp-insp" aria-label="Page">
+        {P.looks && <>
+          <p className="rp-cap">LOOKS</p>
+          <div className="rp-looks">
+            {LOOKS.map(l => { const pg = lookPage(l.id, P.looks!.brand), bg = pg.paper ?? (pg.mode === "night" ? "#111317" : "#f4f1ea"), fg = pg.mode === "night" ? "#f5f5f7" : "#1b1a17", on = report.look === l.id
+              return <button key={l.id} className={`rp-look${on ? " on" : ""}`} aria-pressed={on} data-look={l.id} onClick={() => P.looks!.set(l.id)}
+                style={{ background: l.id === "poster" ? `linear-gradient(${bg} 55%, #2f6b3f 55%)` : bg, color: fg }}>
+                <b style={{ color: pg.story ?? (pg.mode === "night" ? "#f5f5f7" : EDITORIAL), fontFamily: l.id === "journal" ? "Kalam, cursive" : undefined, textTransform: l.id === "journal" ? "none" : undefined }}>{l.name}</b><span>{l.note}</span>
+              </button> })}
+          </div>
+          <p className="rp-note">Changes every colour and letter on the page. Fine-tune anything below.</p>
+        </>}
         <p className="rp-cap">PAGE</p>
-        <Row label="Size"><Seg label="Size" value={report.format} options={FORMATS.map(f => [f.id, f.name] as [Report["format"], string])} set={v => P.reformat(v)} /></Row>
+        <Row label="Shape"><Seg label="Shape" value={report.format} options={FORMATS.map(f => [f.id, f.name] as [Report["format"], string])} set={v => P.reformat(v)} /></Row>
         <Row label="Mode"><Seg label="Mode" value={report.mode} options={[["night", "Night"], ["bright", "Bright"]]} set={v => P.setReport({ mode: v, paper: null })} /></Row>
         <Row label="Page colour"><div className="rp-cols">
           {PAPERS[report.mode].map(([c, name], i) => {
@@ -266,10 +280,10 @@ export function Panel(P: PanelProps) {
         })()}</p>
         <button className="rp-btn pri wide" onClick={() => P.act("pitch")}>Open the Board tools</button>
         <p className="rp-note">Or double-click the pitch to draw with them.</p>
+        <Row label="Field"><Seg label="Field" value={b.view} options={[["half", "Half"], ["full", "Full field"]]} set={v => P.act("view", v)} /></Row>
         <p className="rp-cap" style={{ marginTop: 16 }}>TEAMS</p>
         <Teams b={b} storyAuto={P.storyAuto} begin={begin} end={end} setBlock={P.setBlock} {...P.team} />
         <p className="rp-cap" style={{ marginTop: 20 }}>PITCH</p>
-        <Row label="Pitch"><Seg label="Pitch" value={b.view} options={[["full", "Full"], ["half", "Half"]]} set={v => P.act("view", v)} /></Row>
         <Row label="View"><Seg label="View" value={b.look} options={[["flat", "Flat"], ["grass", "Grass"], ["stadium", "Stadium"]]} set={v => P.act("look", v)} /></Row>
         {b.look !== "stadium" && <Row label="Attacking"><Seg label="Attacking" value={b.dir} options={[["up", "Up"], ["right", "Right"]]} set={v => P.act("dir", v)} /></Row>}
         {slider("Player size", b.ms, 0.5, 2.5, 0.05, v => P.setBlock({ ms: v }, true), v => `${Math.round(v * 100)}%`)}

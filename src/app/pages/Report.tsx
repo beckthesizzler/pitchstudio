@@ -12,7 +12,9 @@ import { DEFAULT_BRAND, cardColours, logoToDataUrl, readBrand, type Brand } from
 import { Canvas, clampCrop, moveBlock, type Mode, type PitchTool, type Sel } from "../report/Canvas"
 import { Panel, PITCH_HINTS } from "../report/Panel"
 import { ReportView, blockBox } from "../report/Draw"
-import { BLANK_GAME, MAX_MINE, SAMPLES_AS_OF, SAMPLES_BY, SHAPES, TEMPLATES, asTemplate, fromMine, makeShape, makeTemplate, nextGameFrom, type MyTemplate, type ShapeId, type TemplateId } from "../report/templates"
+import { BLANK_GAME, MAX_MINE, SAMPLES_AS_OF, SAMPLES_BY, TEMPLATES, asTemplate, fromMine, makeTemplate, nextGameFrom, type MyTemplate, type TemplateId } from "../report/templates"
+import { OwnStart } from "../report/OwnStart"
+import { applyLook, stackBox, stackPlace } from "../report/own"
 import { FillForm } from "../report/FillForm"
 import { Dock, STAGE_CSS, type DockItem } from "../board/Stage"
 import { Library } from "../report/Library"
@@ -222,8 +224,8 @@ export default function ReportPage() {
     if (brand.logo) logoToDataUrl(brand.logo).then(d => { if (!off) setLogo(d) })
     return () => { off = true }
   }, [brand.logo])
-  const start = (id: TemplateId | "next" | `own:${ShapeId}`) => {
-    startWith(id.startsWith("own:") ? makeShape(id.slice(4) as ShapeId) : id === "next" && lastGame ? nextGameFrom(lastGame, handle) : makeTemplate(id === "next" ? "game" : id as TemplateId, handle), id)
+  const start = (id: TemplateId | "next") => {
+    startWith(id === "next" && lastGame ? nextGameFrom(lastGame, handle) : makeTemplate(id === "next" ? "game" : id, handle), id)
   }
   // a template isn't saved until you change something: leave without editing and nothing new appears in My reports
   function startWith(tpl: Report, id: string) {
@@ -381,19 +383,59 @@ export default function ReportPage() {
     const slot = repRef.current.blocks.find(b => b.kind === "photo" && !b.src && at[0] >= b.x && at[0] <= b.x + (b as PhotoBlock).w && at[1] >= b.y && at[1] <= b.y + (b as PhotoBlock).h)
     addPhotos([f], at, slot?.id ?? null)
   }
-  const add = (kind: AddKind) => {
-    const k = W / 1600
+  /** A new block of a kind. On a stacking page it's as wide as the words column (a pitch and the dial a little narrower, centred). */
+  const blockFor = (kind: AddKind): Block | null => {
+    const k = W / 1600, m = 80 * k, cw = W - 2 * m
+    const b = makeBlock(kind)
+    if (!b || !repRef.current.stack) return b
+    if (b.kind === "pitch") { const w = Math.min(cw, 1100 * k); return { ...b, x: (W - w) / 2, w } }
+    if (b.kind === "dial") { const w = Math.min(cw, 700 * k); return { ...b, x: (W - w) / 2, w } }
+    return "w" in b ? ({ ...b, x: m, w: cw } as Block) : b
+  }
+  const FOCUS_ON: AddKind[] = ["title", "text", "story"]
+  /** Add a block: dropped at a point, or (clicked) after the last block on a stacking page and in the middle on a free one */
+  const addKind = (kind: AddKind, at?: Pt) => {
     if (kind === "photo") { fileFor.current = null; fileRef.current?.click(); return }
-    if (kind === "title") return addBlock({ id: newId(), kind: "text", x: W * 0.1, y: H * 0.42, w: W * 0.8, rot: 0, text: "YOUR HEADLINE", style: "title", size: 110 * k, align: "center", color: report.mode === "bright" ? "story" : "ink", plate: null }, true)
-    if (kind === "text") return addBlock({ id: newId(), kind: "text", x: W * 0.25, y: H * 0.46, w: W * 0.5, rot: 0, text: "Write what happened.", style: "text", size: 24 * k, align: "left", color: "ink", plate: null }, true)
-    if (kind === "stats") return addBlock({ id: newId(), kind: "stats", x: W * 0.15, y: H * 0.42, w: W * 0.7, s: k, type: "team", player: "", num: "", rows: [{ value: "", label: "Possession" }, { value: "", label: "xG" }, { value: "", label: "Shots" }] })
-    if (kind === "story") return addBlock({ id: newId(), kind: "story", x: W * 0.3, y: H * 0.36, w: 420 * k, s: k, title: "The story", points: ["Your first point.", "Your second point."] }, true)
-    if (kind === "series") return addBlock({ id: newId(), kind: "series", x: W * 0.07, y: H * 0.05, w: W * 0.86, size: 21 * k, color: report.palette ? "b" : "muted", text: `${handle ? "@" + handle : "@HANDLE"} · SERIES · Nº {n}` })
-    if (kind === "timeline") return addBlock({ id: newId(), kind: "timeline", x: W * 0.07, y: H * 0.4, w: W * 0.86, s: k, events: [{ min: 7, label: "Your moment", kind: "goal" }] })
-    if (kind === "idea") return addBlock({ id: newId(), kind: "idea", x: W * 0.55, y: H * 0.25, w: 620 * k, s: 0.85 * k, title: "The idea", sections: [{ heading: "On-ball structure", body: "How you had the ball." }, { heading: "Off-ball structure", body: "How you won it back." }], situations: [{ tag: "Moment · 7'", text: "What happened.", pin: true }], pod: "", podLine: "" })
-    if (kind === "dial") return addBlock({ id: newId(), kind: "dial", x: W * 0.55, y: H * 0.6, w: 620 * k, s: 0.9 * k, value: 2, left: "CHAOS", right: "CONTROL", line: "" })
+    const b = blockFor(kind)
+    if (!b) return
+    const r = repRef.current
+    if (r.blocks.length >= MAX_BLOCKS) { say(`A report holds ${MAX_BLOCKS} blocks.`); return }
+    if (!r.stack) {
+      const B = blockBox(b)
+      addBlock(at ? moveBlock(b, at[0] - (B.x + B.w / 2), at[1] - (B.y + B.h / 2)) : b, FOCUS_ON.includes(kind))
+      return
+    }
+    // stacking: the block takes the spot nearest where it was dropped, and everything under it in its column moves down to make room
+    const spot = stackPlace(r, b, at ? at[1] : null), nb = moveBlock(b, 0, spot.y - blockBox(b).y)
+    change(x => ({ ...x, blocks: [...x.blocks.map(o => (spot.push && spot.col(o) && stackBox(o).y >= spot.top - 1 ? moveBlock(o, 0, spot.push) : o)), nb] }))
+    setModeState({ kind: "page" }); setSel({ bid: nb.id, mid: null })
+    if (FOCUS_ON.includes(kind)) setFocusReq("text")
+    const low = Math.max(...repRef.current.blocks.map(o => { const q = blockBox(o); return q.y + q.h }))
+    if (low > H - 60 * (W / 1600)) say("The page is full: the last block runs off the bottom. Make something smaller, remove a block, or pick a taller shape.")
+  }
+  /** Where a block dragged in from Add would land, while it's dragged (a stacking page only) */
+  const landingFor = (kind: string, at: Pt) => {
+    if (!repRef.current.stack) return null
+    const b = blockFor(kind as AddKind)
+    if (!b) return null
+    const B = blockBox(b), { line } = stackPlace(repRef.current, b, at[1])
+    return { y: line, x1: B.x, x2: B.x + B.w }
+  }
+  const add = (kind: AddKind) => addKind(kind)
+  /** The block itself, where a free page puts it */
+  const makeBlock = (kind: AddKind): Block | null => {
+    const k = W / 1600
+    if (kind === "photo") return null
+    if (kind === "title") return { id: newId(), kind: "text", x: W * 0.1, y: H * 0.42, w: W * 0.8, rot: 0, text: "YOUR HEADLINE", style: "title", size: 110 * k, align: "center", color: report.mode === "bright" ? "story" : "ink", plate: null }
+    if (kind === "text") return { id: newId(), kind: "text", x: W * 0.25, y: H * 0.46, w: W * 0.5, rot: 0, text: "Write what happened.", style: "text", size: 24 * k, align: "left", color: "ink", plate: null }
+    if (kind === "stats") return { id: newId(), kind: "stats", x: W * 0.15, y: H * 0.42, w: W * 0.7, s: k, type: "team", player: "", num: "", rows: [{ value: "", label: "Possession" }, { value: "", label: "xG" }, { value: "", label: "Shots" }] }
+    if (kind === "story") return { id: newId(), kind: "story", x: W * 0.3, y: H * 0.36, w: 420 * k, s: k, title: "The story", points: ["Your first point.", "Your second point."] }
+    if (kind === "series") return { id: newId(), kind: "series", x: W * 0.07, y: H * 0.05, w: W * 0.86, size: 21 * k, color: report.palette ? "b" : "muted", text: `${handle ? "@" + handle : "@HANDLE"} · SERIES · Nº {n}` }
+    if (kind === "timeline") return { id: newId(), kind: "timeline", x: W * 0.07, y: H * 0.4, w: W * 0.86, s: k, events: [{ min: 7, label: "Your moment", kind: "goal" }] }
+    if (kind === "idea") return { id: newId(), kind: "idea", x: W * 0.55, y: H * 0.25, w: 620 * k, s: 0.85 * k, title: "The idea", sections: [{ heading: "On-ball structure", body: "How you had the ball." }, { heading: "Off-ball structure", body: "How you won it back." }], situations: [{ tag: "Moment · 7'", text: "What happened.", pin: true }], pod: "", podLine: "" }
+    if (kind === "dial") return { id: newId(), kind: "dial", x: W * 0.55, y: H * 0.6, w: 620 * k, s: 0.9 * k, value: 2, left: "CHAOS", right: "CONTROL", line: "" }
     const w = Math.min(W * 0.62, H * 0.62 * (68 / 52.5))
-    addBlock({ id: newId(), kind: "pitch", x: (W - w) / 2, y: (H - w * (52.5 / 68)) / 2, w, view: "half", dir: "up", look: "flat", teams: DEFAULT_TEAMS(), marks: [], crest: true, ms: 1, legend: false })
+    return { id: newId(), kind: "pitch", x: (W - w) / 2, y: (H - w * (52.5 / 68)) / 2, w, view: "half", dir: "up", look: "flat", teams: DEFAULT_TEAMS(), marks: [], crest: true, ms: 1, legend: false }
   }
 
   /* ── photos: picked, pasted or dropped; into an empty slot, or as a new photo ── */
@@ -457,16 +499,27 @@ export default function ReportPage() {
     if (b.kind === "pitch" && (what === "view" || what === "look" || what === "dir")) {
       // the pitch turns or changes view where it stands, and its marks keep their place on the pitch
       const before = pitchBox(b), c: Pt = [b.x + before.w / 2, b.y + before.h / 2]
-      let n: PitchBlock = { ...b }
+      let n: PitchBlock = { ...b }, back = false
       if (what === "view" && arg !== b.view) {
         const f = arg === "half" ? 2 : 0.5
         const mv = (q: Pt): Pt => [q[0], q[1] * f]
         n = { ...n, view: arg as PitchBlock["view"], marks: b.marks.map(m => (m.kind === "pass" ? { ...m, a: mv(m.a), b: mv(m.b), c: m.c ? mv(m.c) : null } : m.kind === "zone" ? { ...m, p: mv(m.p), r: [m.r[0], m.r[1] * f] } : { ...m, p: mv(m.p) })) }
+        // back to half: exactly the half pitch it was before it opened (size and way round), on the same spot
+        if (arg === "half" && b.half) { n = { ...n, w: b.w * b.half.k, dir: b.half.dir }; delete n.half; back = true }
+        if (arg === "half") delete n.half
       }
       if (what === "dir") n = { ...n, dir: arg as PitchBlock["dir"] }
       if (what === "look") n = { ...n, look: arg as PitchBlock["look"], w: arg === b.look || (arg !== "stadium" && b.look !== "stadium") ? b.w : arg === "stadium" ? b.w * 1.6 : b.w / 1.6 }
+      // opening a half pitch to the full field (or back): it lies whichever way keeps it biggest in the space it had,
+      // so a full field in a template's half-pitch spot comes out sideways at the same width instead of shrinking to half
+      if (what === "view" && arg !== b.view && n.look !== "stadium" && !back) {
+        const fit = (d: PitchBlock["dir"]) => { const one = pitchBox({ ...n, dir: d, w: 1 }); return Math.min(before.w / one.w, before.h / one.h) }
+        const other: PitchBlock["dir"] = n.dir === "up" ? "right" : "up"
+        if (fit(other) > fit(n.dir) * 1.1) n = { ...n, dir: other }
+      }
       // a flat pitch that changes shape fits inside the space the old one had, so nothing else on the page moves
-      if (n.look !== "stadium" && b.look !== "stadium" && what !== "look") { const one = pitchBox({ ...n, w: 1 }); n = { ...n, w: Math.min(before.w / one.w, before.h / one.h) } }
+      if (n.look !== "stadium" && b.look !== "stadium" && what !== "look" && !back) { const one = pitchBox({ ...n, w: 1 }); n = { ...n, w: Math.min(before.w / one.w, before.h / one.h) } }
+      if (what === "view" && arg === "full" && b.view !== "full") n = { ...n, half: { k: b.w / n.w, dir: b.dir } }
       const after = pitchBox(n)
       n = { ...n, x: c[0] - after.w / 2, y: c[1] - after.h / 2 }
       change(r => ({ ...r, blocks: r.blocks.map(x => (x.id === b.id ? n : x)) }))
@@ -671,13 +724,20 @@ export default function ReportPage() {
   const picker = (
         <div className="rp-start">
             <h1>Start a match report</h1>
-            <p>Pick a starting point. Every word, block and colour can be changed, moved or deleted.</p>
-            <div className="rp-startbtns">
-              {lastGame && <button className="rp-btn pri" onClick={() => start("next")}><Plus size={15} /> Start from your last Game Report</button>}
-              <button className="rp-btn" onClick={() => setNotesOpen(true)}><Type size={15} /> Paste your notes</button>
-            </div>
+            <p>Make your own, or start from one of ours. Every word, block and colour can be changed after.</p>
+            <OwnStart userId={user?.id ?? null} brand={brand} handle={handle} logo={logo} say={say} mine={mine.length}
+              onStart={(r, how) => startWith(r, how)} onNotes={() => setNotesOpen(true)}
+              onMine={() => { const el = document.querySelector("[data-mine-list]"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); else say("Save any report as a template (right panel, This layout) and it shows here.") }}
+              onShot={async (r, slotId, it) => {
+                startWith(r, "shot")
+                say("Bringing in the freeze-frame…")
+                const f = await shotFile(it)
+                if (!f) { say("That freeze-frame didn't load. Try again."); return }
+                addPhotos([f], undefined, slotId)
+              }} />
+            {lastGame && <div className="rp-startbtns" style={{ marginTop: 22 }}><button className="rp-btn" onClick={() => start("next")}><Plus size={15} /> Start from your last Game Report</button></div>}
             {mine.length > 0 && <>
-              <p className="rp-cap" style={{ marginBottom: 12 }}>YOUR TEMPLATES · {mine.length}</p>
+              <p className="rp-cap" data-mine-list style={{ marginBottom: 12, marginTop: 28 }}>YOUR TEMPLATES · {mine.length}</p>
               <div className="rp-tpls small" style={{ marginBottom: 28 }}>
                 {mine.map(t => (
                   <div key={t.id} className="rp-mine">
@@ -690,7 +750,7 @@ export default function ReportPage() {
                 ))}
               </div>
             </>}
-            <p className="rp-cap" style={{ marginBottom: 12 }}>PITCHSTUDIO TEMPLATES · {TEMPLATES.filter(t => t.id !== "blank").length}</p>
+            <p className="rp-cap" style={{ marginBottom: 12, marginTop: 34 }}>OR START FROM OURS · PITCHSTUDIO TEMPLATES · {TEMPLATES.filter(t => t.id !== "blank").length}</p>
             <div className="rp-tpls">
               {TEMPLATES.filter(t => t.id !== "blank").map(t => { const tr = makeTemplate(t.id, handle), [tw, th] = SIZES[tr.format]; return (
                 <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
@@ -699,18 +759,6 @@ export default function ReportPage() {
                 </button>
               ) })}
             </div>
-            <section className="rp-own" aria-labelledby="rp-own-h">
-              <h2 id="rp-own-h">Create your own</h2>
-              <p>Start from a shape. Every block already holds an example, so there's always something to change: add a pitch, numbers, a timeline, a photo, anything.</p>
-              <div className="rp-tpls small">
-                {SHAPES.map(s => (
-                  <button key={s.id} className="rp-tpl" data-template={`own:${s.id}`} onClick={() => start(`own:${s.id}`)}>
-                    <div className="th"><OnScreen><ReportView report={makeShape(s.id)} brand={brand} handle={handle} logo={logo} media={{}} /></OnScreen></div>
-                    <b>{s.name}</b><span>{s.note}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
           </div>
   )
   return (
@@ -733,6 +781,7 @@ export default function ReportPage() {
         .rp-sizes { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 4; }
         .rp-dock-t { font: 600 13px 'Inter', sans-serif; padding: 0 6px; white-space: nowrap; }
         .rp-sizes .st-btn { width: auto; padding: 0 8px; }
+        .rp-dock .st-btn:has(.rp-dock-t) { width: auto; padding: 0 8px; }
         .rp-glow { position: absolute; border: 2px solid ${ACCENT_SOLID}; border-radius: 4px; pointer-events: none; transition: all .18s cubic-bezier(.2,.8,.2,1); box-shadow: 0 0 0 9999px rgba(10,11,14,.18); }
         .rp-glow span { position: absolute; left: -2px; top: -24px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 500 12px 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; padding: 3px 7px; border-radius: 5px; white-space: nowrap; }
         .rp-bh { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; }
@@ -748,6 +797,12 @@ export default function ReportPage() {
         .rp-st .th svg { width: 100%; height: auto; align-self: start; }
         .rp-st .ico { border: 1.5px dashed ${DS_BORDER_STRONG}; background: none; }
         .rp-st .ico.lime { border-color: rgba(215,255,60,.6); color: ${ACCENT_SOLID}; }
+        .rp-st .ico.own { border: 2px solid ${ACCENT_SOLID}; color: ${ACCENT_SOLID}; background: rgba(215,255,60,.08); }
+        .rp-looks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+        .rp-look { height: 64px; border-radius: 10px; border: 2px solid transparent; padding: 7px 10px; display: flex; flex-direction: column; justify-content: space-between; text-align: left; cursor: pointer; font: 600 11.5px 'Inter', sans-serif; box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); }
+        .rp-look b { font: 400 20px/1 Anton, 'Bebas Neue', sans-serif; text-transform: uppercase; }
+        .rp-look.on { border-color: ${ACCENT_SOLID}; box-shadow: 0 0 0 3px rgba(215,255,60,.25); }
+        .rp-look:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
         .rp-st b { display: block; margin-top: 7px; font: 600 12.5px 'Inter', sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .rp-st:hover .th, .rp-st:hover .ico { outline: 2px solid ${DS_BORDER_STRONG}; outline-offset: 2px; }
         .rp-st:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 4px; border-radius: 10px; }
@@ -966,8 +1021,8 @@ export default function ReportPage() {
         user ? <Library userId={user.id} brand={brand} handle={handle} logo={logo} say={say} onOpen={id => navigate(`/report?open=${id}`)} onNew={() => setAllOpen(true)} onKnown={setKnown}
           empty={picker} start={
             <div className="rp-startrow">
-              <button className="rp-st" onClick={() => start("own:blank")}><span className="ico"><Plus size={22} /></span><b>Blank page</b></button>
-              <button className="rp-st" onClick={() => setNotesOpen(true)}><span className="ico lime"><Type size={22} /></span><b>Paste your notes</b></button>
+              <button className="rp-st" data-own-open onClick={() => setAllOpen(true)}><span className="ico own"><Plus size={24} /></span><b>Create your own</b></button>
+              <button className="rp-st" onClick={() => setNotesOpen(true)}><span className="ico"><Type size={22} /></span><b>Paste your notes</b></button>
               {mine.slice(0, 3).map(t => (
                 <button key={t.id} className="rp-st" data-mine={t.id} onClick={() => startWith(fromMine(t), "mine")}>
                   <span className="th"><OnScreen><ReportView report={t.data} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></span><b>{t.name}</b>
@@ -1017,7 +1072,7 @@ export default function ReportPage() {
             </>}
           </nav>
           {sideOpen && <Side userId={user?.id ?? null} report={report} selId={sel.bid} brand={brand} say={say}
-            onSelect={bid => { setModeState({ kind: "page" }); setSel({ bid, mid: null }) }} onAdd={it => addItem(it)} />}
+            onSelect={bid => { setModeState({ kind: "page" }); setSel({ bid, mid: null }) }} onAdd={it => addItem(it)} onAddKind={k => addKind(k as AddKind)} />}
           <div className="rp-mid">
             {status === "conflict" && (
               <div className="rp-banner" role="alert">
@@ -1032,11 +1087,14 @@ export default function ReportPage() {
                 const slot = report.blocks.find(b => b.kind === "photo" && !b.src && at[0] >= b.x && at[0] <= b.x + (b as PhotoBlock).w && at[1] >= b.y && at[1] <= b.y + (b as PhotoBlock).h)
                 addPhotos(files, at, slot?.id ?? null)
               }} onDropItem={(json, at) => { try { addItem(JSON.parse(json) as LibItem, at) } catch { /* not ours */ } }}
+              onDropAdd={(k, at) => { if (ADD.some(a => a.id === k)) addKind(k as AddKind, at) }} dropLine={landingFor}
               bar={b => b.kind !== "pitch" ? null : (
                 <div className="rp-pbar" role="toolbar" aria-label="Board tools">
                   {TOOLS.filter(t => ["select", "player", "opp", "pass", "run", "zone"].includes(t.id)).map(t => (
                     <button key={t.id} aria-label={t.name} title={`${t.name} (${t.key})`} onClick={() => { setMode({ kind: "pitch", bid: b.id }); setTool(t.id) }}>{t.icon}</button>
                   ))}
+                  <span className="rp-pbar-sep" />
+                  <button aria-pressed={b.view === "full"} title={b.view === "full" ? "Back to half a pitch" : "Open the whole pitch"} onClick={() => act("view", b.view === "full" ? "half" : "full")}>{b.view === "full" ? "Half pitch" : "Full field"}</button>
                   <span className="rp-pbar-sep" />
                   <button className="rp-pbar-go" onClick={() => setMode({ kind: "pitch", bid: b.id })}>Board tools</button>
                 </div>)}
@@ -1044,7 +1102,12 @@ export default function ReportPage() {
             <div className="rp-dock">
               {mode.kind === "pitch"
                 ? <Dock groups={[[TOOLS[0]], TOOLS.slice(1, 3), TOOLS.slice(3, 5), TOOLS.slice(5)].map(g => g.map((t): DockItem => ({ id: t.id, icon: t.icon, label: t.name, key: t.key, pressed: tool === t.id, onClick: () => { setTool(t.id); if (t.id !== "select") setSel({ bid: sel.bid, mid: null }) } })))} />
-                : <Dock groups={ADD_GROUPS.map(g => g.map((id): DockItem => { const a = ADD.find(x => x.id === id)!; return { id: a.id, icon: a.icon, label: `Add ${a.name.toLowerCase()}`, onClick: () => add(a.id) } }))} />}
+                : <Dock groups={[
+                  // with the Add panel open the blocks are there, so the dock keeps only how they behave
+                  ...(sideOpen ? [] : ADD_GROUPS.map(g => g.map((id): DockItem => { const a = ADD.find(x => x.id === id)!; return { id: a.id, icon: a.icon, label: `Add ${a.name.toLowerCase()}`, onClick: () => add(a.id) } }))),
+                  [{ id: "stack", icon: <span className="rp-dock-t">Blocks stack</span>, label: "Blocks stack: one that grows moves the blocks under it", pressed: !!report.stack, onClick: () => { if (!report.stack) change(r => ({ ...r, stack: true })) } },
+                   { id: "free", icon: <span className="rp-dock-t">Place freely</span>, label: "Place freely: every block stays where you put it", pressed: !report.stack, onClick: () => { if (report.stack) change(r => { const n = { ...r }; delete n.stack; return n }) } }],
+                ]} />}
             </div>
             <div className="rp-zoom">
               <button aria-label="Zoom out" onClick={() => setZoom(z => Math.max(0.5, z / 1.2))}><ZoomOut size={14} /></button>
@@ -1057,7 +1120,7 @@ export default function ReportPage() {
             begin={begin} end={end} textRef={textRef} nameRef={nameRef} act={act} reformat={reformat}
             team={{ setTeam, place: (i, f) => placeTeam(i, f), moment: setMoment, count: countTeam, namesText: teamNames, roster: teamRoster, lineup: teamLineup }}
             storyAuto={cardColours(brand).disc} mine={brand.color2 ? [brand.color, brand.color2, "#e9b949"] : brand.color !== DEFAULT_BRAND.color ? [brand.color, cardColours(brand).bottom, "#e9b949"] : null}
-            onSaveTemplate={user ? saveAsTemplate : undefined} />
+            onSaveTemplate={user ? saveAsTemplate : undefined} looks={{ brand, set: id => change(r => applyLook(r, id, brand)) }} />
         </div>
       )}
 
@@ -1069,8 +1132,8 @@ export default function ReportPage() {
         onUse={(r, layout) => { startWith(r, "notes"); (window as any).posthog?.capture("report_from_notes", { layout }) }} />}
       {allOpen && (
         <div className="rp-scrim" onClick={() => setAllOpen(false)}>
-          <div className="rp-modal rp-all" role="dialog" aria-label="All templates" onClick={e => e.stopPropagation()}>
-            <header>All templates<span className="rp-sp" /><button className="rp-icon" aria-label="Close" onClick={() => setAllOpen(false)}><X size={16} /></button></header>
+          <div className="rp-modal rp-all" role="dialog" aria-label="New report" onClick={e => e.stopPropagation()}>
+            <header>New report<span className="rp-sp" /><button className="rp-icon" aria-label="Close" onClick={() => setAllOpen(false)}><X size={16} /></button></header>
             <div style={{ overflowY: "auto", minHeight: 0 }}>{picker}</div>
           </div>
         </div>

@@ -8,7 +8,7 @@ export type Pt = [number, number]
 export type RFormat = "1:1" | "4:5" | "16:9" | "9:16"
 export type RMode = "night" | "bright"
 export type Corner = "br" | "bl" | "tr" | "tl"
-export const FORMATS: { id: RFormat; name: string }[] = [{ id: "1:1", name: "Square" }, { id: "4:5", name: "Portrait" }, { id: "16:9", name: "Wide" }, { id: "9:16", name: "Story" }]
+export const FORMATS: { id: RFormat; name: string }[] = [{ id: "4:5", name: "X post" }, { id: "1:1", name: "Square" }, { id: "16:9", name: "Thread" }, { id: "9:16", name: "Story" }]
 export const SIZES: Record<RFormat, [number, number]> = { "1:1": [1600, 1600], "4:5": [1600, 2000], "16:9": [1600, 900], "9:16": [1125, 2000] }
 export const MAX_BLOCKS = 60, MAX_MARKS = 160, MAX_ROWS = 4, MAX_POINTS = 6
 
@@ -37,7 +37,8 @@ export type TextStyle = "title" | "text" | "label"
 /** fit: one line, shrunk until it fits the width. under: a rule under the last line. font: "hand" writes it in Kalam. */
 export type TextBlock = Box & { kind: "text"; w: number; rot: number; text: string; style: TextStyle; size: number; align: "left" | "center" | "right"; color: string; plate: string | null
   fit?: boolean; under?: "none" | "thin" | "thick"; font?: "sans" | "hand" }
-export type PitchBlock = Box & { kind: "pitch"; w: number; view: "full" | "half"; dir: "up" | "right"; look: "flat" | "stadium" | "grass"; teams: [Team, Team]; marks: Mark[]; crest: boolean; ms: number; legend: boolean }
+export type PitchBlock = Box & { kind: "pitch"; w: number; view: "full" | "half"; dir: "up" | "right"; look: "flat" | "stadium" | "grass"; teams: [Team, Team]; marks: Mark[]; crest: boolean; ms: number; legend: boolean
+  half?: { k: number; dir: "up" | "right" } } // opened to the full field: how to go back to the half pitch it was (k: its width over the full field's)
 export type StatsBlock = Box & { kind: "stats"; w: number; s: number; type: "team" | "player"; player: string; num: string; rows: { value: string; label: string }[] }
 export type StoryBlock = Box & { kind: "story"; w: number; s: number; title: string; points: string[] }
 /** A photo: the frame (x, y, w, h) shows part of the picture; the picture sits at (ix, iy) inside the frame, iw wide. */
@@ -74,7 +75,11 @@ export type Role = { id: string; name: string; color: string }
  *  issue: the report's number in your series (taken at its first export). fill: the answers a template's form keeps. */
 export type Report = { v: 2; format: RFormat; mode: RMode; paper: string | null; story: string | null; glow: boolean; seal: Corner; blocks: Block[]
   palette?: ClubPalette | null; stripe?: boolean; roles?: Role[]; actions?: { ours: string; theirs: string } | null; issue?: number | null
-  paperStyle?: "plain" | "dotted" | "lined"; fill?: Fill | null }
+  paperStyle?: "plain" | "dotted" | "lined"; fill?: Fill | null
+  stack?: boolean // blocks stack: one that grows or shrinks moves the blocks under it, and a new block slots in between (Create your own starts this way)
+  look?: LookId | null } // the Look last picked (Create your own), so the panel can show it
+export const LOOK_IDS = ["night", "paper", "club", "journal", "poster", "mono"] as const
+export type LookId = (typeof LOOK_IDS)[number]
 
 /* ── what a template's form keeps: the answers, which fill.ts writes onto the blocks ── */
 export const SHAPES4 = ["4-2-3-1", "4-3-3", "4-4-2", "3-5-2"] as const
@@ -193,7 +198,8 @@ function readBody(b: any, userId: string, W: number, H: number): Block | null {
       const teams = Array.isArray(b.teams) ? b.teams : []
       return { id: id(b.id), kind: "pitch", x, y, w, view: b.view === "full" ? "full" : "half", dir: b.dir === "right" ? "right" : "up", look: b.look === "stadium" || b.look === "grass" ? b.look : "flat",
         teams: [team(teams[0], "Your team"), team(teams[1], "Opponents")], marks: (Array.isArray(b.marks) ? b.marks.slice(0, MAX_MARKS) : []).map(readMark).filter(Boolean) as Mark[],
-        crest: b.crest !== false, ms: num(b.ms, 0.5, 2.5, 1), legend: b.legend === true }
+        crest: b.crest !== false, ms: num(b.ms, 0.5, 2.5, 1), legend: b.legend === true,
+        ...(b.view === "full" && b.half && typeof b.half === "object" ? { half: { k: num(b.half.k, 0.2, 5, 1), dir: b.half.dir === "right" ? "right" as const : "up" as const } } : {}) }
     }
     case "stats": return { id: id(b.id), kind: "stats", x, y, w, s: num(b.s, 0.3, 4, 1), type: b.type === "player" ? "player" : "team", player: str(b.player, 32), num: str(b.num, 3),
       rows: (Array.isArray(b.rows) ? b.rows.slice(0, MAX_ROWS) : []).map((r: any) => ({ value: str(r?.value, 12), label: str(r?.label, 30) })) }
@@ -257,7 +263,8 @@ export function readReport(raw: unknown, userId: string): Report {
     palette: readPalette(r.palette), stripe: r.stripe === true, actions,
     roles: list(r.roles, 8, (q: any) => (q && typeof q === "object" && typeof q.id === "string" && hex(q.color) ? { id: q.id.slice(0, 40), name: str(q.name, 24) || "Role", color: hex(q.color)! } : null)),
     issue: typeof r.issue === "number" && Number.isInteger(r.issue) && r.issue > 0 && r.issue < 1000000 ? r.issue : null,
-    paperStyle: one(r.paperStyle, ["plain", "dotted", "lined"] as const, "plain"), fill: readFill(r.fill) }
+    paperStyle: one(r.paperStyle, ["plain", "dotted", "lined"] as const, "plain"), fill: readFill(r.fill),
+    ...(r.stack === true ? { stack: true } : {}), ...((LOOK_IDS as readonly string[]).includes(r.look) ? { look: r.look as LookId } : {}) }
 }
 /** Every photo a report uses (its storage paths) */
 export const mediaOf = (r: Report) => r.blocks.filter((b): b is PhotoBlock => b.kind === "photo" && !!b.src).map(b => b.src)

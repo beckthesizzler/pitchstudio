@@ -57,6 +57,7 @@ export const LIBRARY_CSS = `
     .lb-search { display: flex; align-items: center; gap: 8px; height: 38px; width: 240px; padding: 0 11px; border-radius: 11px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
     .lb-search input { flex: 1; min-width: 0; border: none; outline: none; background: none; color: ${TEXT_PRIMARY}; font: 500 14px 'Inter', sans-serif; }
     .lb-new { display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 16px; border-radius: 10px; border: none; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 14px 'Inter', sans-serif; cursor: pointer; white-space: nowrap; }
+    .lb-new.quiet { background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; border: 1px solid ${DS_BORDER_STRONG}; }
     .lb-modes { display: flex; padding: 3px; gap: 2px; border-radius: 12px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; }
     .lb-modes button { height: 32px; padding: 0 16px; border: none; border-radius: 9px; background: none; color: ${TEXT_MUTED}; font: 600 13px 'Inter', sans-serif; cursor: pointer; }
     .lb-modes button[aria-pressed="true"] { background: ${SURFACE_2}; color: ${TEXT_PRIMARY}; }

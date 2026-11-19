@@ -293,7 +293,8 @@ export function Library(P: LibraryProps) {
         <button aria-pressed={view === "list"} onClick={() => setView("list")}>List</button>
       </div>}
       {rows && rows.length > 0 && <label className="lb-search"><Search size={15} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search reports" aria-label="Search reports" /></label>}
-      <button className="lb-new" aria-label="New report" onClick={P.onNew}><Plus size={16} /><span>New report</span></button>
+      {/* with no reports yet, Create your own on the page is the one lime action, so this one steps back */}
+      <button className={`lb-new${rows && rows.length === 0 ? " quiet" : ""}`} aria-label="New report" onClick={P.onNew}><Plus size={16} /><span>New report</span></button>
     </header>
   )
 

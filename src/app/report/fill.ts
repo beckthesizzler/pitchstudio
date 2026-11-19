@@ -114,13 +114,15 @@ export function applyFill(r: Report, f: Fill, push = true): Report {
 }
 
 /** When a growing block (the idea, a list of lines, the cards) gets taller or shorter, the blocks under it in the same column move by as much.
- *  "The same column": a block mostly within the grown block's width (a full-width block under two columns stays put). */
+ *  "The same column": a block mostly within the grown block's width (a full-width block under two columns stays put).
+ *  A report whose blocks stack (Create your own) does this for every block: words, a pitch opened to the full field, a photo made bigger. */
 export function reflow(after: Report, before: Report): Report {
   let blocks = after.blocks
   for (const a of after.blocks) {
-    if (a.kind !== "idea" && a.kind !== "lines" && a.kind !== "cards") continue
+    if (!after.stack && a.kind !== "idea" && a.kind !== "lines" && a.kind !== "cards") continue
     const b = before.blocks.find(x => x.id === a.id)
-    if (!b || b.x !== a.x || b.y !== a.y || b.kind !== a.kind) continue
+    // a block that moved isn't growing; in a stack, one that only slid sideways (a pitch turned on its spot) still counts
+    if (!b || b.y !== a.y || b.kind !== a.kind || (!after.stack && b.x !== a.x)) continue
     const A = blockBox(a), B = blockBox(b), dh = A.h - B.h
     if (Math.abs(dh) < 0.5) continue
     const bottom = B.y + B.h
