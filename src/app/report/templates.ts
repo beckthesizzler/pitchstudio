@@ -241,23 +241,24 @@ export function makeTemplate(id: TemplateId, handle = ""): Report {
       pl(1, [0.63, 0.46], "", "First man", false, "below"), ball([0.66, 0.48]), pl(1, [0.3, 0.16], "", "", false), pl(1, [0.42, 0.62], "", "", false), pl(1, [0.88, 0.72], "", "", false),
     ]
     const t0 = DEFAULT_TEAMS("Inter", "Napoli"), teams: typeof t0 = [{ ...t0[0], color: "#1f3a68" }, t0[1]]
-    return { v: 2, format: "1:1", mode: "bright", paper: null, story: EDITORIAL, glow: false, seal: "br", blocks: [
-      text(900, 74, 620, "Key 3 · Balance", "label", 19, "right", "story"),
-      text(80, 62, 1100, "Who covers his post?", "title", 100),
-      text(80, 186, 1100, "Inter 2–1 Napoli · Serie A · Matchday 12", "label", 17),
+    // 4:5 like every default: the extra height goes to a bigger question, bigger numbers and room for the closing line
+    return { v: 2, format: "4:5", mode: "bright", paper: null, story: EDITORIAL, glow: false, seal: "br", blocks: [
+      text(900, 84, 620, "Key 3 · Balance", "label", 19, "right", "story"),
+      text(80, 70, 1100, "Who covers his post?", "title", 128),
+      text(80, 226, 1100, "Inter 2–1 Napoli · Serie A · Matchday 12", "label", 18),
       // two pitches as big as the page allows, each with its own number and verdict under it, then one closing line
-      text(80, 262, 700, "1  Compact", "title", 50),
-      text(80, 324, 700, "Three reach the first man. His post is covered.", "text", 23, "left", "muted"),
-      pitch(80, 372, 700, "half", one, { teams, crest: false, legend: false, ms: 1.7 }),
-      text(820, 262, 700, "2  Spread out", "title", 50),
-      text(820, 324, 700, "He's alone, and his post is open.", "text", 23, "left", "muted"),
-      pitch(820, 372, 700, "half", two, { teams, crest: false, legend: true, ms: 1.7 }),
-      text(80, 975, 200, "3", "title", 170, "left", "story"),
-      text(230, 1055, 540, "of his team reach the first man", "text", 30),
-      text(820, 975, 200, "1", "title", 170, "left", "story"),
-      text(950, 1040, 570, "reaches him, and the counter hits his post in 4 seconds", "text", 30),
-      text(80, 1250, 1440, "Bastoni can jump only when the team is compact behind him. Spread out, the same jump hands the ball and his post to the counter.", "text", 38),
-      text(80, 1490, 900, "Illustrative, not a match moment.", "label", 14),
+      text(80, 350, 700, "1  Compact", "title", 56),
+      text(80, 420, 700, "Three reach the first man. His post is covered.", "text", 25, "left", "muted"),
+      pitch(80, 472, 700, "half", one, { teams, crest: false, legend: false, ms: 1.7 }),
+      text(820, 350, 700, "2  Spread out", "title", 56),
+      text(820, 420, 700, "He's alone, and his post is open.", "text", 25, "left", "muted"),
+      pitch(820, 472, 700, "half", two, { teams, crest: false, legend: true, ms: 1.7 }),
+      text(80, 1150, 220, "3", "title", 210, "left", "story"),
+      text(250, 1250, 520, "of his team reach the first man", "text", 32),
+      text(820, 1150, 220, "1", "title", 210, "left", "story"),
+      text(970, 1230, 550, "reaches him, and the counter hits his post in 4 seconds", "text", 32),
+      text(80, 1500, 1440, "Bastoni can jump only when the team is compact behind him. Spread out, the same jump hands the ball and his post to the counter.", "text", 44),
+      text(80, 1740, 900, "Illustrative, not a match moment.", "label", 14),
     ] }
   }
   if (id === "stadium") {
@@ -269,13 +270,14 @@ export function makeTemplate(id: TemplateId, handle = ""): Report {
       pass([0.4, 0.64], [0.88, 0.36], 3, true, { air: true }), pass([0.88, 0.36], [0.72, 0.15], 2, true, { run: true }), pass([0.9, 0.74], [0.96, 0.44], 2, false, { run: true }),
       { id: newId(), kind: "ball", p: [0.42, 0.62] },
     ]
-    return { v: 2, format: "1:1", mode: "night", paper: null, story: null, glow: true, seal: "bl", blocks: [
-      pitch(-150, 540, 1900, "half", marks, { look: "stadium", crest: false, ms: 1.45 }),
-      text(80, 80, 1440, "Match report · Barcelona 2–0 Athletic", "label", 18, "center", "#ffffff"),
-      text(80, 118, 1440, "THE NIGHT YAMAL", "title", 168, "center", "#ffffff"),
-      text(80, 280, 1440, "OWNED THE RIGHT", "title", 168, "center", "story"),
-      text(80, 1410, 980, "Pedri's switch found Yamal 1v1 eleven times. Athletic never doubled up.", "text", 27, "left", "#ffffff"),
-      slot(1170, 860, 360, 640),
+    // 4:5 like every default: a taller sky for the headline and more of the pitch below it
+    return { v: 2, format: "4:5", mode: "night", paper: null, story: null, glow: true, seal: "bl", blocks: [
+      pitch(-250, 700, 2100, "half", marks, { look: "stadium", crest: false, ms: 1.55 }),
+      text(80, 110, 1440, "Match report · Barcelona 2–0 Athletic", "label", 20, "center", "#ffffff"),
+      text(80, 156, 1440, "THE NIGHT YAMAL", "title", 190, "center", "#ffffff"),
+      text(80, 342, 1440, "OWNED THE RIGHT", "title", 190, "center", "story"),
+      text(80, 1790, 1300, "Pedri's switch found Yamal 1v1 eleven times. Athletic never doubled up.", "text", 30, "left", "#ffffff"),
+      slot(1170, 1080, 360, 640),
     ] }
   }
   if (id === "blank") return { v: 2, format: "1:1", mode: "night", paper: null, story: null, glow: false, seal: "br", blocks: [text(80, 90, 1440, "YOUR HEADLINE", "title", 120)] }
@@ -292,17 +294,18 @@ export function makeTemplate(id: TemplateId, handle = ""): Report {
     pin([0.53, 0.84], 1), pin([0.6, 0.62], 2), pin([0.8, 0.4], 3),
   ]
   // one player, one pattern: the pitch is the hero, his number anchors the right, and the three steps on the pitch are the three points beside it
-  return { v: 2, format: "1:1", mode: "bright", paper: null, story: null, glow: false, seal: "br", blocks: [
-    text(80, 70, 1440, "Micro breakdown · Barcelona 2–0 Athletic · LaLiga", "label", 17),
-    text(84, 104, 1440, "PEDRI, FREE BETWEEN THE LINES", "title", 104, "left", "story"),
-    text(80, 250, 1020, "Athletic's midfield jumps to De Jong. That one step leaves a pocket behind it, and Pedri lives there.", "text", 26),
-    pitch(80, 360, 1020, "half", marks, { legend: true }),
-    text(1160, 360, 360, "The player", "label", 16),
-    text(1150, 386, 370, "8", "title", 250, "left", "story"),
-    text(1160, 640, 360, "PEDRI", "title", 74),
-    { id: newId(), kind: "story", x: 1160, y: 770, w: 360, s: 1, title: "The pattern", points: ["De Jong drops in and draws the midfield.", "The pocket opens: Pedri takes it on the half-turn.", "One pass, and Fermín runs at the back four."] },
-    { id: newId(), kind: "stats", x: 80, y: 1210, w: 1440, s: 1, type: "team", player: "", num: "", rows: [{ value: "94", label: "Pedri passes" }, { value: "17", label: "Between the lines" }, { value: "4", label: "Chances made" }] },
-    text(80, 1420, 1200, "Leave the pocket open and he will live in it.", "title", 52),
+  // 4:5 like every default, so a fresh set lines up: the portrait room goes to a poster-size headline and air around the numbers
+  return { v: 2, format: "4:5", mode: "bright", paper: null, story: null, glow: false, seal: "br", blocks: [
+    text(80, 74, 1440, "Micro breakdown · Barcelona 2–0 Athletic · LaLiga", "label", 18),
+    text(84, 110, 1440, "PEDRI, FREE BETWEEN THE LINES", "title", 150, "left", "story"),
+    text(80, 452, 1100, "Athletic's midfield jumps to De Jong. That one step leaves a pocket behind it, and Pedri lives there.", "text", 30),
+    pitch(80, 590, 1020, "half", marks, { legend: true }),
+    text(1160, 590, 360, "The player", "label", 16),
+    text(1150, 616, 370, "8", "title", 250, "left", "story"),
+    text(1160, 870, 360, "PEDRI", "title", 74),
+    { id: newId(), kind: "story", x: 1160, y: 1000, w: 360, s: 1, title: "The pattern", points: ["De Jong drops in and draws the midfield.", "The pocket opens: Pedri takes it on the half-turn.", "One pass, and Fermín runs at the back four."] },
+    { id: newId(), kind: "stats", x: 80, y: 1500, w: 1440, s: 1, type: "team", player: "", num: "", rows: [{ value: "94", label: "Pedri passes" }, { value: "17", label: "Between the lines" }, { value: "4", label: "Chances made" }] },
+    text(80, 1730, 1300, "Leave the pocket open and he will live in it.", "title", 60),
   ] }
 }
 

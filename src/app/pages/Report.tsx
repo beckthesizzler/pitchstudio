@@ -692,12 +692,12 @@ export default function ReportPage() {
             </>}
             <p className="rp-cap" style={{ marginBottom: 12 }}>PITCHSTUDIO TEMPLATES · {TEMPLATES.filter(t => t.id !== "blank").length}</p>
             <div className="rp-tpls">
-              {TEMPLATES.filter(t => t.id !== "blank").map(t => (
+              {TEMPLATES.filter(t => t.id !== "blank").map(t => { const tr = makeTemplate(t.id, handle), [tw, th] = SIZES[tr.format]; return (
                 <button key={t.id} className="rp-tpl" data-template={t.id} onClick={() => start(t.id)}>
-                  <div className="th" style={{ aspectRatio: t.id === "journal" ? "16 / 9" : t.id === "game" || t.id === "formation" ? "4 / 5" : "1" }}><OnScreen><ReportView report={makeTemplate(t.id, handle)} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></div>
+                  <div className="th" style={{ aspectRatio: `${tw} / ${th}` }}><OnScreen><ReportView report={tr} brand={brand} handle={handle} logo={logo} media={{}} issue={nextIssue} /></OnScreen></div>
                   <b>{t.name} <i className="rp-def">Default</i></b><span>{t.note}</span><small className="rp-by">Example by @{SAMPLES_BY} · {SAMPLES_AS_OF}</small>
                 </button>
-              ))}
+              ) })}
             </div>
             <section className="rp-own" aria-labelledby="rp-own-h">
               <h2 id="rp-own-h">Create your own</h2>
