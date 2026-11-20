@@ -40,7 +40,7 @@ function Note({ px, py, w, h, color, turn, lines = 2 }: { px: number; py: number
   )
 }
 
-export function StudioScene({ skin = PS_VOLT, hair = true, view = "full", style, focus, look }: { skin?: string; hair?: boolean; view?: "full" | "banner"; style?: CSSProperties; focus?: SceneFocus; look?: number }) {
+export function StudioScene({ skin = PS_VOLT, hair = false, view = "full", style, focus, look }: { skin?: string; hair?: boolean; view?: "full" | "banner"; style?: CSSProperties; focus?: SceneFocus; look?: number }) {
   const { theme } = useTheme()
   const c = theme === "night" ? NIGHT : DAY
   const vb = view === "banner" ? "180 190 600 340" : "0 0 880 820"
@@ -52,32 +52,14 @@ export function StudioScene({ skin = PS_VOLT, hair = true, view = "full", style,
     <svg className={live ? "sc sc-live" : "sc"} data-focus={focus} viewBox={vb} preserveAspectRatio="xMidYMid slice" role="img" aria-label="A creator thinking at a desk, surrounded by pinned tactics boards"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", ...style }}>
       <style>{`
-        @keyframes scBubble { 0%,100% { transform: scale(1); } 50% { transform: scale(1.035); } }
-        .sc-bubble { transform-box: fill-box; transform-origin: 30% 100%; animation: scBubble 3.6s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce) { .sc-bubble { animation: none; } }
         .sc-ol { fill: none; stroke: ${ACCENT_SOLID}; stroke-width: 2.5; }
         .sc-live[data-focus="board"] .sc-pd { opacity: 0; }
         .sc-steam { opacity: .55; }
         .sc-arm { transform-origin: 390px 490px; }
         .sc-head { transform-origin: 345px 442px; }
-        @keyframes scFlow { to { stroke-dashoffset: -20; } }
-        @keyframes scArm { from { transform: rotate(-1.5deg); } to { transform: rotate(1.5deg); } }
-        @keyframes scSteam { 0% { opacity: 0; transform: translateY(6px); } 35% { opacity: .8; } 100% { opacity: 0; transform: translateY(-14px); } }
-        @keyframes scDrift1 { to { transform: translate(7px, -2px); } }
-        @keyframes scDrift2 { to { transform: translate(-6px, 3px); } }
-        @keyframes scBlink { 50% { opacity: .15; } }
-        @keyframes scPlay { to { transform: translateX(140px); } }
         @media (prefers-reduced-motion: no-preference) {
           .sc-f, .sc-pd { transition: opacity .35s ease; }
           .sc-walls, .sc-head { transition: transform .4s ease-out; }
-          .sc-live .sc-run { animation: scFlow 1.6s linear infinite; }
-          .sc-live .sc-pass { stroke-dasharray: 14 6; animation: scFlow 1.2s linear infinite; }
-          .sc-live .sc-arm { animation: scArm 3.4s ease-in-out infinite alternate; }
-          .sc-steam { animation: scSteam 3.4s ease-out infinite; }
-          .sc-drift1 { animation: scDrift1 2.6s ease-in-out infinite alternate; }
-          .sc-drift2 { animation: scDrift2 3.1s ease-in-out infinite alternate; }
-          .sc-blink { animation: scBlink 1.2s ease-in-out infinite; }
-          .sc-play { animation: scPlay 5s linear infinite; }
         }
       `}</style>
       {/* both walls, which drift a little against the pointer */}

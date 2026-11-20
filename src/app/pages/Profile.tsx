@@ -55,6 +55,7 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<"saved" | "error" | null>(null)
   const [handleError, setHandleError] = useState("")
+  const handleTouched = useRef(false) // you typed in the handle box yourself
   // the Creator Card
   const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
   const [hadBrand, setHadBrand] = useState(false)          // has a card been saved before?
@@ -186,7 +187,7 @@ export default function ProfilePage() {
     savedSnap.current = JSON.stringify([displayName, cleanHandle, bio, country, favoriteClub, favoritePlayer, identity, next, false, false])
     setSaveMsg("saved")
     ;(window as any).posthog?.capture("profile_updated", sendBrand ? { card: true } : undefined)
-    if (welcome) { navigate("/board?start=lineup", { replace: true }); return }
+    if (welcome) { try { localStorage.setItem(`ps-welcomed-${userId}`, "1"); localStorage.setItem(`ps-card-asked-${userId}`, "1") } catch { /* private mode */ } navigate("/", { replace: true }); return } // card made: on to the studio and every tool
     setTimeout(() => setSaveMsg(null), 2000)
   }
 
@@ -286,6 +287,13 @@ export default function ProfilePage() {
   if (!loaded) return <div style={{ width: "100vw", height: "100vh", background: SURFACE_BASE }} />
 
   const strippedName = handle ? stripHandleSuffix(handle, userId, email) : ""
+  /* the handle follows the name you type while it's still the one we made for you (or one made from your name), until you change it yourself */
+  const following = !handleTouched.current && (!handle || strippedName !== handle || (!!displayName && handle === normalizeHandle(displayName)))
+  const typeName = (v: string) => {
+    setDisplayName(v)
+    if (following && normalizeHandle(v)) { setHandle(normalizeHandle(v)); setHandleError("") }
+  }
+  const typeHandle = (v: string) => { handleTouched.current = true; setHandle(v) }
   const name = displayName.trim() || strippedName || "You"
   const chosen = handle && strippedName === handle ? normalizeHandle(handle) : "" // only a handle you picked yourself signs exports
   const idLabel = IDENTITY_OPTIONS.find(o => o.value === identity)?.label
@@ -517,7 +525,10 @@ export default function ProfilePage() {
 
           <h2 className="pf-num"><b>02</b> · Who you are</h2>
           <div className="pf-g2" style={{ marginBottom: 16 }}>
-            {field("handle", "Handle", handle, setHandle, { prefix: "@", max: 30, err: handleError })}
+            {field("displayName", "Name", displayName, typeName)}
+            {field("handle", "Handle", handle, typeHandle, { prefix: "@", max: 30, err: handleError, hint: following ? "Follows your name until you change it" : undefined })}
+          </div>
+          <div style={{ marginBottom: 16 }}>
             {field("motto", "Tagline", brand.motto, v => edit({ motto: v }), { max: MOTTO_MAX, hint: `${brand.motto.length}/${MOTTO_MAX}` })}
           </div>
 
@@ -558,7 +569,6 @@ export default function ProfilePage() {
           <button className="pf-more" aria-expanded={moreOpen} onClick={() => setMoreOpen(v => !v)}>More about you <ChevronDown size={18} style={{ transform: moreOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} /></button>
           {moreOpen && <div style={{ display: "grid", gap: 22, paddingBottom: 10 }}>
             <div className="pf-g2">
-              {field("displayName", "Display name", displayName, setDisplayName)}
               {field("cardTitle", "Title (when you haven't picked a role)", brand.title, v => edit({ title: v }), { max: TITLE_MAX })}
             </div>
             {field("bio", "Bio", bio, setBio, { rows: 3, max: 160, hint: `${bio.length}/160` })}
@@ -592,7 +602,6 @@ export default function ProfilePage() {
               <div className="cc-row">
                 {SKINS.map((sk, i) => <button key={sk} className={`cc-skin${brand.skin === sk ? " on" : ""}`} aria-label={SKIN_LABELS[i]} aria-pressed={brand.skin === sk} style={{ background: sk }} onClick={() => edit({ skin: sk })} />)}
               </div>
-              <div style={{ marginTop: 12 }}>{seg("Hair", brand.hair, "Spiky punk", "No hair", v => edit({ hair: v }))}</div>
               <p className="pf-cap" style={{ marginTop: 18 }}>“MADE WITH PITCHSTUDIO” ON YOUR EXPORTS</p>
               {seg("PitchStudio on exports", brand.madeWith, "On", "Off", v => edit({ madeWith: v }))}
             </div>

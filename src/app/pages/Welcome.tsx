@@ -38,6 +38,8 @@ export default function WelcomePage() {
     return () => { off = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* chose here, so Home won't send them to the card again */
+  const markAsked = () => { try { if (me) localStorage.setItem(`ps-card-asked-${me.id}`, "1") } catch { /* private mode */ } }
   const go = (to: string, what: string) => { (window as any).posthog?.capture("welcome_choice", { what }); navigate(to, { replace: true }) }
   const shareX = () => {
     ;(supabase as any).from("profiles").update({ card_public: true }).eq("id", me?.id).then(() => {}) // sharing the link makes the card public, so the link works
@@ -83,12 +85,11 @@ export default function WelcomePage() {
             <div className="wl-prog" aria-hidden="true"><i /><i /><i /></div>
             <span className="wl-cap">STEP 3 OF 3</span>
             <h1>YOUR STUDIO<br />IS OPEN.</h1>
-            <p className="wl-lead">You're <b>Studio {studio ? studioLabel(studio) : "Nº …"}</b>. Every tool is yours and free, and this card signs everything you make. Pick your club first: it becomes your home team on every board and report.</p>
+            <p className="wl-lead">You're <b>Studio {studio ? studioLabel(studio) : "Nº …"}</b>. Every tool is yours, free. Make your card first: it signs everything you export, and your club becomes your home team.</p>
             <div className="wl-acts">
-              <button className="wl-btn pri" onClick={() => go("/profile?welcome=1", "card")}>Make it yours <small>· club, colours, photo</small> <ArrowRight size={17} /></button>
-              <button className="wl-btn" onClick={() => go("/board?start=lineup", "first_post")}>Make your first post</button>
-              {me.handle && <button className="wl-btn" onClick={shareX}>Share that you're in</button>}
-              <button className="wl-skip" onClick={() => go("/", "home")}>Look around first</button>
+              <button className="wl-btn pri" onClick={() => { markAsked(); go("/profile?welcome=1", "card") }}>Make your card <small>· photo, club, colours</small> <ArrowRight size={17} /></button>
+              <button className="wl-btn" onClick={() => { markAsked(); go("/", "home") }}>Open your studio</button>
+              {me.handle && <button className="wl-skip" onClick={shareX}>Share that you're in</button>}
             </div>
           </div>
           <div className="wl-card">

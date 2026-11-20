@@ -40,8 +40,6 @@ export default function HomePage() {
   const [studioNo, setStudioNo] = useState<number | null>(null) // your studio number, once the database gives it
   const [sel, setSel] = useState(0)
   const [toast, setToast] = useState("")
-  const [look, setLook] = useState(0) // where the pointer is over the drawing, -1 (left) to 1 (right)
-  const lookFrame = useRef(0)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -60,10 +58,11 @@ export default function HomePage() {
       // new members make their card first, unless they chose to do it later this visit
       if (!profErr && (prof as any)?.brand == null) {
         // the first time: "Your studio is open". After that, the card first, unless they chose to do it later this visit
-        let welcomed = true, later = false
-        try { welcomed = !!localStorage.getItem(`ps-welcomed-${u.id}`); later = !!sessionStorage.getItem("ps-card-later") } catch { /* storage blocked */ }
+        // each happens once per browser, so Home never bounces you away again after that
+        let welcomed = true, asked = true
+        try { welcomed = !!localStorage.getItem(`ps-welcomed-${u.id}`); asked = !!localStorage.getItem(`ps-card-asked-${u.id}`) || !!sessionStorage.getItem("ps-card-later") } catch { /* storage blocked */ }
         if (!welcomed) { navigate("/welcome", { replace: true }); return }
-        if (!later) { navigate("/profile?welcome=1", { replace: true }); return }
+        if (!asked) { try { localStorage.setItem(`ps-card-asked-${u.id}`, "1") } catch { /* private mode */ } navigate("/profile?welcome=1", { replace: true }); return }
       }
       const raw = (prof as any)?.display_name || (prof as any)?.handle || u.email?.split("@")[0] || ""
       const name = stripHandleSuffix(raw, u.id, u.email)
@@ -85,7 +84,6 @@ export default function HomePage() {
 
   useEffect(() => { if (ready && window.matchMedia?.("(pointer: fine)").matches) menuRef.current?.focus({ preventScroll: true }) }, [ready])
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2600); return () => clearTimeout(t) }, [toast])
-  useEffect(() => () => cancelAnimationFrame(lookFrame.current), [])
 
   const items: Item[] = [
     { id: "board", name: "Tactics Board", icon: <LayoutDashboard size={20} />,
@@ -115,16 +113,6 @@ export default function HomePage() {
     else if (e.key === "ArrowUp") { e.preventDefault(); setSel(s => (s + items.length - 1) % items.length) }
     else if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") { e.preventDefault(); activate(sel) }
   }
-  /* the creator in the drawing looks toward a mouse or pen over the art; touch and reduced motion leave it still */
-  const followPointer = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.pointerType === "touch" || !window.matchMedia?.("(pointer: fine)").matches || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
-    const r = e.currentTarget.getBoundingClientRect()
-    if (!r.width) return
-    const v = Math.round(Math.max(-1, Math.min(1, ((e.clientX - r.left) / r.width) * 2 - 1)) * 100) / 100
-    cancelAnimationFrame(lookFrame.current)
-    lookFrame.current = requestAnimationFrame(() => setLook(v))
-  }
-  const resetLook = () => { cancelAnimationFrame(lookFrame.current); setLook(0) }
 
   if (!ready) return <div style={{ minHeight: "100vh", background: SURFACE_BASE }} />
   const initials = (first || handle || "PS").slice(0, 2).toUpperCase()
@@ -218,8 +206,8 @@ export default function HomePage() {
             <div className="hm-keys"><span className="hm-k">↑</span><span className="hm-k">↓</span> move &nbsp;<span className="hm-k">Enter</span> open</div>
           </div>
         </div>
-        <div className="hm-art" onPointerMove={followPointer} onPointerLeave={resetLook}>
-          <StudioScene skin={brand.skin} hair={brand.hair} focus={items[sel].id} look={look} />
+        <div className="hm-art">
+          <StudioScene skin={brand.skin} hair={false} focus={items[sel].id} />
           <div className="hm-over">
             <div className="hm-cap" key={items[sel].id}><div className="k">{CAPTIONS[items[sel].id][0]}</div><div className="l">{CAPTIONS[items[sel].id][1]}</div></div>
             <div className="hm-learn"><div className="t">LEARN FOOTBALL · COMING SOON</div><div className="q">Hand-picked football threads from X, always credited to the people who wrote them.</div></div>

@@ -5,8 +5,7 @@ import { supabase } from "../lib/supabase"
 import { track, trackAuthError } from "../lib/telemetry"
 import { projectId, publicAnonKey } from "../../../utils/supabase/info"
 import { IDENTITY_OPTIONS, friendlyAuthError, normalizeHandle } from "../lib/account"
-import { ThemeToggle, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR, DS_ERROR_SOFT, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT } from "../theme"
-import { BoardArt } from "./BoardArt"
+import { PS_VOLT, TEXT_MUTED, TEXT_PRIMARY, SURFACE_BASE, SURFACE_1, SURFACE_2, DS_BORDER, DS_ERROR, DS_ERROR_SOFT, ACCENT_SOLID, ACCENT_INK, ACCENT_TEXT, ACCENT_SOFT } from "../theme"
 import { Mark } from "../brand/Mark"
 
 /* Sign in, sign up and reset password, one full page each ("/signin", "/signup", "/reset"). Same steps and the same database calls as before:
@@ -274,16 +273,16 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
   const ctaText = loading ? (signup ? "Creating account…" : "Signing in…") : signup ? (step === 1 ? "Continue" : "Create account") : "Sign in"
 
   return (
-    <main className="au" style={{ background: SURFACE_BASE, color: TEXT_PRIMARY, minHeight: "100vh", fontFamily: "'Inter', sans-serif" }}>
+    <main className="au" style={{ background: PS_VOLT, color: TEXT_PRIMARY, minHeight: "100vh", fontFamily: "'Inter', sans-serif" }}>
       <style>{`
         .au * { box-sizing: border-box; }
         @keyframes au-in { from { opacity: 0; } to { opacity: 1; } }
         @media (prefers-reduced-motion: no-preference) { .au { animation: au-in .35s ease-out; } }
-        .au-grid { display: grid; grid-template-columns: minmax(380px, 520px) 1fr; min-height: 100vh; }
-        .au-left { padding: 28px 56px 36px; display: flex; flex-direction: column; min-width: 0; }
-        .au-top { display: flex; align-items: center; justify-content: space-between; height: 40px; }
+        .au-grid { display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: 32px 20px; } /* lime, and the one card in the middle */
+        .au-left { width: min(100%, 440px); background: ${SURFACE_BASE}; border-radius: 28px; padding: 30px 34px 30px; display: flex; flex-direction: column; min-width: 0; box-shadow: 0 30px 80px rgba(14,15,18,.28); }
+        .au-top { display: flex; align-items: center; justify-content: center; height: 40px; }
         .au-logo { background: none; border: none; cursor: pointer; color: ${TEXT_PRIMARY}; font-family: 'Cormorant Garamond', Georgia, serif; letter-spacing: .2em; font-size: 18px; font-weight: 600; padding: 0; }
-        .au-form { margin: auto 0; max-width: 380px; width: 100%; padding: 36px 0; }
+        .au-form { width: 100%; padding: 22px 0 0; }
         .au-eyebrow { font-size: 12px; letter-spacing: .14em; font-weight: 600; color: ${ACCENT_TEXT}; }
         .au-h1 { font-size: 32px; letter-spacing: -.03em; line-height: 1.1; margin: 12px 0 0; font-weight: 700; }
         .au-p { color: ${TEXT_MUTED}; margin: 10px 0 0; line-height: 1.5; font-size: 15px; }
@@ -320,19 +319,11 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
         .au-link:hover, .au-link:focus-visible { color: ${TEXT_PRIMARY}; text-decoration: underline; }
         .au-or { display: flex; align-items: center; gap: 12px; margin-top: 18px; font-size: 12px; color: ${TEXT_MUTED}; }
         .au-or::before, .au-or::after { content: ""; flex: 1; height: 1px; background: ${DS_BORDER}; }
-        .au-right { background: radial-gradient(900px 520px at 30% 18%, var(--ps-glow), transparent), ${SURFACE_1}; display: flex; flex-direction: column; justify-content: center; padding: 56px 0 56px 56px; gap: 28px; overflow: hidden; border-left: 1px solid ${DS_BORDER}; }
-        .au-quote { font: 400 clamp(44px, 4.6vw, 68px)/0.98 Anton, 'Barlow Condensed', sans-serif; letter-spacing: .005em; max-width: 560px; margin: 0; } /* the same voice as the landing page */
-        .au-chips { display: flex; flex-wrap: wrap; gap: 8px; padding-right: 56px; }
-        .au-chips span { font: 600 13px 'Inter', sans-serif; padding: 7px 12px; border-radius: 999px; border: 1px solid ${DS_BORDER}; color: ${TEXT_MUTED}; }
-        .au-chips span.on { background: ${ACCENT_SOLID}; border-color: ${ACCENT_SOLID}; color: ${ACCENT_INK}; }
-        .au-quote span { color: ${ACCENT_TEXT}; display: block; }
-        .au-shot { width: 118%; border-radius: 14px 0 0 14px; overflow: hidden; border: 1px solid ${DS_BORDER}; box-shadow: 0 30px 90px rgba(0,0,0,.3); }
         .au-mail { width: 64px; height: 64px; border-radius: 18px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; display: grid; place-items: center; color: ${ACCENT_TEXT}; }
         @media (max-width: 860px) {
-          .au-grid { grid-template-columns: 1fr; }
-          .au-right { display: none; }
-          .au-left { padding: 18px 20px 28px; }
-          .au-form { margin: 18px 0 0; max-width: none; padding-top: 24px; }
+          .au-grid { padding: 16px 12px; }
+          .au-left { padding: 22px 20px 24px; border-radius: 22px; }
+          .au-form { padding-top: 16px; }
           .au-h1 { font-size: 29px; }
         }
         @media (prefers-reduced-motion: reduce) { .au-btn, .au-inp, .au-tile { transition: none; } .au-btn:hover { transform: none; } }
@@ -341,7 +332,6 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
         <div className="au-left">
           <div className="au-top">
             <button className="au-logo" onClick={() => navigate("/")} aria-label="PitchStudio home" style={{ display: "inline-flex", alignItems: "center", gap: 11 }}><Mark size={28} color={ACCENT_SOLID} />PITCHSTUDIO</button>
-            <ThemeToggle />
           </div>
           <div className="au-form">
             {reset ? resetBody : sentTo ? (
@@ -415,11 +405,6 @@ export default function AuthPage({ mode }: { mode: "signin" | "signup" | "reset"
               </>
             )}
           </div>
-        </div>
-        <div className="au-right" aria-hidden="true">
-          <p className="au-quote">SEE THE GAME.<span>MAKE IT YOURS.</span></p>
-          <div className="au-shot"><BoardArt /></div>
-          <div className="au-chips"><span className="on">Free, all of it</span><span>MP4 · GIF · PNG</span><span>16:9 · 4:5 · 1:1 · 9:16</span><span>Your name on every export</span></div>
         </div>
       </div>
     </main>

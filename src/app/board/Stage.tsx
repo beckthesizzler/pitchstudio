@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
-import { ChevronLeft, ChevronRight, Play, Square, X, Scan, Maximize2 } from "lucide-react"
+import { ChevronLeft, ChevronRight, Play, Square, X, Scan, Maximize2, RotateCw } from "lucide-react"
 import { ACCENT_SOLID, ACCENT_INK, TEXT_PRIMARY, TEXT_MUTED, DS_BORDER } from "../theme"
 
 /* The board's stage: the tool dock, the view controls in the top bar, Present mode, and zooming into one area of the pitch.
@@ -11,9 +11,8 @@ const PW = 1050, PH = 680
 /* ─────────── where the tools live ─────────── */
 export type DockPlace = "bottom" | "side"
 const DOCK_KEY = "ps_dock"
-export function readDock(): DockPlace {
-  try { return localStorage.getItem(DOCK_KEY) === "side" ? "side" : "bottom" } catch { return "bottom" }
-}
+/* the tools stay in one place: the bar under the board (an old "side" choice on this device is ignored) */
+export function readDock(): DockPlace { return "bottom" }
 export function saveDock(d: DockPlace) { try { localStorage.setItem(DOCK_KEY, d) } catch { /* the choice just isn't remembered */ } }
 /* the settings panel: on the left or the right of the board, your choice (remembered on this device) */
 export type PanelSide = "left" | "right"
@@ -87,9 +86,10 @@ export function Dock({ groups }: { groups: DockItem[][] }) {
 }
 
 /* ─────────── the view controls in the top bar ─────────── */
-export function ViewControls({ view3d, onView3d, zoomed, onZoomArea, onPresent }: {
+export function ViewControls({ view3d, onView3d, zoomed, onZoomArea, onPresent, vertical, onTurn }: {
   view3d: boolean; onView3d: (v: boolean) => void
   zoomed: boolean; onZoomArea: () => void; onPresent: () => void
+  vertical?: boolean; onTurn?: () => void
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -97,6 +97,11 @@ export function ViewControls({ view3d, onView3d, zoomed, onZoomArea, onPresent }
         <button aria-pressed={!view3d} onClick={() => onView3d(false)}>2D</button>
         <button aria-pressed={view3d} onClick={() => onView3d(true)}>3D</button>
       </div>
+      {onTurn && (
+        <button className="st-chip" onClick={onTurn} aria-label={vertical ? "Turn the pitch flat" : "Turn the pitch upright"} title={vertical ? "Turn the pitch flat (90°)" : "Turn the pitch upright (90°)"}>
+          <RotateCw size={14} /> <span className="hidden lg:inline">{vertical ? "Flat" : "Upright"}</span>
+        </button>
+      )}
       <button className="st-chip" aria-pressed={zoomed} onClick={onZoomArea} title="Zoom into one part of the pitch, then draw on it">
         <Scan size={14} /> <span className="hidden lg:inline">{zoomed ? "Zoomed in" : "Zoom area"}</span>
       </button>

@@ -25,7 +25,7 @@ export const CARD_STYLES: { id: CardStyle; name: string }[] = [{ id: "foil", nam
 export const DEFAULT_POS: PhotoPos = { x: 0.5, y: 0.5, zoom: 1, ar: 1 }
 
 /** The card everyone starts with: charcoal, a ball crest, a studio-green face. */
-export const DEFAULT_BRAND: Brand = { color: "#2b2d33", color2: null, crest: "ball", title: "The Creator", motto: "", skin: PS_VOLT, hair: true, madeWith: true, logo: null, photo: null, photoPos: DEFAULT_POS, style: "foil" }
+export const DEFAULT_BRAND: Brand = { color: "#2b2d33", color2: null, crest: "ball", title: "The Creator", motto: "", skin: PS_VOLT, hair: false, madeWith: true, logo: null, photo: null, photoPos: DEFAULT_POS, style: "foil" }
 
 export const COLOURS = ["#e53935", "#3b6cf0", "#2b2d33", "#f5b70a", "#8b5cf6", "#10b981", "#f472b6", "#f2f0ea"]
 /** Two-colour pairs, the way clubs wear them: the card's main colour and its second bar */
@@ -69,7 +69,7 @@ export function readBrand(raw: unknown): Brand {
     title: clean(r.title, TITLE_MAX) || d.title,
     motto: clean(r.motto, MOTTO_MAX),
     skin: typeof r.skin === "string" && HEX.test(r.skin) ? r.skin.toLowerCase() : d.skin,
-    hair: typeof r.hair === "boolean" ? r.hair : d.hair,
+    hair: false, // the punk hair is retired: the drawn you is the plain lime figure
     madeWith: typeof r.madeWith === "boolean" ? r.madeWith : d.madeWith,
     logo, photo,
     photoPos: { x: n(pp.x, 0, 1, 0.5), y: n(pp.y, 0, 1, 0.5), zoom: n(pp.zoom, 1, 3, 1), ar: n(pp.ar, 0.2, 5, 1) },

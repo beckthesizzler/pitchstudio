@@ -757,7 +757,7 @@ export function ReportView({ report, brand, handle, logo, media, editing = false
   const [W, H] = SIZES[report.format], k = W / 1600, p = palette(report, brand, issueText(report.issue ?? issue), handle)
   const dot = 18 * k
   return (
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width={width} height="100%" style={{ display: "block" }} data-report={report.format} xmlns="http://www.w3.org/2000/svg">
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width={width === "auto" ? undefined : width} height="100%" style={{ display: "block", width: width === "auto" ? "auto" : undefined }} data-report={report.format} xmlns="http://www.w3.org/2000/svg">
       <rect width={W} height={H} fill={p.bg} />
       {report.paperStyle === "dotted" && <><defs><pattern id={"pd" + scope} width={dot} height={dot} patternUnits="userSpaceOnUse"><circle cx={dot / 2} cy={dot / 2} r={1.1 * k} fill={p.muted} fillOpacity={0.45} /></pattern></defs><rect width={W} height={H} fill={`url(#pd${scope})`} /></>}
       {report.paperStyle === "lined" && <><defs><pattern id={"pl" + scope} width={W} height={34 * k} patternUnits="userSpaceOnUse"><rect y={34 * k - 1.2 * k} width={W} height={1.2 * k} fill={p.muted} fillOpacity={0.3} /></pattern></defs><rect width={W} height={H} fill={`url(#pl${scope})`} /></>}

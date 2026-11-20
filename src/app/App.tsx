@@ -4589,7 +4589,6 @@ function TacticsBoard() {
       toolItem("shape", <Pentagon size={19} />, "Shapes", "S"), toolItem("zone", <Square size={19} />, "Zone", "Z"),
       { id: "image", icon: <ImagePlus size={19} />, label: "Upload image", key: "I", onClick: () => fileInputRef.current?.click() }],
     [{ id: "panel", icon: <SlidersHorizontal size={18} />, label: panelOpen ? "Hide the settings" : "Board settings", pressed: panelOpen, onClick: () => setPanelOpen(v => !v) },
-      { id: "side", icon: <PanelLeftOpen size={18} />, label: "Tools down the side", onClick: () => { setDockPlace("side"); saveDock("side") } },
       { id: "help", icon: <HelpCircle size={18} />, label: "Keyboard shortcuts", onClick: () => setShowShortcuts(true) }],
   ]
   /** Zooms into the part of the pitch dragged over: at least a fifth of it each way (so pieces stay a sensible size), inside the pitch */
@@ -4715,7 +4714,8 @@ function TacticsBoard() {
         {workspaceMode !== "brainstorm" && canvasMode !== "blank" && (
           <div className="hidden md:flex items-center flex-shrink-0">
             <ViewControls view3d={view3d} onView3d={setView3d}
-              zoomed={focus === "area"} onZoomArea={startPicking} onPresent={() => setPresenting(true)} />
+              zoomed={focus === "area"} onZoomArea={startPicking} onPresent={() => setPresenting(true)}
+              vertical={vertical} onTurn={() => setOrientation(!vertical)} />
           </div>
         )}
         <div className="flex flex-1 justify-end items-center gap-1.5 min-w-0">
