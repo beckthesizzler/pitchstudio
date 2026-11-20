@@ -59,7 +59,7 @@ export const ALL_WALLS_CSS = `
   .aw-m em { font-style: normal; display: inline-flex; align-items: center; gap: 4px; background: ${SURFACE_2}; color: #d6d6dc; border-radius: 6px; padding: 1px 7px; font-weight: 600; font-size: 12px; }
   .aw-m small { font-size: 12px; } .aw-m small::before { content: "· "; }
   .aw-failed { display: flex; align-items: center; gap: 14px; padding: 12px 14px; margin-bottom: 14px; border-radius: 12px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; font-size: 14px; } .aw-failed span { flex: 1; color: ${TEXT_MUTED}; }
-  .aw-hero { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 26px; padding: 20px; border-radius: 18px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER_STRONG}; }
+  .aw-hero { display: grid; grid-template-columns: minmax(0, 520px) minmax(0, 1fr); gap: 26px; padding: 20px; border-radius: 18px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER_STRONG}; }
   .aw-hero-pv { position: relative; border: none; padding: 0; background: none; cursor: pointer; border-radius: 12px; }
   .aw-hero-pv .aw-pv { aspect-ratio: auto; height: 100%; min-height: 220px; border-width: 8px; }
   .aw-hero-banner { position: absolute; left: 50%; top: 18px; transform: translateX(-50%) rotate(-1deg); background: #f3efe4; color: #1b1a17; font: 700 14px ${HAND}; letter-spacing: .25em; text-transform: uppercase; padding: 4px 18px; white-space: nowrap; }
@@ -103,7 +103,7 @@ export const ALL_WALLS_CSS = `
     .aw { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
     .aw-top { flex-wrap: wrap; gap: 8px 10px; padding: 8px 10px; height: auto; } .aw-name span { display: none; }
     .aw-search { order: 5; flex-basis: 100%; max-width: none; height: 44px; } .aw-search input { font-size: 16px; }
-    .aw-top .aw-btn { margin-left: auto; height: 40px; }
+    .aw-top .aw-btn { margin-left: auto; height: 40px; } .aw-top .aw-how { width: 40px; padding: 0; justify-content: center; } .aw-how span { display: none; } .aw-top .aw-how + .aw-btn { margin-left: 0; }
     .aw-side { position: static; height: auto; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 8px 10px; border-right: none; border-bottom: 1px solid ${DS_BORDER}; scrollbar-width: none; }
     .aw-side::-webkit-scrollbar { display: none; }
     .aw-side .aw-k, .aw-side .aw-none, .aw-foot { display: none; }

@@ -10,6 +10,8 @@ export const PAD = 22, HEAD = 64, GAP = 14, INDENT = 26, TOP = 110
 export const FRAME_MIN = { w: NOTE_W + PAD * 2, h: 170 }
 export type Rect = { x: number; y: number; w: number; h: number }
 export type Move = { id: string; x: number; y: number; w?: number; h?: number }
+/** The middle of what you're looking at on the free wall, and (once the wall is drawn) the empty spot nearest it for something w × h */
+export type Centre = { x: number; y: number; free?: (w: number, h: number, also: Rect[]) => { x: number; y: number; off: boolean } | null }
 
 export const inside = (r: Rect, px: number, py: number) => px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h
 export const union = (a: Rect, b: Rect): Rect => { const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y); return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y } }

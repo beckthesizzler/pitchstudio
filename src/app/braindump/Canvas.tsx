@@ -4,9 +4,9 @@ import { col, nameOf, type Note } from "./notes"
 import { THREAD } from "./Wall"
 import { Plant, type Stage } from "./Plant"
 import { darkLook, photoLayer, wallSurface, type Look } from "./walls"
-import { FRAME_MIN, GAP, HEAD, INDENT, NOTE_H, NOTE_W, PAD, PIN, arrange, inside, r1, union, type Move, type Rect } from "./arrange"
+import { FRAME_MIN, GAP, HEAD, INDENT, NOTE_H, NOTE_W, PAD, PIN, arrange, inside, r1, union, type Centre, type Move, type Rect } from "./arrange"
 export { FREE_CSS } from "./canvasCss"
-export { NOTE_H, NOTE_W, type Move } from "./arrange"
+export { NOTE_H, NOTE_W, type Centre, type Move, type Rect } from "./arrange"
 
 const TILTS = [-1.1, 0.3, 1, -0.4, 0.7]
 const LONG_PRESS = 380
@@ -36,7 +36,7 @@ export function FreeWall(p: {
   sel: string | null; dim: (n: Note) => boolean; flash: string | null; popped: Set<string>; stat: (pileId: string) => Stat
   name: (pile: Note) => ReactNode
   statusCaps: (n: Note) => ReactNode
-  centre: React.MutableRefObject<{ x: number; y: number }>
+  centre: React.MutableRefObject<Centre>
   show: React.MutableRefObject<((id: string) => void) | null>
   onPlace: (m: Move[]) => void
   onFile: (id: string, pile: string | null, m: Move[]) => void
@@ -96,11 +96,33 @@ export function FreeWall(p: {
     const wx = (cx - r.left - V.x) / V.z, wy = (cy - r.top - V.y) / V.z
     setV({ z: nz, x: cx - r.left - wx * nz, y: cy - r.top - wy * nz })
   }
-  // where a new note goes: the middle of what you're looking at
+  // where a new note goes: the empty spot nearest the middle of what you're looking at, never on a note or inside a frame
   useEffect(() => {
     const el = box.current
     if (!el) return
-    p.centre.current = { x: (el.clientWidth / 2 - view.x) / view.z - NOTE_W / 2, y: (el.clientHeight / 2 - view.y) / view.z - NOTE_H / 2 }
+    const V = view, cx = (el.clientWidth / 2 - V.x) / V.z, cy = (el.clientHeight / 2 - V.y) / V.z
+    const banner = el.querySelector<HTMLElement>(".fw-banner") // the wall's name (centred on its spot) sits above everything: keep it clear too
+    const taken = (also: Rect[]) => [...L.at.values(), ...also, ...(banner ? [{ x: banner.offsetLeft - banner.offsetWidth / 2, y: banner.offsetTop, w: banner.offsetWidth, h: banner.offsetHeight }] : [])]
+    // the nearest empty spot in an area (s = how many screens wide it reaches past what you see)
+    const look = (w: number, h: number, all: Rect[], s: number) => {
+      const W = el.clientWidth / V.z, H = el.clientHeight / V.z, m = 16 / V.z, gap = 14, step = Math.max(12, 24 / V.z) * (1 + s)
+      const x0 = -V.x / V.z + m - s * W, y0 = -V.y / V.z + m - s * H, x1 = -V.x / V.z + W - m - w + s * W, y1 = -V.y / V.z + H - m - h + s * H
+      const clear = (x: number, y: number) => !all.some(o => x < o.x + o.w + gap && x + w + gap > o.x && y < o.y + o.h + gap && y + h + gap > o.y)
+      let best: { x: number; y: number } | null = null, bd = Infinity
+      for (let y = y0; y <= y1; y += step) for (let x = x0; x <= x1; x += step) {
+        const d = (x + w / 2 - cx) ** 2 + (y + h / 2 - cy) ** 2
+        if (d < bd && clear(x, y)) { bd = d; best = { x: r1(x), y: r1(y) } }
+      }
+      return best
+    }
+    // in view if there's room; if not, just past the edge (and the wall then brings it into view)
+    const free = (w: number, h: number, also: Rect[]) => {
+      const all = taken(also), here = look(w, h, all, 0)
+      if (here) return { ...here, off: false }
+      const near = look(w, h, all, 1)
+      return near ? { ...near, off: true } : null
+    }
+    p.centre.current = { x: cx - NOTE_W / 2, y: cy - NOTE_H / 2, free }
   })
   // the side list (or search) asks to see a frame or a note: it comes to the middle, lit up
   p.show.current = (id: string) => {

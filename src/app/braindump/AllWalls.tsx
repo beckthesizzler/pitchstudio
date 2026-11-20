@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router"
-import { ArrowRight, Clock, FolderPlus, Layers, Loader2, MoreHorizontal, Pin, Plus, Search, Star, Trash2, Type, X } from "lucide-react"
+import { ArrowRight, Clock, FolderPlus, Layers, Loader2, MoreHorizontal, Pin, Play, Plus, Search, Star, Trash2, Type, X } from "lucide-react"
 import { supabase } from "../lib/supabase"
 import { reportError, track } from "../lib/telemetry"
 import { Mark as PSMark } from "../brand/Mark"
@@ -10,6 +10,7 @@ import { DEFAULT_LOOK, WALL_COLS, mainWall, readWall, type Look, type View, type
 import { ACCENT_SOLID } from "../theme"
 import { ALL_WALLS_CSS } from "./allWallsCss"
 import { MiniWall, STARTERS, ago, hexOf, type Card, type Starter } from "./wallCard"
+import { TOUR, TOUR_CSS, TourVideo, TourWindow } from "./WelcomeVideo"
 
 /* All walls ("/braindump"): every wall you have, as cards you can open, pin, put in folders and search. A wall with
    walls inside it has a stacked edge. Search looks through every note on every wall. A new member lands here with
@@ -24,6 +25,8 @@ export function AllWalls() {
   const [cards, setCards] = useState<Map<string, Card>>(new Map())
   const [placed, setPlaced] = useState<Map<string, string | null>>(new Map()) // a nested wall: the wall its note sits on
   const [failed, setFailed] = useState(false)
+  const [tour, setTour] = useState(false) // "How it works" open
+  const [noTour, setNoTour] = useState(false) // the video didn't load: the hero shows the wall's preview instead
   const [shelf, setShelf] = useState<Shelf>("all")
   const [q, setQ] = useState("")
   const [hits, setHits] = useState<Hit[] | null>(null)
@@ -176,7 +179,7 @@ export function AllWalls() {
 
   return (
     <div className="aw">
-      <style>{ALL_WALLS_CSS}</style>
+      <style>{ALL_WALLS_CSS + TOUR_CSS}</style>
       <header className="aw-top">
         <button className="aw-icon" aria-label="Home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color={ACCENT_SOLID} /></button>
         <div className="aw-name"><b>Dump &amp; Arrange</b><span>{walls === null ? "Loading…" : `${all.length} wall${all.length === 1 ? "" : "s"}`}</span></div>
@@ -189,6 +192,7 @@ export function AllWalls() {
             </div>
           )}
         </label>
+        <button className="aw-btn aw-how" onClick={() => setTour(true)} aria-label={`How it works, a ${TOUR.secs}-second video`}><Play size={15} /><span>How it works</span></button>
         <button className={fresh ? "aw-btn" : "aw-btn lime"} onClick={async () => { const id = await newWall(); if (id) navigate(`/braindump/w/${id}`) }} disabled={!walls}><Plus size={16} /> New wall</button>
       </header>
       <aside className="aw-side" aria-label="Walls and folders">
@@ -216,7 +220,9 @@ export function AllWalls() {
         {walls === null && <p className="aw-none" style={{ margin: 30 }}><Loader2 size={15} className="aw-spin" /> Loading your walls…</p>}
         {fresh && main && (
           <section className="aw-hero" aria-label="Your first wall">
-            <button className="aw-hero-pv" onClick={() => navigate(`/braindump/w/${main.id}`)} aria-label="Open My ideas"><MiniWall look={main.look} card={cards.get(main.id)} /><b className="aw-hero-banner">{main.title}</b></button>
+            {noTour
+              ? <button className="aw-hero-pv" onClick={() => navigate(`/braindump/w/${main.id}`)} aria-label="Open My ideas"><MiniWall look={main.look} card={cards.get(main.id)} /><b className="aw-hero-banner">{main.title}</b></button>
+              : <TourVideo where="all-walls-hero" onFail={() => setNoTour(true)} />}
             <div className="aw-hero-t">
               <p className="aw-k lime">Your first wall is ready</p>
               <h2>One wall, three ways to see it</h2>
@@ -250,6 +256,7 @@ export function AllWalls() {
         </>}
       </main>
 
+      {tour && <TourWindow where="all-walls-button" onClose={() => setTour(false)} />}
       {menu && mWall && (
         <Popover x={Math.max(8, menu.x)} y={menu.y} label={`${mWall.title} menu`} onClose={() => setMenu(null)}>
           {menu.sub === "folder" ? <>

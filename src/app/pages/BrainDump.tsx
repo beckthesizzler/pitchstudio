@@ -12,7 +12,7 @@ import { COLORS, COLS, STATUSES, clean, col, firstLine, hex, madeLabel, nameOf, 
 import { Banner, PIN, Popover, STACK_W, THREAD, TILTS, Threads, layoutColumn, plantStage, type Row } from "../braindump/Wall"
 import { PLANT_CSS, Plant, TreeView, type Stage } from "../braindump/Plant"
 import { GROW_CSS, GrowPanel } from "../braindump/Grow"
-import { FREE_CSS, FreeWall, NOTE_H, NOTE_W, type Move } from "../braindump/Canvas"
+import { FREE_CSS, FreeWall, NOTE_H, NOTE_W, type Centre, type Move, type Rect } from "../braindump/Canvas"
 import { LOOK_CSS, LookPanel } from "../braindump/Look"
 import { TREE_CSS, WallTree } from "../braindump/WallTree"
 import { DEFAULT_LOOK, WALL_COLS, mainWall, photoUrl, readWall, uploadPhoto, wallSurface, type Look, type View, type Wall } from "../braindump/walls"
@@ -86,7 +86,7 @@ function WallPage({ wallId }: { wallId: string }) {
   const [lookOpen, setLookOpen] = useState(false)
   const [photo, setPhoto] = useState<string | null>(null) // the link to see this wall's photo
   const [moving, setMoving] = useState(false) // something is being dragged on the free wall
-  const centre = useRef({ x: 200, y: 200 }) // the middle of what you're looking at, on the free wall
+  const centre = useRef<Centre>({ x: 200, y: 200 }) // the middle of what you're looking at, on the free wall
   const showOnWall = useRef<((id: string) => void) | null>(null)
   const wallTimer = useRef(0)
   const [treeEdit, setTreeEdit] = useState<string | null>(null) // a step being typed on the Tree
@@ -254,9 +254,22 @@ function WallPage({ wallId }: { wallId: string }) {
     setStatus("saving")
     for (const id of m.keys()) { window.clearTimeout(timers.current.get(id)); timers.current.set(id, window.setTimeout(() => save(id), wait)) }
   }
-  /** A spot for a new note on the free wall: the middle of the view, a little lower each time so they don't stack exactly */
-  const nextSpot = useRef(0)
-  const spot = () => { const k = nextSpot.current++ % 6; return { x: Math.round(centre.current.x + k * 18), y: Math.round(centre.current.y + k * 22) } }
+  /** A spot for a new note (or frame) on the free wall: the empty place nearest the middle of the view. Spots handed out in the
+      last two seconds count as taken too, in case the wall hasn't drawn those yet. Before the wall is drawn: the middle, a little lower each time */
+  const nextSpot = useRef(0), lent = useRef<{ r: Rect; t: number }[]>([])
+  const spot = (w = NOTE_W, h = NOTE_H) => {
+    const now = Date.now(), k = nextSpot.current++ % 6
+    lent.current = lent.current.filter(l => now - l.t < 2000)
+    const at = centre.current.free?.(w, h, lent.current.map(l => l.r)) ?? { x: Math.round(centre.current.x + k * 18), y: Math.round(centre.current.y + k * 22), off: false }
+    lent.current.push({ r: { x: at.x, y: at.y, w, h }, t: now })
+    return at
+  }
+  /** Adds a note or frame at a spot on the free wall; one that had to go past the edge of the view is brought into view */
+  const addAt = async (kind: Kind, title: string, at: { x: number; y: number; off: boolean } | null) => {
+    const n = await add(kind, null, title, true, at && { x: at.x, y: at.y })
+    if (n && at?.off) setTimeout(() => showOnWall.current?.(n.id), 40)
+    return n
+  }
   const add = async (kind: Kind, parent: string | null, title = "", front = false, at: { x: number; y: number } | null = null): Promise<Note | null> => {
     if (!user || !wall) return null
     const sib = notesRef.current.filter(n => (n.parent_id ?? null) === parent && n.kind === kind)
@@ -279,12 +292,12 @@ function WallPage({ wallId }: { wallId: string }) {
     const t = quick.trim()
     if (!t) return
     setQuick("")
-    const n = await add("note", null, t.slice(0, 120), true, view === "wall" ? spot() : null)
+    const n = await addAt("note", t.slice(0, 120), view === "wall" ? spot() : null)
     quickRef.current?.focus()
     if (n && view !== "wall") document.querySelector('[data-col="pinned"]')?.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" })
   }
   const newPile = async () => {
-    const t = await add("tree", null, "", true, view === "wall" ? spot() : null)
+    const t = await addAt("tree", "", view === "wall" ? spot(NOTE_W + 44, 190) : null)
     if (t) { setRenaming(t.id); setTimeout(() => showPile(t.id, false), 40) }
   }
   /** Scrolls the wall to a pile's column, and lights it up */
@@ -1013,6 +1026,8 @@ function WallPage({ wallId }: { wallId: string }) {
             <button className="bd-row del" onClick={() => remove(mNote.id)}><Trash2 size={14} /><span className="t">Delete note</span></button>
             <button className="bd-row" onClick={() => setMenu({ ...menu, sub: undefined })}><span className="t">Keep it</span></button>
           </> : <>
+            <button className="bd-row" onClick={() => { setOpen(mNote.id); setMenu(null) }}><PenLine size={14} /><span className="t">Open its page</span></button>
+            <button className="bd-row" onClick={() => { setMenu(null); makeWall(mNote.id) }}><Layers size={14} /><span className="t">{inside.has(mNote.id) ? "Open its wall" : "Turn into a wall"}</span></button>
             <p>Status</p>
             {STATUSES.map(s => <button key={s.id} role="menuitemradio" aria-checked={mNote.status === s.id} className="bd-row" onClick={() => { setStatusOf(mNote.id, s.id); setMenu(null) }}>{mNote.status === s.id ? <Check size={14} /> : <span style={{ width: 14 }} />}<span className="t">{s.label}</span></button>)}
             <p>Became</p>
@@ -1022,8 +1037,6 @@ function WallPage({ wallId }: { wallId: string }) {
             <button className="bd-row" disabled={byId.get(mNote.parent_id ?? "")?.kind !== "note"} onClick={() => { untie(mNote.id); setMenu(null) }}><span style={{ width: 14 }} /><span className="t">Untie</span></button>
             <p>Colour</p>
             <div className="bd-sw">{COLORS.map(c => <button key={c.id} className="bd-swatch" aria-label={`Colour ${c.id}`} aria-pressed={mNote.color === c.id} style={{ background: c.c }} onClick={() => change(mNote.id, n => ({ ...n, color: c.id }), 300)} />)}</div>
-            <button className="bd-row" onClick={() => { setOpen(mNote.id); setMenu(null) }}><PenLine size={14} /><span className="t">Open its page</span></button>
-            <button className="bd-row" onClick={() => { setMenu(null); makeWall(mNote.id) }}><Layers size={14} /><span className="t">{inside.has(mNote.id) ? "Open its wall" : "Turn into a wall"}</span></button>
             <button className="bd-row del" onClick={() => setMenu({ ...menu, sub: "delete" })}><Trash2 size={14} /><span className="t">Delete…</span></button>
           </>}
         </Popover>
