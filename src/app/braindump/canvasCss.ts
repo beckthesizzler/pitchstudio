@@ -38,8 +38,8 @@ export const FREE_CSS = `
   .fw-face .t { font: 700 16.5px/1.12 ${HAND}; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .fw-face .m { display: flex; align-items: center; gap: 6px; font: 600 12px 'JetBrains Mono', monospace; letter-spacing: .14em; color: rgba(27,26,23,.8); }
   .fw-face .m b { font: 600 12px 'Inter', sans-serif; letter-spacing: 0; background: #1b1a17; color: #fff; padding: 1px 7px; border-radius: 999px; }
-  .fw-note.walled .fw-face { background: #2b2c31; color: #f5f5f7; border-radius: 8px; box-shadow: 0 0 0 1px rgba(255,255,255,.12), 5px -5px 0 -1px #3d3e44, 10px -10px 0 -2px #4a4b52, 0 14px 22px -10px rgba(0,0,0,.6); }
-  .fw-note.walled .fw-face .m { color: #c4c6cc; }
+  .fw .fw-note.walled .fw-face { background: #2b2c31; color: #f5f5f7; border-radius: 8px; box-shadow: 0 0 0 1px rgba(255,255,255,.12), 5px -5px 0 -1px #3d3e44, 10px -10px 0 -2px #4a4b52, 0 14px 22px -10px rgba(0,0,0,.6); }
+  .fw .fw-note.walled .fw-face .m { color: #c4c6cc; }
   .fw-go { position: absolute; right: 8px; top: 8px; z-index: 5; height: 26px; padding: 0 9px; border: none; border-radius: 7px; background: rgba(215,255,60,.14); color: #D7FF3C; font: 700 12px 'Inter', sans-serif; cursor: pointer; }
   .fw-go:hover { background: rgba(215,255,60,.24); }
   .fw-go:focus-visible { outline: 2px solid #D7FF3C; outline-offset: 2px; }

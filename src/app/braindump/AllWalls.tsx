@@ -9,7 +9,7 @@ import { Popover } from "./Wall"
 import { DEFAULT_LOOK, WALL_COLS, mainWall, readWall, type Look, type View, type Wall } from "./walls"
 import { ACCENT_SOLID } from "../theme"
 import { ALL_WALLS_CSS } from "./allWallsCss"
-import { MiniWall, STARTERS, ago, hexOf, type Card, type Starter } from "./wallCard"
+import { MiniWall, STARTERS, ago, hexOf, type Card, type Starter, type StarterNote } from "./wallCard"
 import { TOUR, TOUR_CSS, TourVideo, TourWindow } from "./WelcomeVideo"
 
 /* All walls ("/braindump"): every wall you have, as cards you can open, pin, put in folders and search. A wall with
@@ -30,6 +30,7 @@ export function AllWalls() {
   const [shelf, setShelf] = useState<Shelf>("all")
   const [q, setQ] = useState("")
   const [hits, setHits] = useState<Hit[] | null>(null)
+  const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null) // New wall: blank, or one of the ready-made walls
   const [menu, setMenu] = useState<{ id: string; x: number; y: number; sub?: "folder" | "delete" } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [extraFolders, setExtraFolders] = useState<string[]>(() => { try { const a = JSON.parse(localStorage.getItem(FOLDER_KEY) || "[]"); return Array.isArray(a) ? a.filter(x => typeof x === "string").slice(0, 60) : [] } catch { return [] } })
@@ -41,7 +42,8 @@ export function AllWalls() {
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 3200); return () => clearTimeout(t) }, [toast])
   useEffect(() => { try { localStorage.setItem(FOLDER_KEY, JSON.stringify(extraFolders)) } catch { /* not kept */ } }, [extraFolders])
 
-  const search = useLocation().search
+  const loc = useLocation(), search = loc.search
+  const resume = !!(loc.state as { resume?: boolean } | null)?.resume // came from Home or the menu (not from a wall's "All walls"): go back to the wall you were on
   useEffect(() => { // an old link to a frame (/braindump?tree=ID): the wall it's on
     const tree = new URLSearchParams(search).get("tree")
     if (!tree) return
@@ -112,6 +114,13 @@ export function AllWalls() {
   const term = q.trim().toLowerCase()
   const wallHits = term.length >= 2 ? all.filter(w => w.title.toLowerCase().includes(term)).slice(0, 8) : []
   const fresh = !!walls && all.length <= 1 && (cards.get(main?.id ?? "")?.notes ?? 0) <= 1 // a new member
+  useEffect(() => {
+    if (!resume || !walls || fresh) return
+    let lastId: string | null = null
+    try { lastId = localStorage.getItem("ps-last-wall") } catch { /* storage blocked */ }
+    const to = (lastId && byId.get(lastId)) || main
+    if (to) navigate(`/braindump/w/${to.id}`, { replace: true })
+  }, [resume, walls, fresh]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async (id: string, patch: Partial<Pick<Wall, "title" | "pinned" | "folder">>) => {
     setWalls(ws => (ws ?? []).map(w => (w.id === id ? { ...w, ...patch } : w)))
@@ -131,13 +140,30 @@ export function AllWalls() {
     try {
       const id = await newWall(s.title, s.look, s.view)
       if (!id) return
-      const rows: any[] = []
+      const rows: any[] = [], inner: { note: string; title: string; notes: string[] }[] = []
+      const body = () => [{ type: "text", id: nid(), html: "" }]
+      const put = (list: StarterNote[], home: string | null, k: number) => {
+        let last: string | null = null
+        list.forEach((n, j) => {
+          const nidv = nid()
+          rows.push({ id: nidv, kind: "note", parent_id: n.tie && last ? last : home, title: n.t, color: n.c ?? (["yellow", "peach", "aqua", "pink", "lime"] as const)[(k + j) % 5], pos: j + 1, body: body(), wall_id: id })
+          if (n.wall) inner.push({ note: nidv, title: n.t, notes: n.wall })
+          last = nidv
+        })
+      }
       s.frames.forEach((f, i) => {
         const fid = nid()
-        rows.push({ id: fid, kind: "tree", parent_id: null, title: f.t, color: f.c, pos: i + 1, body: [{ type: "text", id: nid(), html: "" }], wall_id: id })
-        f.notes.forEach((t, j) => rows.push({ id: nid(), kind: "note", parent_id: s.id === "tactic" && j > 0 ? rows[rows.length - 1].id : fid, title: t, color: (["yellow", "peach", "aqua", "pink", "lime"] as const)[(i + j) % 5], pos: j + 1, body: [{ type: "text", id: nid(), html: "" }], wall_id: id }))
+        rows.push({ id: fid, kind: "tree", parent_id: null, title: f.t, color: f.c, pos: i + 1, body: body(), wall_id: id })
+        put(f.notes, fid, i)
       })
+      put(s.loose ?? [], null, 3)
       for (const r of rows) { const { error } = await (supabase as any).from("notes").insert(r); if (error) throw error }
+      for (const w of inner) { // a note that opens into a wall of its own
+        const wid = nid()
+        const { error } = await (supabase as any).from("walls").insert({ id: wid, title: w.title, note_id: w.note, look: { ...DEFAULT_LOOK, ...s.look }, view: "wall" })
+        if (error) throw error
+        for (const [j, t] of w.notes.entries()) { const r = await (supabase as any).from("notes").insert({ id: nid(), kind: "note", parent_id: null, title: t, color: (["lime", "aqua", "pink"] as const)[j % 3], pos: j + 1, body: body(), wall_id: wid }); if (r.error) throw r.error }
+      }
       track("wall_starter", { which: s.id })
       navigate(`/braindump/w/${id}`)
     } catch (e) { reportError(e, "wall_starter"); setToast("Couldn't set that wall up. Try again.") }
@@ -193,7 +219,7 @@ export function AllWalls() {
           )}
         </label>
         <button className="aw-btn aw-how" onClick={() => setTour(true)} aria-label={`How it works, a ${TOUR.secs}-second video`}><Play size={15} /><span>How it works</span></button>
-        <button className={fresh ? "aw-btn" : "aw-btn lime"} onClick={async () => { const id = await newWall(); if (id) navigate(`/braindump/w/${id}`) }} disabled={!walls}><Plus size={16} /> New wall</button>
+        <button className={fresh ? "aw-btn" : "aw-btn lime"} onClick={e => { const b = e.currentTarget.getBoundingClientRect(); setNewMenu({ x: Math.min(b.left, window.innerWidth - 270), y: b.bottom + 6 }) }} disabled={!walls} aria-haspopup="menu"><Plus size={16} /> New wall</button>
       </header>
       <aside className="aw-side" aria-label="Walls and folders">
         <p className="aw-k">Walls</p>
@@ -243,7 +269,7 @@ export function AllWalls() {
           <div className="aw-grid">
             {STARTERS.map(s => (
               <button key={s.id} className="aw-starter" onClick={() => startFrom(s)} disabled={!!busy}>
-                <div className={`aw-st-pic ${s.id}`} aria-hidden="true">{s.frames.map(f => <span key={f.t}><u>{f.t}</u>{f.notes.slice(0, 2).map((n, j) => <i key={j} style={{ background: hexOf((["yellow", "peach", "aqua", "pink", "lime"] as const)[j % 5]) }} />)}</span>)}</div>
+                <div className={`aw-st-pic ${s.id}`} aria-hidden="true">{s.frames.map(f => <span key={f.t}><u>{f.t}</u>{f.notes.slice(0, 3).map((n, j) => <i key={j} style={{ background: hexOf(n.c ?? "yellow") }} />)}</span>)}</div>
                 <b>{busy === s.id ? <><Loader2 size={14} className="aw-spin" /> Setting it up…</> : s.title}</b><span>{s.note}</span><em>{s.view === "wall" ? "Wall" : s.view === "columns" ? "Columns" : "Tree"}</em>
               </button>
             ))}
@@ -276,6 +302,13 @@ export function AllWalls() {
             <button className="aw-row" onClick={() => setMenu({ ...menu, sub: "folder" })}><FolderPlus size={14} /><span>Move to folder…</span></button>
             {!mWall.main && <button className="aw-row del" onClick={() => setMenu({ ...menu, sub: "delete" })}><Trash2 size={14} /><span>Delete…</span></button>}
           </>}
+        </Popover>
+      )}
+      {newMenu && (
+        <Popover x={Math.max(8, newMenu.x)} y={newMenu.y} label="New wall" onClose={() => setNewMenu(null)}>
+          <button className="aw-row" onClick={async () => { setNewMenu(null); const id = await newWall(); if (id) navigate(`/braindump/w/${id}`) }}><Plus size={14} /><span>Blank wall</span></button>
+          <p>Ready-made</p>
+          {STARTERS.map(s => <button key={s.id} className="aw-row" disabled={!!busy} onClick={() => { setNewMenu(null); startFrom(s) }}><Layers size={14} /><span>{s.title}</span></button>)}
         </Popover>
       )}
       <div className="aw-live" aria-live="polite">{toast && <div className="aw-toast">{toast}</div>}</div>

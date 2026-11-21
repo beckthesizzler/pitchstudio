@@ -36,19 +36,20 @@ export function MiniWall({ look, card }: { look: Look; card: Card | undefined })
   )
 }
 
-/* ── ready-made walls ── */
-export type Starter = { id: string; title: string; note: string; view: View; look: Partial<Look>; frames: { t: string; c: Color; notes: string[] }[] }
+/* ── ready-made walls: the three the studio shows off with ── */
+/** A note in a ready-made wall. tie: tied by a thread to the note before it. wall: the note opens into a wall of its own, holding these notes. */
+export type StarterNote = { t: string; c?: Color; tie?: boolean; wall?: string[] }
+export type Starter = { id: string; title: string; note: string; view: View; look: Partial<Look>; frames: { t: string; c: Color; notes: StarterNote[] }[]; loose?: StarterNote[] }
 export const STARTERS: Starter[] = [
-  { id: "match", title: "Match notes", note: "Before, during and after a game", view: "columns", look: {}, frames: [
-    { t: "Before", c: "lime", notes: ["How will they press us?", "Who starts on the left?"] },
-    { t: "During", c: "aqua", notes: ["First 15 minutes: shape out of possession"] },
-    { t: "After", c: "pink", notes: ["The moment that decided it", "Clip to make"] } ] },
-  { id: "video", title: "Video plan", note: "From idea to posted", view: "columns", look: { bg: "paper" }, frames: [
-    { t: "Idea", c: "pink", notes: ["Pedri's scanning before he receives"] }, { t: "Script", c: "orange", notes: [] },
-    { t: "Filmed", c: "aqua", notes: [] }, { t: "Posted", c: "lime", notes: [] } ] },
-  { id: "player", title: "Player file", note: "Strengths, gaps and clips", view: "wall", look: { bg: "felt" }, frames: [
-    { t: "Strengths", c: "lime", notes: ["What he does better than anyone"] }, { t: "Gaps", c: "pink", notes: ["Where he can be got at"] }, { t: "Clips", c: "aqua", notes: [] } ] },
-  { id: "tactic", title: "Tactical idea", note: "A problem, then how to beat it", view: "tree", look: {}, frames: [
-    { t: "The problem", c: "yellow", notes: ["What goes wrong now", "What we'd try instead", "How we'd know it worked"] } ] },
+  { id: "build", title: "Build-up wall", note: "Frames, threads and a just-pinned corner", view: "wall", look: {}, frames: [
+    { t: "Barça build-up", c: "yellow", notes: [{ t: "Cubarsí steps into midfield when the 9 presses", c: "yellow" }, { t: "Pedri drops between the CBs", c: "peach", tie: true }, { t: "Third man to Lamine", c: "aqua", tie: true }] },
+    { t: "Next video", c: "pink", notes: [{ t: "Raphinha's pressing triggers", c: "pink" }, { t: "Kounde stays wide", c: "lime" }] } ],
+    loose: [{ t: "Flick's rest defence", c: "yellow" }, { t: "Full-backs invert", c: "lilac", tie: true }] },
+  { id: "press", title: "Pressing board", note: "A felt board with a wall inside a note", view: "wall", look: { bg: "felt", note: "card" }, frames: [
+    { t: "Triggers", c: "lime", notes: [{ t: "Lamine presses within 4 seconds", c: "yellow" }, { t: "Back pass to the keeper = go", c: "lime" }, { t: "Wrong touch, jump", c: "aqua" }] },
+    { t: "Shape of the press", c: "aqua", notes: [{ t: "Trap them on the touchline", c: "lilac" }, { t: "Lewa screens the 6", c: "aqua" }] } ],
+    loose: [{ t: "Bodies", c: "peach", wall: ["Who jumps first", "Who covers the gap", "Who stays home"] }] },
+  { id: "tree", title: "Build-up tree", note: "One idea, branching step by step", view: "tree", look: {}, frames: [
+    { t: "Barça build-up", c: "yellow", notes: [{ t: "Cubarsí steps into midfield", c: "yellow" }, { t: "Pedri drops between the CBs", c: "peach", tie: true }, { t: "Third man to Lamine", c: "aqua", tie: true }, { t: "Lamine attacks the full-back", c: "pink", tie: true }] },
+    { t: "Next video", c: "pink", notes: [{ t: "Raphinha's pressing triggers", c: "pink" }, { t: "Pass map from the last game", c: "lime", tie: true }] } ] },
 ]
-

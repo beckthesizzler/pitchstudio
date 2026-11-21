@@ -10,7 +10,7 @@ import {
   Lock, X, RefreshCw, ChevronRight,
   Save, FolderOpen, LogIn, LogOut, AlertCircle, Check, Clock, MoreHorizontal, Copy, BringToFront, SendToBack, Unlock,
   Video,
-  Settings, ArrowLeft, HelpCircle, Mail, AlignLeft, ChevronUp,
+  Settings, ArrowLeft, HelpCircle, Mail,
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
@@ -23,6 +23,7 @@ import {
   PS_VOLT, SURFACE_BASE, SURFACE_1, SURFACE_2, ACCENT_GRADIENT, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT,
   TEXT_PRIMARY, TEXT_MUTED, DS_ERROR, DS_ERROR_SOFT, DS_BORDER, DS_BORDER_STRONG, GLASS, SCRIM, useTheme,
 } from "./theme"
+import { NotesBlock, NotesEditor, notesRoom, editorRoom, cleanPoints, pointsFrom } from "./board/Notes"
 import { STAGE_CSS, Dock, DockButton, ViewControls, PresentBar, AreaPicker, AreaMap, readDock, saveDock, readPanelSide, savePanelSide, type DockPlace, type DockItem, type PanelSide } from "./board/Stage"
 import { NameRun, TeamSheet, NAMES_CSS, splitNumber, type NameRunPlayer } from "./board/Names"
 import { shrinkForBoard, imageProblem } from "./lib/images"
@@ -153,7 +154,8 @@ interface BoardSettings {
   editorial: boolean // the editorial frame: slate, score strip, caption, legend, crop marks and edition number
   kicker: string // the small line above the title
   homeScore: string; awayScore: string; scoreNote: string // the score strip: the goals each side scored, and a note such as FT
-  caption: string // the line (or two) under the board
+  caption: string // the line (or two) under the board, from before the points (read into the points, no longer shown)
+  points: string[] // the idea under the pitch: up to four numbered points, written on the board and exported with it
   showLegend: boolean; cropMarks: boolean; showEdition: boolean
   sealSide: "left" | "right" // the bottom corner your seal sits in; the team names and the editorial legend take the other side
   issueNo: number; issueDay: string // this board's issue number and the day it took it (0 = not numbered yet: it takes one at its first export)
@@ -177,7 +179,7 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   labelSize: "large", nameStyle: "halo", tokenStyle: "classic",
   vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto", area: null,
   homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
-  pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "",
+  pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "", points: [],
   showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true, issueNo: 0, issueDay: "", sealSide: "left",
 }
 /** A zoomed area from saved data: four numbers inside the pitch, at least 60 × 40, else none */
@@ -232,6 +234,7 @@ function settingsFrom(src: Record<string, unknown> | null | undefined, fresh = f
     awayScore: typeof v.awayScore === "string" ? v.awayScore.slice(0, 3) : d.awayScore,
     scoreNote: typeof v.scoreNote === "string" ? v.scoreNote.slice(0, 12) : d.scoreNote,
     caption: typeof v.caption === "string" ? v.caption.slice(0, 160) : d.caption,
+    points: Array.isArray(v.points) ? cleanPoints(v.points) : typeof v.caption === "string" && v.caption.trim() ? pointsFrom(v.caption) : d.points, // an older board's caption becomes its first point
     showLegend: bool(v.showLegend, d.showLegend), cropMarks: bool(v.cropMarks, d.cropMarks), showEdition: bool(v.showEdition, d.showEdition),
     sealSide: oneOf(v.sealSide, ["left", "right"] as const, d.sealSide),
     issueNo: typeof v.issueNo === "number" && Number.isInteger(v.issueNo) && v.issueNo > 0 && v.issueNo < 1000000 ? v.issueNo : d.issueNo,
@@ -354,13 +357,15 @@ const pitchRect = (g: PitchGeo, x1: number, y1: number, x2: number, y2: number) 
   const a = toCanvas(g, x1, y1), b = toCanvas(g, x2, y2)
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) }
 }
+/** What goes into an exported picture: everything but the bits that are only for the screen (marked data-noexport) */
+const onlyInPicture = (n: HTMLElement) => !(n instanceof Element && n.hasAttribute("data-noexport"))
 /** Export sizes in pixels; "auto" keeps the frame's own shape */
 const FRAME_SIZES: Record<BoardSettings["frameRatio"], [number, number] | null> = {
   auto: null, "16:9": [1920, 1080], "4:5": [1080, 1350], "1:1": [1080, 1080], "9:16": [1080, 1920],
 }
 /** The part of the board you see and export: the whole board, or the pitch, a half or a third with room for names and the seal, widened to the export shape */
 const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"], ed?: { strip: boolean; lines: number; pitch?: boolean } | null,
-  area: BoardSettings["area"] = null) => {
+  area: BoardSettings["area"] = null, nb = 0, pitch = true) => { // nb: the room the points under the pitch need
   let r = { x: 0, y: 0, w: CW, h: CH }
   if (focus === "area" && area) {
     // room round the area so the pieces and names at its edge are whole, then widened to a screen's shape (a tall strip fills the screen too)
@@ -382,18 +387,18 @@ const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSetting
     const p = pitchRect(g, x1, 0, x2, PH)
     r = { x: p.x - 36, y: p.y - 36, w: p.w + 72, h: p.h + 100 }
   }
-  // The editorial frame: room above for the slate (and under it for the score strip on a narrow frame) and below for the caption and the legend.
+  // The editorial frame: room above for the slate (and under it for the score strip on a narrow frame) and below for the points and the legend.
   // The whole board already has that room in its margins.
   if (ed && focus !== "board") {
-    const top = 104 + (ed.strip && r.w < 1100 ? 58 : 0), bottom = 40 + (ed.lines ? ed.lines * 22 + 14 : 0)
+    const top = 104 + (ed.strip && r.w < 1100 ? 58 : 0), bottom = 40 + nb
     r = { ...r, y: r.y - top, h: r.h + top + bottom }
-  }
-  // On the whole board, the slate, a long caption, the issue number and the seal must clear the pitch too (a big or upright pitch reaches almost to the edges)
-  if (ed?.pitch && focus === "board") {
+  } else if (nb && focus !== "board") r = { ...r, h: r.h + nb }
+  // On the whole board, the slate, the points, the issue number and the seal must clear the pitch too (a big or upright pitch reaches almost to the edges)
+  if (focus === "board" && (ed?.pitch || (nb && pitch))) {
     const p = pitchRect(g, 0, 0, PW, PH)
-    const top = Math.max(0, 104 - (p.y - r.y)), bottom = Math.max(0, 84 + (ed.lines ? (ed.lines - 1) * 22 : 0) - (r.y + r.h - p.y - p.h))
+    const top = ed ? Math.max(0, 104 - (p.y - r.y)) : 0, bottom = Math.max(0, (ed || nb ? 84 : 0) + (nb ? nb - 22 : 0) - (r.y + r.h - p.y - p.h))
     if (top || bottom) r = { ...r, y: r.y - top, h: r.h + top + bottom }
-  }
+  } else if (focus === "board" && nb) r = { ...r, h: r.h + nb }
   const size = FRAME_SIZES[ratio]
   if (size) {
     const a = size[0] / size[1]
@@ -986,6 +991,16 @@ function readTeamNews(text: string): TeamNews {
 /** A saved squad: a team's name, kit, and players' names and numbers in team-sheet order. Kept in your account (and in this browser, for speed), for any board on any device. */
 interface Squad { id: string; name: string; teamName: string; kit: { pat: KitPattern; c1: string; c2: string; num: string }; players: { name: string; num: string }[] }
 const SQUADS_KEY = "ps-squads"
+/** Names you've put on a board lately (newest first), kept in this browser so naming can suggest them */
+const NAMES_KEY = "ps-recent-names"
+const recentNames = (): string[] => { try { const v = JSON.parse(localStorage.getItem(NAMES_KEY) || "[]"); return Array.isArray(v) ? v.filter(x => typeof x === "string").slice(0, 300) : [] } catch { return [] } }
+const rememberNames = (names: string[]) => {
+  const fresh = names.map(n => n.trim()).filter(n => n && !POS_CODES.has(n))
+  if (!fresh.length) return
+  const seen = new Set<string>(), out: string[] = []
+  for (const n of [...fresh, ...recentNames()]) { const k = n.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(n) } }
+  try { localStorage.setItem(NAMES_KEY, JSON.stringify(out.slice(0, 300))) } catch { /* full: suggestions just won't grow */ }
+}
 const goodSquads = (v: unknown): Squad[] => Array.isArray(v) ? v.filter((q: Squad) => q && typeof q.id === "string" && typeof q.name === "string" && Array.isArray(q.players) && q.kit && KIT_PATTERNS.includes(q.kit.pat)).slice(0, 100) : []
 const readSquads = (): Squad[] => {
   try { return goodSquads(JSON.parse(localStorage.getItem(SQUADS_KEY) || "[]")) } catch { return [] }
@@ -1164,16 +1179,6 @@ function PitchSVG({ pitchColor, look = "classic", mark = false, upright = false 
 }
 
 /* ─────────────────────────── Editorial frame ───────────────── */
-/** The caption broken into lines (at most 4), so the frame knows how much room it needs */
-function wrapCaption(text: string, max = 48): string[] {
-  const out: string[] = []
-  let line = ""
-  for (const w of text.trim().split(/\s+/).filter(Boolean)) {
-    if (line && (line + " " + w).length > max) { out.push(line); line = w } else line = line ? line + " " + w : w
-  }
-  if (line) out.push(line)
-  return out.slice(0, 4)
-}
 /** "No. 07 · 12.11.26": the board's issue number in your series, and the day it took it */
 const editionStamp = (n: number, day?: string) => `${issueLabel(n)} · ${day || dayStamp()}`
 type EdTeam = { name: string; score: string; pat: KitPattern; c1: string; c2: string }
@@ -2411,6 +2416,9 @@ function TacticsBoard() {
   const [kicker, setKicker] = useState("")
   const [homeScore, setHomeScore] = useState(""); const [awayScore, setAwayScore] = useState(""); const [scoreNote, setScoreNote] = useState("")
   const [caption, setCaption] = useState("")
+  const [points, setPoints] = useState<string[]>([]) // the idea under the pitch
+  const [notesEditing, setNotesEditing] = useState(false) // writing the points, in place
+  const endNotes = useCallback(() => { setNotesEditing(false); setPoints(p => cleanPoints(p)) }, [])
   const [showLegend, setShowLegend] = useState(true); const [cropMarks, setCropMarks] = useState(true); const [showEdition, setShowEdition] = useState(true)
   const [sealSide, setSealSide] = useState<"left" | "right">("left")
   const [issueNo, setIssueNo] = useState(0); const [issueDay, setIssueDay] = useState("") // this board's issue number (0 = none yet) and the day it took it
@@ -2427,9 +2435,40 @@ function TacticsBoard() {
   const [kitEditor, setKitEditor] = useState<Record<"home" | "away", "" | "more" | "own">>({ home: "", away: "" }) // a team's kits: the few, all of them, or your own
   const [namesFor, setNamesFor] = useState<"home" | "away" | null>(null) // the team whose names are open
   const [pasteFor, setPasteFor] = useState<"home" | "away" | null>(null) // the "Paste the line-up" box is open for this team
-  const [newsText, setNewsText] = useState("")
-  // "Make your first post" from the welcome opens the board on the line-up box
-  useEffect(() => { if (new URLSearchParams(window.location.search).get("start") === "lineup") { setNewsText(""); setPasteFor("home") } }, [])
+  const [dropTxt, setDropTxt] = useState<Record<"home" | "away", string>>({ home: "", away: "" }) // Drop the XI: what's in the strip for each team
+  const [landed, setLanded] = useState<{ ids: string[]; k: number } | null>(null) // players that just landed from a paste: they flash in one after another
+  const [glide, setGlide] = useState(false) // a shape was just picked: the pieces glide to their new spots
+  const swapRef = useRef<string | null>(null) // Drop the XI: the first shirt of a swap
+  const pastedRef = useRef(false)
+  const dropFormRef = useRef<Record<"home" | "away", string>>({ home: "", away: "" }) // the shape each text last wrote, so a shape you pick isn't undone by the next key
+  const dropNamesRef = useRef<Record<"home" | "away", string>>({ home: "", away: "" }) // the names each text last put on the pitch: a key that changes none of them leaves swaps and shapes alone
+  const droppedRef = useRef(new Set<string>()) // players named from the strip (only those are cleared when the text gets shorter)
+  // "Make your first post" from the welcome opens the board on the line-up strip
+  useEffect(() => { if (new URLSearchParams(window.location.search).get("start") === "lineup") setPasteFor("home") }, [])
+  // Players that just landed flash in one after another (not when the person asked for less motion)
+  useEffect(() => {
+    if (!landed || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return
+    landed.ids.forEach((id, i) => {
+      const el = document.querySelector(`[data-pid="${id}"]`) as SVGGElement | null
+      el?.animate?.([{ opacity: 0, filter: "drop-shadow(0 0 0 #d7ff3c)" }, { opacity: 1, filter: "drop-shadow(0 0 14px #d7ff3c)", offset: 0.6 }, { opacity: 1, filter: "drop-shadow(0 0 0 #d7ff3c)" }], { duration: 520, delay: i * 70, fill: "backwards", easing: "ease-out" })
+    })
+  }, [landed])
+  useEffect(() => { if (!pasteFor) swapRef.current = null }, [pasteFor])
+  // ⌘V on the board with a line-up on the clipboard opens the strip and drops it
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.closest("input, textarea, [contenteditable='true']"))) return
+      const text = e.clipboardData?.getData("text/plain") ?? ""
+      if (!text || text.length > 4000) return
+      const reads = text.replace(/\r/g, "").split(/\n[ \t]*\n/).filter(b => b.trim()).map(readTeamNews)
+      if (!reads.length || reads[0].names.length < 9) return // anything that isn't clearly a line-up is left alone
+      e.preventDefault()
+      setPasteFor("home"); dropFromRef.current("home", text, true)
+    }
+    document.addEventListener("paste", onPaste)
+    return () => document.removeEventListener("paste", onPaste)
+  }, [])
   const [naming, setNaming] = useState<{ ids: string[]; i: number } | null>(null) // naming players on the pitch, one after another
   const [sheetHl, setSheetHl] = useState<string | null>(null) // the player whose team-sheet row you're in
   const [pasteOpen, setPasteOpen] = useState(false) // the team sheet's "paste a list" box
@@ -2460,9 +2499,8 @@ function TacticsBoard() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [currentBoardId, setCurrentBoardId] = useState<string | null>(null)
 
-  /* ── Narrative: the written story that goes with the board ── */
+  /* ── Narrative: the story written before the points existed (kept as it was saved; its lines became the points) ── */
   const [narrative, setNarrative] = useState("")
-  const [narrativeOpen, setNarrativeOpen] = useState(false)
 
   /* ── Saving: what's open, what was last saved, and whether a save is running ── */
   const currentBoardIdRef = useRef<string | null>(null) // same as currentBoardId, but readable straight after a save
@@ -2767,7 +2805,7 @@ function TacticsBoard() {
       view3d, rotation, homeColor, awayColor, showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible,
       homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName, labelSize, nameStyle, tokenStyle,
       vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
-      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, area,
+      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, points, showLegend, cropMarks, showEdition, animSpeed, endCard, area,
       issueNo, issueDay, sealSide,
     }),
     ...(stepList.length > 1 ? { steps: stepList, step: stepIdx } : {}),
@@ -2790,7 +2828,7 @@ function TacticsBoard() {
     setVertical(st.vertical); setFocus(st.focus); setFocusEnd(st.focusEnd); setFrameRatio(st.frameRatio); setArea(st.area)
     setHomeFormation(st.homeFormation); setHomeShape(st.homeShape); setAwayFormation(st.awayFormation); setAwayShape(st.awayShape)
     setPitchStyle(st.pitchStyle); setPsMark(st.psMark); setEditorial(st.editorial); setKicker(st.kicker)
-    setHomeScore(st.homeScore); setAwayScore(st.awayScore); setScoreNote(st.scoreNote); setCaption(st.caption)
+    setHomeScore(st.homeScore); setAwayScore(st.awayScore); setScoreNote(st.scoreNote); setCaption(st.caption); setPoints(st.points); setNotesEditing(false)
     setShowLegend(st.showLegend); setCropMarks(st.cropMarks); setShowEdition(st.showEdition); setIssueNo(st.issueNo); setIssueDay(st.issueDay); setSealSide(st.sealSide)
     setAnimSpeed(st.animSpeed); setEndCard(st.endCard)
     setSteps(d.steps ?? []); setStepIdx(d.step ?? 0)
@@ -2806,7 +2844,8 @@ function TacticsBoard() {
     boardEpochRef.current += 1 // anything still saving belongs to the previous board
     histRef.current = []; histIdx.current = -1; editRef.current = null // undo can't bring back another board's content
     applyBoardData(d)
-    setTitle(t); setNarrative(n); setNarrativeOpen(false)
+    if (!d.settings.points.length && n.trim()) setPoints(pointsFrom(n)) // the story written before the points becomes the points
+    setTitle(t); setNarrative(n)
     setSelection([])
     bindBoard(boardId)
     loadedUpdatedAtRef.current = boardUpdatedAt
@@ -2870,7 +2909,7 @@ function TacticsBoard() {
       pitchColor, bgColor, pitchScale, pitchOffX, pitchOffY, view3d, rotation, homeColor, awayColor,
       showPlayerLabels, textLayer, showLanes, show18Zones, pitchVisible, homePat, homeC2, homeNum, homeName, awayPat, awayC2, awayNum, awayName,
       labelSize, nameStyle, tokenStyle, vertical, focus, focusEnd, frameRatio, homeFormation, homeShape, awayFormation, awayShape,
-      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, showLegend, cropMarks, showEdition, animSpeed, endCard, steps, stepIdx, area,
+      pitchStyle, psMark, editorial, kicker, homeScore, awayScore, scoreNote, caption, points, showLegend, cropMarks, showEdition, animSpeed, endCard, steps, stepIdx, area,
       issueNo, issueDay, sealSide, currentBoardId, authUser, saveTick])
 
   // "/board?open=ID": Home's "Continue" opens that saved board
@@ -3533,16 +3572,23 @@ function TacticsBoard() {
   // the number in the frame: the board's own, or (before its first export) the one it will take; none when that isn't known
   const edition = issueNo ? editionStamp(issueNo, issueDay) : noIssue || !nextIssue ? null : editionStamp(nextIssue)
   const edStrip = editorial && (homeName.trim() !== "" || awayName.trim() !== "" || homeScore !== "" || awayScore !== "")
-  const edLines = editorial ? wrapCaption(caption) : []
   const pitchDragRef = useRef<PitchSnap | null>(null) // the board as it was when a pitch resize or move began
   const [heldFrame, setHeldFrame] = useState<{ x: number; y: number; w: number; h: number } | null>(null) // the view holds still while you resize or move the pitch
-  const frame = heldFrame ?? frameRect(geo, canvasMode === "blank" ? "board" : presenting && focus === "board" ? "pitch" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: edLines.length, pitch: canvasMode !== "blank" } : null, area)
+  const frameArgs = [geo, canvasMode === "blank" ? "board" : presenting && focus === "board" ? "pitch" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: 0, pitch: canvasMode !== "blank" } : null, area] as const
+  const shownPoints = cleanPoints(points)
+  // the points need room under the pitch: how much depends on how wide the frame is, so it's measured on the frame without them
+  const bare = frameRect(...frameArgs) // the frame without the points
+  const wideNotes = bare.w / bare.h >= 1.3 // a wide picture sets the points side by side; a tall one lists them
+  const pointsRoom = notesEditing && !presenting && !play ? editorRoom(points) : shownPoints.length ? notesRoom(shownPoints, bare.w, wideNotes) : 0
+  const frame = heldFrame ?? frameRect(...frameArgs, pointsRoom, canvasMode !== "blank")
+  // where the pitch ends on screen, so the points sit right under it (none on a blank board, or when the pitch runs past the frame)
+  const pitchEnd = (() => { if (canvasMode === "blank") return undefined; const pr = pitchRect(geo, 0, 0, PW, PH), end = pr.y + pr.h; return end < frame.y + frame.h ? end : undefined })()
   const sealK = Math.min(1, Math.min(frame.w, frame.h) / CH) // the seal and the legend shrink with a small frame
   const dispW = Math.min(SVG_DISPLAY_W, (SVG_DISPLAY_W * CH / CW) * frame.w / frame.h)
   const dispRef = useRef({ w: dispW, h: dispW * frame.h / frame.w })
   dispRef.current = { w: dispW, h: dispW * frame.h / frame.w }
   // A new frame fits the screen again
-  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode, editorial, edStrip, edLines.length, area, presenting, dock, view3d]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode, editorial, edStrip, pointsRoom, area, presenting, dock, view3d]) // eslint-disable-line react-hooks/exhaustive-deps
   /** Turns the pitch upright (or back). Everything on it moves with it, so every piece keeps its place on the pitch. One undo step. */
   const setOrientation = (v: boolean) => {
     if (v === vertical) return
@@ -3725,8 +3771,8 @@ function TacticsBoard() {
               style={{ background: k.c1, color: inkOn(k.c1), border: `1px solid ${DS_BORDER}` }}>+ {label}</button>
           )}
         </div>
-        <button onClick={() => { setNewsText(""); setPasteFor(team) }}
-          className="self-start text-xs font-semibold hover:underline" style={{ color: ACCENT_TEXT, background: "transparent", border: "none", padding: 0 }}>Paste a line-up</button>
+        <button onClick={() => setPasteFor(team)}
+          className="self-start text-xs font-semibold hover:underline" style={{ color: ACCENT_TEXT, background: "transparent", border: "none", padding: 0 }}>Drop the XI</button>
         {!there && squads.length > 0 && (
           <select value="" aria-label="Saved squad"
             onChange={e => { const q = squads.find(x => x.id === e.target.value); if (q) { applyLineup(team, q.players, q); setSquadId(q.id) } }}
@@ -3964,6 +4010,52 @@ function TacticsBoard() {
     setExportNote(news.formation && !known ? `${news.formation} isn't one of the board's shapes yet, so they're in ${f.name}` : `${news.names.length} players in ${f.name}`)
     ;(window as any).posthog?.capture("lineup_pasted", { formation: f.name, players: news.names.length, read: !!news.formation })
   }
+  /** Drop the XI: pasted or typed team news fills the pitch as it comes, for one team or both. Teams not on the board are added in the shape the text gives (or 4-3-3);
+   *  a shape you pick afterwards stays until the text writes another. Only players named from here are cleared when the text gets shorter. One undo step per burst. */
+  const dropApply = (jobs: ["home" | "away", TeamNews][], pasted: boolean) => {
+    jobs = jobs.filter(([team, news]) => !(JSON.stringify(news.names) === dropNamesRef.current[team] && (!news.formation || news.formation === dropFormRef.current[team]) && (news.names.length === 0 || players.some(q => teamOf(q) === team))))
+    if (!jobs.length) return
+    jobs.forEach(([team, news]) => { dropNamesRef.current[team] = JSON.stringify(news.names) })
+    undoPoint("drop")
+    let list = players
+    const landedIds: string[] = []
+    for (const [team, news] of jobs) {
+      const wrote = news.formation && news.formation !== dropFormRef.current[team]
+      dropFormRef.current[team] = news.formation
+      const known = wrote ? FORMATIONS.find(x => x.name === news.formation) : undefined
+      const f = known ?? formationFor(team), shape = shapeFor(team, ballSide)
+      list = placeTeam(list, f, team, shape)
+      if (shape !== "base") list = easeApart(list)
+      recordFormation(team, f.name, shape)
+      const order = lineupOf(list, team, f, shape)
+      const byId = new Map(order.map((q, i) => [q.id, news.names[i]]))
+      list = list.map(q => {
+        if (!byId.has(q.id)) return q
+        const e = byId.get(q.id)
+        if (e) { droppedRef.current.add(q.id); return { ...q, name: e.name, ...(e.num ? { num: e.num } : {}) } }
+        return droppedRef.current.has(q.id) ? { ...q, name: POS_CODES.has(q.name) ? q.name : "" } : q
+      })
+      order.slice(0, news.names.length).forEach(q => landedIds.push(q.id))
+      if (news.team) (team === "home" ? setHomeName : setAwayName)(news.team.slice(0, 30))
+      if (news.names.length >= 11) rememberNames(news.names.map(e => e.name))
+    }
+    setPlayers(list)
+    if (pasted && landedIds.length) setLanded({ ids: landedIds, k: Date.now() })
+    ;(window as any).posthog?.capture("lineup_dropped", { teams: jobs.length, players: jobs.reduce((n, j) => n + j[1].names.length, 0), pasted })
+  }
+  const dropFrom = (team: "home" | "away", text: string, pasted: boolean) => {
+    const blocks = text.replace(/\r/g, "").split(/\n[ \t]*\n/).filter(b => b.trim())
+    const reads = blocks.map(readTeamNews)
+    if (reads.length >= 2 && reads[0].names.length >= 10 && reads[1].names.length >= 10) { // a blank line between two full teams: both fill at once
+      setDropTxt({ home: blocks[0], away: blocks[1] }); setPasteFor("home")
+      dropApply([["home", reads[0]], ["away", reads[1]]], pasted)
+      return
+    }
+    setDropTxt(t => ({ ...t, [team]: text }))
+    dropApply([[team, reads[0] ?? { team: "", formation: "", names: [] }]], pasted)
+  }
+  const dropFromRef = useRef(dropFrom)
+  dropFromRef.current = dropFrom
   /** Keeps a team's names, numbers, kit and name as a squad in your account, to use on any board. Saving under the same name replaces it. */
   const saveSquad = (team: "home" | "away") => {
     const { f, shape } = formationOf(team)
@@ -3981,7 +4073,9 @@ function TacticsBoard() {
   /** Players as the naming box and the team sheet see them: team-sheet order, home first */
   const sheetRows = (team: "home" | "away"): NameRunPlayer[] => {
     const { f, shape } = formationOf(team)
-    return lineupOf(players, team, f, shape).map(p => ({ id: p.id, name: p.name, num: p.num, team, pos: POS_CODES.has(p.name) ? p.name : undefined }))
+    const order = lineupOf(players, team, f, shape)
+    const spots = f ? matchPoints(order.map(p => teamPt(team, p)), shapePositions(f, shape)) : [] // each player's spot in the shape, so the position shows while you type over it
+    return order.map((p, i) => ({ id: p.id, name: p.name, num: p.num, team, pos: (f && spots[i] >= 0 ? f.positions[spots[i]].pos : undefined) ?? (POS_CODES.has(p.name) ? p.name : undefined) }))
   }
   /** Name the players on the pitch one after another, starting with the home goalkeeper (or the player given). One undo step. */
   const startNaming = (from?: string) => {
@@ -3996,6 +4090,7 @@ function TacticsBoard() {
   const settleName = (id: string) => setPlayers(ps => ps.map(p => {
     if (p.id !== id) return p
     const t = splitNumber(p.name)
+    rememberNames([t.name])
     return t.num ? { ...p, name: t.name.slice(0, 30), num: t.num } : { ...p, name: p.name.trim() }
   }))
   const moveNaming = (d: number) => {
@@ -4312,8 +4407,8 @@ function TacticsBoard() {
     const keepSelection = selection
     const name = (title.trim() || "PitchStudio board").replace(/[\\/:*?"<>|]+/g, "").slice(0, 80) // the file is named after the board
     try {
-      // No selection rings or handles in the picture
-      setSelection([])
+      // No selection rings or handles in the picture, and no writing boxes
+      setSelection([]); endNotes()
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
       await numberBoard()
       // The board's fonts go into the picture too, otherwise numbers and names come out in a fallback font (fetched once)
@@ -4322,7 +4417,7 @@ function TacticsBoard() {
       // What you see is what you export: the frame, at its export size, tilted if 3D is on
       const size = FRAME_SIZES[frameRatio]
       const opts = {
-        fontEmbedCSS,
+        fontEmbedCSS, filter: onlyInPicture,
         ...(size ? { canvasWidth: size[0], canvasHeight: size[1], pixelRatio: 1 } : { pixelRatio: 2 }),
         // 3D: the tilt as on screen, a little smaller so the near edge stays in the picture, with the corners in the canvas colour
         ...(view3d ? { backgroundColor: bgColor, style: { transform: `${UPRIGHT_3D} scale(0.86)`, transformOrigin: "center center" } } : {}),
@@ -4416,6 +4511,7 @@ function TacticsBoard() {
     if (!tl || !node || making) return
     if (fmt === "mp4" && typeof VideoEncoder === "undefined") { setExportNote("Video needs Chrome, Edge or Safari. GIF works everywhere."); return }
     if (playRaf.current) stopPlay()
+    endNotes()
     const keepSelection = selection
     setSelection([]); setArrowDraft(null); setPolyDraft(null)
     cancelMakeRef.current = false
@@ -4433,7 +4529,7 @@ function TacticsBoard() {
         setPlay({ t })
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
         return nodeToCanvas(node, {
-          fontEmbedCSS, canvasWidth: W, canvasHeight: H, pixelRatio: 1,
+          fontEmbedCSS, filter: onlyInPicture, canvasWidth: W, canvasHeight: H, pixelRatio: 1,
           ...(view3d ? { backgroundColor: bgColor, style: { transform: `${UPRIGHT_3D} scale(0.86)`, transformOrigin: "center center" } } : {}),
         })
       }
@@ -4837,7 +4933,7 @@ function TacticsBoard() {
                   { label: "Redo", icon: <RotateCw size={13} />, run: redo, narrow: true },
                   ...(authUser ? [
                     { label: "New board", icon: <Plus size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/board") } },
-                    { label: "Dump & Arrange", icon: <Pencil size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/braindump") } },
+                    { label: "Dump & Arrange", icon: <Pencil size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/braindump", { state: { resume: true } }) } },
                     { label: "Creator profile", icon: <Settings size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/profile") } },
                   ] : []),
                   { label: theme === "night" ? "Day mode" : "Night mode", icon: theme === "night" ? <Sun size={13} /> : <Moon size={13} />, run: toggleTheme },
@@ -5616,7 +5712,7 @@ function TacticsBoard() {
                         </button>
                       ))}
                     </div>
-                    {pitchStyle === "paper" && <p className="text-xs mt-1.5" style={{ color: TEXT_MUTED }}>A warm page with thin lines. Turn on the editorial frame for the headline, score and caption.</p>}
+                    {pitchStyle === "paper" && <p className="text-xs mt-1.5" style={{ color: TEXT_MUTED }}>A warm page with thin lines. Turn on the editorial frame for the headline and score.</p>}
                   </div>
                 )}
                 {canvasMode !== "blank" && pitchStyle === "classic" && (
@@ -5721,7 +5817,7 @@ function TacticsBoard() {
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                 <Segmented label="Editorial frame" value={editorial ? "on" : "off"} onChange={v => { undoPoint(); setEditorial(v === "on") }}
                   options={[["off", "Off"], ["on", "On"]]} />
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>A headline, score strip, caption, legend, crop marks and an edition number around the board. It's in every export. The headline is the board's title.</p>
+                <p className="text-xs" style={{ color: TEXT_MUTED }}>A headline, score strip, legend, crop marks and an edition number around the board. It's in every export. The headline is the board's title.</p>
                 {editorial && (
                   <>
                     <label className="flex flex-col gap-1 text-xs" style={{ color: TEXT_MUTED }}>Kicker
@@ -5740,10 +5836,6 @@ function TacticsBoard() {
                       </div>
                       <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>Name the teams under Teams to show them in the strip.</p>
                     </div>
-                    <label className="flex flex-col gap-1 text-xs" style={{ color: TEXT_MUTED }}>Caption · {caption.length}/160
-                      <textarea value={caption} maxLength={160} rows={3} placeholder="One or two lines that say what to look at." onChange={e => { undoPoint("caption"); setCaption(e.target.value) }}
-                        className="rounded px-2 py-1 text-xs outline-none resize-none" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                    </label>
                     <Segmented label="Legend" value={showLegend ? "on" : "off"} onChange={v => { undoPoint(); setShowLegend(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
                     <Segmented label="Crop marks" value={cropMarks ? "on" : "off"} onChange={v => { undoPoint(); setCropMarks(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
                     <Segmented label={issueNo ? `Issue number · this board is ${issueLabel(issueNo)}` : nextIssue ? `Issue number · its first export becomes ${issueLabel(nextIssue)}` : "Issue number · given at its first export"} value={showEdition ? "on" : "off"} onChange={v => { undoPoint(); setShowEdition(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
@@ -5819,10 +5911,11 @@ function TacticsBoard() {
               <div className="ps-start" role="region" aria-label="Start your board">
                 <p className="ps-start-k">Your studio · new board</p>
                 <p className="ps-start-h">START WITH YOUR XI.</p>
-                <p className="ps-start-b">Copy the club's line-up post and paste it: the formation, names and numbers land in place.</p>
-                <button className="ps-start-go" onClick={() => { setNewsText(""); setPasteFor("home") }}><UserPlus size={18} /> Paste a line-up</button>
+                <p className="ps-start-b">Paste the club's line-up post. All 11 land on the pitch, with the shape, names and numbers. Both teams if the post has both.</p>
+                <button className="ps-start-go" onClick={() => setPasteFor("home")}><UserPlus size={18} /> Drop the XI</button>
                 <div className="ps-start-alt">
                   {([
+                    { label: "Call the roll", action: () => { addTeam("home"); setTimeout(() => namingRef.current?.(), 80) } },
                     { label: "Start from a drop", action: () => setShowTemplates(true) },
                     { label: "Add formation", action: () => addTeam("home") },
                     { label: "Place a player", action: () => setTool("homePlayer") },
@@ -5831,10 +5924,53 @@ function TacticsBoard() {
                     <button key={label} onClick={action}>{label}</button>
                   ))}
                 </div>
-                <p className="ps-start-tip">Press <kbd>⌘V</kbd> any time to paste. The faint board behind this is what a finished one looks like.</p>
+                <p className="ps-start-tip">Press <kbd>⌘V</kbd> any time to drop a line-up. The faint board behind this is what a finished one looks like.</p>
               </div>
             </div>
           )}
+
+          {/* Drop the XI: paste or type, the pitch fills as you go */}
+          {pasteFor && (() => {
+            const team = pasteFor, text = dropTxt[team], news = readTeamNews(text)
+            const shown = (team === "home" ? homeFormation : awayFormation) || "4-3-3"
+            const name = (team === "home" ? homeName : awayName).trim()
+            const close = () => { setPasteFor(null); swapRef.current = null }
+            const mini = ["4-3-3", "4-2-3-1", "4-4-2", "3-5-2"]
+            const read = !text.trim() ? "Paste a line-up, or type names with a comma or new line between them" : !news.names.length ? "No names yet" : `${[news.team || name, shown].filter(Boolean).join(" · ")} · ${news.names.length} of 11`
+            const chip = (on: boolean): React.CSSProperties => ({ height: 30, padding: "0 10px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: on ? ACCENT_SOLID : SURFACE_2, color: on ? ACCENT_INK : TEXT_PRIMARY, border: `1px solid ${on ? ACCENT_SOLID : DS_BORDER}` })
+            return (
+              <div role="region" aria-label="Drop the XI" onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === "Escape") close() }}
+                style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 40, width: "min(780px, calc(100% - 24px))", display: "flex", gap: 10, alignItems: "stretch", padding: 10, borderRadius: 14, background: GLASS, border: `1px solid ${DS_BORDER_STRONG}`, boxShadow: "0 18px 40px rgba(0,0,0,.45)", backdropFilter: "blur(8px)", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, width: 104 }}>
+                  {(["home", "away"] as const).map(t => (
+                    <button key={t} onClick={() => setPasteFor(t)} aria-pressed={team === t} style={{ ...chip(false), height: 36, textAlign: "left", display: "flex", alignItems: "center", gap: 7, borderColor: team === t ? ACCENT_SOLID : DS_BORDER }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 99, background: t === "home" ? homeColor : awayColor, flex: "none" }} />
+                      {t === "home" ? "Your XI" : "Their XI"}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ flex: "1 1 280px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <textarea autoFocus value={text} rows={3} aria-label="Line-up" spellCheck={false}
+                    onPaste={() => { pastedRef.current = true }}
+                    onChange={e => { const pasted = pastedRef.current; pastedRef.current = false; dropFrom(team, e.target.value, pasted) }}
+                    placeholder={`${myClub || "Your team"} (4-3-3): Goalkeeper; Right back, Centre back, Centre back, Left back; Midfielder, Midfielder, Midfielder; Right winger, Striker, Left winger`}
+                    style={{ width: "100%", resize: "none", borderRadius: 10, padding: "8px 10px", fontSize: 14, background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, outline: "none" }} />
+                  <span aria-live="polite" style={{ fontSize: 12, color: news.names.length ? ACCENT_TEXT : TEXT_MUTED }}>{read}</span>
+                </div>
+                <div style={{ width: 232, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <span style={{ fontSize: 12, color: TEXT_MUTED }}>Shape</span>
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                    {mini.map(f => (
+                      <button key={f} aria-pressed={shown === f} style={chip(shown === f)}
+                        onClick={() => { setGlide(true); setTeamFormation(team, f); window.setTimeout(() => setGlide(false), 800) }}>{f}</button>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: 12, color: TEXT_MUTED }}>Click two shirts to swap them</span>
+                </div>
+                <button onClick={close} style={{ ...chip(true), height: 36, alignSelf: "flex-start" }}>Done</button>
+              </div>
+            )
+          })()}
 
           {/* Polygon floating hint */}
           {tool === "shape" && shapeKind === "polygon" && polyDraft && polyDraft.length >= 1 && (
@@ -6219,6 +6355,15 @@ function TacticsBoard() {
                         onDoubleClick={e => { if (!p.locked && !p.kind && teamOf(p)) { e.stopPropagation(); startNaming(p.id) } }}
                         onPointerDown={e => {
                           if (naming) { e.stopPropagation(); const i = naming.ids.indexOf(p.id); if (i >= 0) { settleName(naming.ids[naming.i]); setNaming({ ...naming, i }) } return }
+                          if (pasteFor && tool === "select" && !p.locked && !p.kind && teamOf(p)) { // Drop the XI: a shirt, then another of the same team, swaps their names and numbers
+                            const a = swapRef.current && swapRef.current !== p.id ? players.find(x => x.id === swapRef.current) : undefined
+                            if (a && teamOf(a) === teamOf(p)) {
+                              e.stopPropagation(); undoPoint()
+                              setPlayers(ps => ps.map(q => q.id === a.id ? { ...q, name: p.name, num: p.num } : q.id === p.id ? { ...q, name: a.name, num: a.num } : q))
+                              swapRef.current = null; setLanded({ ids: [a.id, p.id], k: Date.now() }); return
+                            }
+                            swapRef.current = p.id
+                          }
                           if (p.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } // locked: the press goes through to the board
                           if (tool === "homePlayer" || tool === "awayPlayer") {
                             e.stopPropagation()
@@ -6235,7 +6380,7 @@ function TacticsBoard() {
                         }}
                         onClick={e => { if (!p.locked && (tool === "select" || tool === "homePlayer" || tool === "awayPlayer")) e.stopPropagation() }}
                         onContextMenu={e => openMenu(e, { kind: "player", id: p.id }, p.locked)}
-                        style={{ cursor: tool === "select" && !p.locked ? "grab" : "default" }}>
+                        style={{ cursor: tool === "select" && !p.locked ? "grab" : "default", transition: glide ? "transform .55s cubic-bezier(.3,1.2,.5,1)" : undefined }}>
                         {p.glow && (
                           <circle r={r + 15} fill={p.bg} fillOpacity={0.4} filter="blur(8px)" />
                         )}
@@ -6382,11 +6527,26 @@ function TacticsBoard() {
                     return (
                       <EditorialFrame frame={frame} k={sealK} ink={inkOn(bgColor)} title={edBoard} kicker={kicker.trim()}
                         strip={edStrip ? { home: { name: homeName, score: homeScore, pat: hk.pat, c1: hk.c1, c2: hk.c2 }, away: { name: awayName, score: awayScore, pat: ak.pat, c1: ak.c1, c2: ak.c2 } } : null}
-                        note={scoreNote.trim()} caption={edLines} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? edition : null} legendRight={sealSide === "left"}
+                        note={scoreNote.trim()} caption={[]} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? edition : null} legendRight={sealSide === "left"}
                         step={stepList.length > 1 ? { n: (view ? view.step : stepIdx) + 1, of: stepList.length, note: (view ? view.note : stepList[stepIdx]?.note ?? "").trim(), fade: view ? view.noteFade : 1 } : null}
-                        band={canvasMode !== "blank" && (focus === "half" || focus === "third") ? { color: bgColor, top: Math.min(frame.y + (edStrip && frame.w < 1100 ? 196 : 112) * sealK, partRect.y - 2), bottom: Math.max(frame.y + frame.h - (edLines.length ? 92 + (edLines.length - 1) * 22 : 60) * sealK, partRect.y + partRect.h + 2) } : null} />
+                        band={canvasMode !== "blank" && (focus === "half" || focus === "third") ? { color: bgColor, top: Math.min(frame.y + (edStrip && frame.w < 1100 ? 196 : 112) * sealK, partRect.y - 2), bottom: Math.max(frame.y + frame.h - (pointsRoom ? 78 + pointsRoom : 60) * sealK, partRect.y + partRect.h + 2) } : null} />
                     )
                   })()}
+
+                  {/* 12b. The idea under the pitch: the points, or the boxes to write them in */}
+                  {notesEditing && !presenting && !play ? (
+                    <NotesEditor points={points} x={frame.x + 36 * sealK} bottom={frame.y + frame.h - 56 * sealK} under={pitchEnd} w={frame.w} k={sealK}
+                      onChange={p => { undoPoint("points"); setPoints(p) }} onDone={endNotes} />
+                  ) : shownPoints.length ? (
+                    <NotesBlock points={shownPoints} x={frame.x + 36 * sealK} bottom={frame.y + frame.h - 56 * sealK} under={pitchEnd} w={frame.w} k={sealK} ink={inkOn(bgColor)} wide={wideNotes}
+                      onEdit={!presenting && !play && !making ? () => setNotesEditing(true) : undefined} />
+                  ) : !presenting && !play && !making && workspaceMode !== "brainstorm" ? (
+                    <g data-noexport="" role="button" aria-label="Write the idea under the pitch" style={{ cursor: "pointer" }} onClick={() => setNotesEditing(true)}
+                      transform={`translate(${frame.x + frame.w / 2},${frame.y + frame.h - 30 * sealK}) scale(${sealK})`}>
+                      <rect x={-82} y={-17} width={164} height={34} rx={17} fill="rgba(14,15,18,.72)" stroke={PS_VOLT} strokeOpacity={0.55} strokeDasharray="4 3" />
+                      <text x={0} y={5} textAnchor="middle" fill="#f4f4f6" fontSize={14} fontWeight={600} style={{ fontFamily: "'Inter',sans-serif" }}>+ Write the idea</text>
+                    </g>
+                  ) : null}
 
                   {/* 13. Creator seal — always last, always visible: your crest or logo, your handle (once you've chosen one) and PITCHSTUDIO (if you keep it on) */}
                   <g style={{ pointerEvents: "none" }} transform={`translate(${sealSide === "left" ? frame.x + (editorial && cropMarks ? 10 * sealK : 0) : frame.x + frame.w - (editorial && cropMarks ? 10 * sealK : 0)},${frame.y + frame.h - (editorial && cropMarks ? 10 * sealK : 0)}) scale(${sealK})`}>
@@ -6467,7 +6627,8 @@ function TacticsBoard() {
             <NameRun players={[...sheetRows("home"), ...sheetRows("away")]} ids={naming.ids} index={naming.i}
               teamLabel={t => (t === "home" ? homeName : awayName).trim() || (t === "home" ? "Home" : "Away")}
               colors={t => (t === "home" ? { bg: homeColor, fg: homeNum } : { bg: awayColor, fg: awayNum })}
-              onName={nameOne} onMove={moveNaming} onDone={endNaming} hudTop={66} />
+              onName={nameOne} onMove={moveNaming} onDone={endNaming} hudTop={66}
+              suggest={[...new Set([...squads.flatMap(q => q.players.map(x => x.name)), ...recentNames()].filter(n => n && !POS_CODES.has(n)))]} />
           )}
           {focus === "area" && area && !presenting && !picking && (
             <AreaMap area={area} vertical={vertical} onRepick={startPicking} onExit={() => { undoPoint(); setFocus("pitch") }} />
@@ -6546,82 +6707,11 @@ function TacticsBoard() {
             </div>
           )}
         </main>
-
-        {/* ── Narrative: the written story that goes under the pitch (not on Braindump boards) ── */}
-        {workspaceMode !== "brainstorm" && !presenting && (
-        <section aria-label="Narrative" className="flex-shrink-0 border-t" style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-          <style>{`.ps-narrative:focus { border-color: ${ACCENT_SOLID} !important; } input.accent-green-400, input.accent-orange-400 { accent-color: ${ACCENT_SOLID}; }`}</style>
-          <button type="button" onClick={() => setNarrativeOpen(o => !o)} aria-expanded={narrativeOpen} aria-controls="ps-narrative-text"
-            className="w-full flex items-center gap-2 px-4 text-left hover:bg-[var(--ps-hover)] transition-colors" style={{ height: 40 }}>
-            <AlignLeft size={14} style={{ color: TEXT_MUTED, flexShrink: 0 }} />
-            <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", color: TEXT_PRIMARY, flexShrink: 0 }}>
-              NARRATIVE
-            </span>
-            {!narrativeOpen && (
-              <span className="truncate text-xs min-w-0" style={{ color: TEXT_MUTED }}>
-                {narrative.trim() ? narrative.trim().split("\n")[0] : "Add the story behind this board"}
-              </span>
-            )}
-            <span className="ml-auto flex items-center gap-3 flex-shrink-0" style={{ color: TEXT_MUTED }}>
-              {narrativeOpen && <span id="ps-narrative-count" className="text-xs tabular-nums">{narrative.length.toLocaleString()} / 2,000</span>}
-              {narrativeOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-            </span>
-          </button>
-          {narrativeOpen && (
-            <div className="px-4 pb-3">
-              <textarea
-                value={narrative}
-                onChange={e => setNarrative(e.target.value.slice(0, 2000))}
-                maxLength={2000}
-                autoFocus
-                id="ps-narrative-text"
-                aria-label="Narrative"
-                aria-describedby="ps-narrative-count"
-                placeholder="What's the idea? Who presses, where the space opens, how the ball gets there…"
-                className="ps-narrative w-full resize-none rounded-lg px-3 py-2.5 text-[16px] sm:text-sm leading-relaxed outline-none"
-                style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, height: "clamp(88px, 18vh, 160px)", fontFamily: "'Inter', sans-serif" }}
-              />
-            </div>
-          )}
-        </section>
-        )}
+        <style>{`input.accent-green-400, input.accent-orange-400 { accent-color: ${ACCENT_SOLID}; }`}</style>
         </div>
       </div>
 
       {/* ── Template modal ── */}
-      {pasteFor && (() => {
-        const news = readTeamNews(newsText)
-        const known = FORMATIONS.some(x => x.name === news.formation)
-        const read = !newsText.trim() ? `${myClub || "Your team"} (4-3-3): Goalkeeper; Right back, Centre back, …`
-          : !news.names.length ? "No names yet"
-          : [news.team, news.formation ? (known ? news.formation : `${news.formation} (not on the board yet)`) : "formation: keeps the current one", `${news.names.length} of 11 players`].filter(Boolean).join(" · ")
-        const close = () => setPasteFor(null)
-        const go = () => { applyTeamNews(pasteFor, news); close() }
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.7)" }} onClick={close}
-            onKeyDown={e => { if (e.key === "Escape") close(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && news.names.length) go() }}>
-            <div role="dialog" aria-modal="true" aria-label="Paste the line-up" className="w-full flex flex-col gap-3 rounded-lg border p-5"
-              style={{ background: SURFACE_1, borderColor: DS_BORDER_STRONG, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between">
-                <span style={{ fontSize: 18, fontWeight: 700, color: TEXT_PRIMARY }}>Paste the line-up</span>
-                <button onClick={close} aria-label="Close" className="p-1 rounded hover:bg-[var(--ps-hover)]"><X size={16} /></button>
-              </div>
-              <p className="text-sm" style={{ color: TEXT_MUTED, margin: 0 }}>Copy it from the club's post or a match report. Goalkeeper first, a semicolon between the lines, and the formation comes with it.</p>
-              <Segmented label="Team" value={pasteFor} onChange={v => setPasteFor(v)} options={[["home", homeName.trim() || "Home"], ["away", awayName.trim() || "Away"]]} />
-              <textarea autoFocus value={newsText} onChange={e => setNewsText(e.target.value)} rows={5} aria-label="Line-up"
-                placeholder={`${myClub || "Your team"} (4-3-3): Goalkeeper; Right back, Centre back, Centre back, Left back; Midfielder, Midfielder, Midfielder; Right winger, Striker, Left winger`}
-                className="rounded px-3 py-2 text-sm outline-none resize-y" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, fontSize: 16 }} />
-              <p className="text-xs" aria-live="polite" style={{ color: news.names.length ? ACCENT_TEXT : TEXT_MUTED, margin: 0 }}>{read}</p>
-              <div className="flex justify-end gap-2">
-                <button onClick={close} className="px-4 rounded text-sm font-semibold" style={{ minHeight: 40, background: "transparent", color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>Cancel</button>
-                <button onClick={go} disabled={!news.names.length} className="px-4 rounded text-sm font-semibold hover:brightness-110"
-                  style={{ minHeight: 40, background: ACCENT_SOLID, color: ACCENT_INK, border: "none", opacity: news.names.length ? 1 : 0.4 }}>Put them on the pitch</button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
-
       {showTemplates && (
         <TemplateModal
           templates={templates} onClose={() => setShowTemplates(false)}

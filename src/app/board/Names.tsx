@@ -31,14 +31,22 @@ export const NAMES_CSS = `
   .nr-hud b { font-weight: 700; }
   .nr-hud kbd { font: 600 12px Inter, system-ui, sans-serif; padding: 1px 6px; border-radius: 6px; border: 1px solid rgba(127,127,127,0.35); opacity: .8; }
   .nr-hud button { height: 28px; padding: 0 10px; border-radius: 999px; border: 0; display: inline-flex; align-items: center; gap: 4px; font: 600 12.5px Inter, system-ui, sans-serif; cursor: pointer; }
+  .nr-chips { position: absolute; left: 0; top: calc(100% + 6px); display: flex; gap: 5px; flex-wrap: wrap; width: 260px; }
+  .nr-chips button { height: 26px; padding: 0 9px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.14); background: var(--ps-raised, #1b1d22); color: inherit; font: 600 12px Inter, system-ui, sans-serif; cursor: pointer; }
+  .nr-chips button:first-child { background: #d7ff3c; color: #0a0b0d; border-color: #d7ff3c; }
+  .nr-pos { font: 700 11px Inter, system-ui, sans-serif; letter-spacing: .06em; color: #d7ff3c; padding: 0 2px; white-space: nowrap; }
+  .nr-seg { display: inline-flex; gap: 3px; vertical-align: middle; margin-left: 8px; }
+  .nr-seg i { width: 12px; height: 5px; border-radius: 3px; background: rgba(127,127,127,0.35); display: block; }
+  .nr-seg i.on { background: #d7ff3c; }
   .nr-ring { animation: nr-pulse 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
   @keyframes nr-in { from { opacity: 0; transform: translate(-50%, 4px) } to { opacity: 1; transform: translate(-50%, 0) } }
   @keyframes nr-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
   @media (max-width: 640px) { .nr-hud .nr-keys { display: none } .nr-box input { width: 150px } }
 `
 
-export function NameRun({ players, ids, index, teamLabel, colors, onName, onMove, onDone, hudTop }: {
+export function NameRun({ players, ids, index, teamLabel, colors, onName, onMove, onDone, hudTop, suggest = [] }: {
   players: NameRunPlayer[]; ids: string[]; index: number; teamLabel: (t: "home" | "away") => string
+  suggest?: string[] // names you've used before (saved squads): two letters and Enter picks the first match
   colors: (t: "home" | "away") => { bg: string; fg: string }
   onName: (id: string, text: string) => void; onMove: (delta: number) => void; onDone: () => void; hudTop: number
 }) {
@@ -61,27 +69,38 @@ export function NameRun({ players, ids, index, teamLabel, colors, onName, onMove
   if (!p) return null
   const team = p.team, mine = ids.filter(x => players.find(q => q.id === x)?.team === team), k = mine.indexOf(id) + 1
   const c = colors(team), isDefault = !!p.pos && p.name === p.pos
+  const typed = isDefault ? "" : p.name.trim(), low = typed.toLowerCase()
+  const taken = new Set(players.filter(q => q.team === team && q.id !== id).map(q => q.name.toLowerCase()))
+  const chips = suggest.filter(n => !taken.has(n.toLowerCase()) && n.toLowerCase() !== low && (!low || n.toLowerCase().includes(low))).sort((a, b) => Number(!b.toLowerCase().startsWith(low)) - Number(!a.toLowerCase().startsWith(low))).slice(0, 4)
+  const pick = (n: string) => { onName(id, n); onMove(1) }
+  const named = mine.filter(x => { const q = players.find(y => y.id === x); return q && q.name.trim() && !(q.pos && q.name === q.pos) }).length
   return (
     <>
       {at && (
         <div className="nr-box" style={{ left: Math.max(130, Math.min(window.innerWidth - 130, at.x)), top: Math.min(window.innerHeight - 60, at.y + 10) }}
           onMouseDown={e => { if (e.target !== input.current) e.preventDefault() }}>
           <span className="nr-num" style={{ background: c.bg, color: c.fg }}>{p.num || "–"}</span>
+          {p.pos && <span className="nr-pos">{p.pos}</span>}
           <input ref={input} value={isDefault ? "" : p.name} placeholder={p.pos ? `${p.pos} · type a name` : "Type a name"} maxLength={34}
             aria-label={`Name for ${teamLabel(team)} number ${p.num || k}`}
             onChange={e => onName(id, e.target.value)}
             onBlur={e => { const to = e.relatedTarget as HTMLElement | null; if (!to?.closest?.(".nr-hud")) onDone() }}
             onKeyDown={e => {
               if (e.key === "Tab") { e.preventDefault(); onMove(e.shiftKey ? -1 : 1) }
-              else if (e.key === "Enter") { e.preventDefault(); onMove(1) }
+              else if (e.key === "Enter") { e.preventDefault(); if (low && chips[0] && chips[0].toLowerCase().startsWith(low)) pick(chips[0]); else onMove(1) }
               else if (e.key === "Escape") { e.preventDefault(); onDone() }
               else if (e.key === "ArrowDown") { e.preventDefault(); onMove(1) }
               else if (e.key === "ArrowUp") { e.preventDefault(); onMove(-1) }
             }} />
+          {chips.length > 0 && (
+            <div className="nr-chips" onMouseDown={e => e.preventDefault()}>
+              {chips.map(n => <button key={n} onClick={() => pick(n)}>{n}</button>)}
+            </div>
+          )}
         </div>
       )}
       <div className="nr-hud st-glass" style={{ top: hudTop }} onMouseDown={e => e.preventDefault()}>
-        <span><b>{teamLabel(team)}</b> · {k} of {mine.length}</span>
+        <span><b>{teamLabel(team)}</b> · {k} of {mine.length}<span className="nr-seg" aria-hidden="true">{mine.map((x, i) => <i key={x} className={i < named ? "on" : ""} />)}</span></span>
         <span className="nr-keys"><kbd>Tab</kbd> next · <kbd>⇧ Tab</kbd> back · <kbd>Esc</kbd> done</span>
         <button aria-label="Previous player" onClick={() => onMove(-1)} disabled={index === 0} style={{ background: "transparent", color: "inherit", opacity: index === 0 ? 0.35 : 1 }}><ChevronLeft size={15} /></button>
         <button aria-label="Next player" onClick={() => onMove(1)} style={{ background: "transparent", color: "inherit" }}><ChevronRight size={15} /></button>

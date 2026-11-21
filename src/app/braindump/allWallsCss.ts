@@ -83,11 +83,11 @@ export const ALL_WALLS_CSS = `
   .aw-starter em { display: inline-block; margin-top: 6px; font: 600 12px 'Inter', sans-serif; font-style: normal; background: ${SURFACE_2}; border-radius: 6px; padding: 2px 8px; color: #d6d6dc; }
   .aw-starter:focus-visible { outline: 3px solid ${ACCENT_SOLID}; outline-offset: 4px; border-radius: 10px; }
   .aw-st-pic { aspect-ratio: 16 / 9; border-radius: 10px; padding: 10px; display: flex; gap: 6px; background: #CBC6BC; border: 5px solid #3A332D; overflow: hidden; }
-  .aw-st-pic.video { background: #efe9dc; border-color: #cfc6b4; } .aw-st-pic.player { background: #1f3b33; border-color: #16261f; }
+  .aw-st-pic.press { background: #1f3b33; border-color: #16261f; }
   .aw-st-pic span { flex: 1; min-width: 0; border: 1.5px dashed rgba(58,51,45,.35); border-radius: 5px; padding: 18px 5px 4px; position: relative; display: flex; flex-direction: column; gap: 4px; }
-  .aw-st-pic.player span { border-color: rgba(255,255,255,.3); }
+  .aw-st-pic.press span { border-color: rgba(255,255,255,.3); }
   .aw-st-pic u { position: absolute; top: 3px; left: 5px; font: 700 11px ${HAND}; color: #3a332d; text-decoration: none; white-space: nowrap; }
-  .aw-st-pic.player u { color: #e8efe9; }
+  .aw-st-pic.press u { color: #e8efe9; }
   .aw-st-pic i { height: 12px; display: block; }
   .aw-card:hover .aw-st-pic, .aw-starter:hover .aw-st-pic { box-shadow: 0 0 0 2px rgba(255,255,255,.35); }
   .aw .bd-menu-back { position: fixed; inset: 0; z-index: 65; }

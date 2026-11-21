@@ -83,6 +83,7 @@ function WallPage({ wallId }: { wallId: string }) {
   const [selDel, setSelDel] = useState(false) // the panel's delete waiting for a yes
   const [tries, setTries] = useState(0)
   const [wall, setWall] = useState<Wall | null>(null)
+  useEffect(() => { if (wall?.id) try { localStorage.setItem("ps-last-wall", wall.id) } catch { /* storage blocked */ } }, [wall?.id]) // Dump & Arrange opens here next time
   const [lookOpen, setLookOpen] = useState(false)
   const [photo, setPhoto] = useState<string | null>(null) // the link to see this wall's photo
   const [moving, setMoving] = useState(false) // something is being dragged on the free wall
