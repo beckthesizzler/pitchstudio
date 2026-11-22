@@ -99,14 +99,14 @@ export function ViewControls({ view3d, onView3d, zoomed, onZoomArea, onPresent, 
       </div>
       {onTurn && (
         <button className="st-chip" onClick={onTurn} aria-label={vertical ? "Turn the pitch flat" : "Turn the pitch upright"} title={vertical ? "Turn the pitch flat (90°)" : "Turn the pitch upright (90°)"}>
-          <RotateCw size={14} /> <span className="hidden lg:inline">{vertical ? "Flat" : "Upright"}</span>
+          <RotateCw size={14} /> <span className="hidden min-[1440px]:inline">{vertical ? "Flat" : "Upright"}</span>
         </button>
       )}
-      <button className="st-chip" aria-pressed={zoomed} onClick={onZoomArea} title="Zoom into one part of the pitch, then draw on it">
-        <Scan size={14} /> <span className="hidden lg:inline">{zoomed ? "Zoomed in" : "Zoom area"}</span>
+      <button className="st-chip" aria-pressed={zoomed} onClick={onZoomArea} aria-label={zoomed ? "Zoomed in" : "Zoom area"} title="Zoom into one part of the pitch, then draw on it">
+        <Scan size={14} /> <span className="hidden min-[1440px]:inline">{zoomed ? "Zoomed in" : "Zoom area"}</span>
       </button>
-      <button className="st-chip" onClick={onPresent} title="Present full screen (F)">
-        <Maximize2 size={14} /> <span className="hidden lg:inline">Present</span>
+      <button className="st-chip" onClick={onPresent} aria-label="Present" title="Present full screen (F)">
+        <Maximize2 size={14} /> <span className="hidden min-[1440px]:inline">Present</span>
       </button>
     </div>
   )

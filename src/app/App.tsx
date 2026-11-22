@@ -396,7 +396,7 @@ const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSetting
   // On the whole board, the slate, the points, the issue number and the seal must clear the pitch too (a big or upright pitch reaches almost to the edges)
   if (focus === "board" && (ed?.pitch || (nb && pitch))) {
     const p = pitchRect(g, 0, 0, PW, PH)
-    const top = ed ? Math.max(0, 104 - (p.y - r.y)) : 0, bottom = Math.max(0, (ed || nb ? 84 : 0) + (nb ? nb - 22 : 0) - (r.y + r.h - p.y - p.h))
+    const top = ed ? Math.max(0, 104 - (p.y - r.y)) : 0, bottom = Math.max(0, (ed || nb ? 84 : 0) + nb - (r.y + r.h - p.y - p.h))
     if (top || bottom) r = { ...r, y: r.y - top, h: r.h + top + bottom }
   } else if (focus === "board" && nb) r = { ...r, h: r.h + nb }
   const size = FRAME_SIZES[ratio]
@@ -4819,14 +4819,14 @@ function TacticsBoard() {
           <button onClick={() => setShowTemplates(true)} title="Templates"
             className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
             style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
-            <BookOpen size={13} /> <span className="hidden xl:inline">Templates</span>
+            <BookOpen size={13} /> <span className="hidden min-[1440px]:inline whitespace-nowrap">Templates</span>
           </button>
           {/* My Boards */}
           {authUser && (
             <button onClick={() => setShowMyBoards(true)} title="My Boards"
               className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
               style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
-              <FolderOpen size={13} /> <span className="hidden xl:inline">My Boards</span>
+              <FolderOpen size={13} /> <span className="hidden min-[1440px]:inline whitespace-nowrap">My Boards</span>
             </button>
           )}
           {/* Undo/Redo */}
