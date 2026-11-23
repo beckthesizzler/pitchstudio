@@ -14,7 +14,7 @@ import {
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
-  Grid3x3, Rows3, Pencil, ChevronLeft, Waypoints, Eye, EyeOff, Play, Sun, Moon, PanelBottom, SlidersHorizontal, TextCursorInput,
+  Grid3x3, Rows3, Pencil, ChevronLeft, Waypoints, Eye, EyeOff, Play, Sun, Moon, SlidersHorizontal, TextCursorInput,
 } from "lucide-react"
 import { useNavigate, useLocation } from "react-router"
 import { supabase } from "./lib/supabase"
@@ -23,8 +23,8 @@ import {
   PS_VOLT, SURFACE_BASE, SURFACE_1, SURFACE_2, ACCENT_GRADIENT, ACCENT_SOLID, ACCENT_INK, ACCENT_SOFT, ACCENT_TEXT,
   TEXT_PRIMARY, TEXT_MUTED, DS_ERROR, DS_ERROR_SOFT, DS_BORDER, DS_BORDER_STRONG, GLASS, SCRIM, useTheme,
 } from "./theme"
-import { NotesBlock, NotesEditor, notesRoom, editorRoom, cleanPoints, pointsFrom } from "./board/Notes"
-import { STAGE_CSS, Dock, DockButton, ViewControls, PresentBar, AreaPicker, AreaMap, readDock, saveDock, readPanelSide, savePanelSide, type DockPlace, type DockItem, type PanelSide } from "./board/Stage"
+import { NotesBlock, NotesEditor, notesLayout, editorRoom, cleanPoints, pointsFrom, MAX_POINTS, POINT_MAX } from "./board/Notes"
+import { STAGE_CSS, Dock, ViewControls, PresentBar, AreaPicker, AreaMap, readDock, readPanelSide, savePanelSide, type DockPlace, type DockItem, type PanelSide } from "./board/Stage"
 import { NameRun, TeamSheet, NAMES_CSS, splitNumber, type NameRunPlayer } from "./board/Names"
 import { shrinkForBoard, imageProblem } from "./lib/images"
 import { Mark } from "./brand/Mark"
@@ -126,7 +126,7 @@ interface Template {
 /** How a board looks. Saved with the board so it reopens exactly the same. */
 interface BoardSettings {
   workspaceMode: "tactics" | "brainstorm"
-  canvasMode: "full" | "half" | "blank"
+  canvasMode: "full" | "half" | "blank" // always "full" now (older boards could be half or blank)
   showPitch: boolean
   pitchColor: "green" | "white"
   bgColor: string
@@ -143,7 +143,7 @@ interface BoardSettings {
   nameStyle: "halo" | "chip" // names on a dark outline, or on a small dark chip
   tokenStyle: "classic" | "minimal" // minimal = flat pieces: no drop shadow, a thin ring
   vertical: boolean // the pitch stands upright: home goal at the bottom
-  focus: "board" | "pitch" | "half" | "third" | "area" // the part of the board you see and export ("area": the part of the pitch you zoomed into)
+  focus: "board" | "pitch" | "half" | "third" | "area" // the part of the pitch you see and export ("area": the part you zoomed into). "board" is from older boards and shows the pitch
   area: [number, number, number, number] | null // the zoomed area in pitch coordinates: x1, y1, x2, y2
   focusEnd: "attack" | "defend" // which end a half or a third shows
   frameRatio: "auto" | "16:9" | "4:5" | "1:1" | "9:16" // the shape of the export
@@ -151,13 +151,13 @@ interface BoardSettings {
   awayFormation: string; awayShape: "base" | "in" | "out"
   pitchStyle: "classic" | "night" | "paper" | "cobalt" // classic = green or white lines; night and paper are the editorial looks; cobalt is blue turf with gold lines
   psMark: boolean // the PS mark mowed into the middle of the pitch
-  editorial: boolean // the editorial frame: slate, score strip, caption, legend, crop marks and edition number
-  kicker: string // the small line above the title
-  homeScore: string; awayScore: string; scoreNote: string // the score strip: the goals each side scored, and a note such as FT
+  editorial: boolean // from older boards (the editorial frame was on); the match line now shows whenever it has something to show
+  kicker: string // from older boards: the small line above the title (no longer drawn)
+  homeScore: string; awayScore: string; scoreNote: string // the goals each side scored, shown in the strip over the pitch (the note, such as FT, is from older boards)
   caption: string // the line (or two) under the board, from before the points (read into the points, no longer shown)
   points: string[] // the idea under the pitch: up to four numbered points, written on the board and exported with it
-  showLegend: boolean; cropMarks: boolean; showEdition: boolean
-  sealSide: "left" | "right" // the bottom corner your seal sits in; the team names and the editorial legend take the other side
+  showLegend: boolean; cropMarks: boolean; showEdition: boolean // the legend and crop marks are from older boards and no longer drawn; showEdition puts the issue number over the pitch
+  sealSide: "left" | "right" // which side of the pitch your seal sits under (right unless you choose left); the points take the other side
   issueNo: number; issueDay: string // this board's issue number and the day it took it (0 = not numbered yet: it takes one at its first export)
   animSpeed: "slow" | "normal" | "fast"; endCard: boolean // how fast the steps play, and the animated end card on GIF and video exports
 }
@@ -177,10 +177,10 @@ const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   homePat: "solid", homeC2: "#fbbf24", homeNum: "#000000", homeName: "",
   awayPat: "solid", awayC2: "#1d4ed8", awayNum: "#ffffff", awayName: "",
   labelSize: "large", nameStyle: "halo", tokenStyle: "classic",
-  vertical: false, focus: "board", focusEnd: "attack", frameRatio: "auto", area: null,
+  vertical: false, focus: "pitch", focusEnd: "attack", frameRatio: "auto", area: null,
   homeFormation: "", homeShape: "base", awayFormation: "", awayShape: "base",
   pitchStyle: "classic", psMark: false, editorial: false, kicker: "", homeScore: "", awayScore: "", scoreNote: "", caption: "", points: [],
-  showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true, issueNo: 0, issueDay: "", sealSide: "left",
+  showLegend: true, cropMarks: true, showEdition: true, animSpeed: "normal", endCard: true, issueNo: 0, issueDay: "", sealSide: "right",
 }
 /** A zoomed area from saved data: four numbers inside the pitch, at least 60 × 40, else none */
 const areaFrom = (a: unknown): [number, number, number, number] | null => {
@@ -200,7 +200,7 @@ function settingsFrom(src: Record<string, unknown> | null | undefined, fresh = f
   const str = (x: unknown, fallback: string) => (typeof x === "string" && x ? x : fallback)
   return {
     workspaceMode: oneOf(v.workspaceMode, ["tactics", "brainstorm"] as const, d.workspaceMode), // an old Report board opens as a tactics board
-    canvasMode: oneOf(v.canvasMode, ["full", "half", "blank"] as const, d.canvasMode),
+    canvasMode: "full", // half and blank canvases are gone: Crop and size shows a half, and every board has its pitch
     showPitch: bool(v.showPitch, d.showPitch),
     pitchColor: oneOf(v.pitchColor, ["green", "white"] as const, d.pitchColor),
     bgColor: str(v.bgColor, d.bgColor),
@@ -219,7 +219,7 @@ function settingsFrom(src: Record<string, unknown> | null | undefined, fresh = f
     nameStyle: oneOf(v.nameStyle, ["halo", "chip"] as const, d.nameStyle),
     tokenStyle: oneOf(v.tokenStyle, ["classic", "minimal"] as const, d.tokenStyle),
     vertical: bool(v.vertical, d.vertical),
-    focus: (() => { const f = oneOf(v.focus, ["board", "pitch", "half", "third", "area"] as const, d.focus); return f === "area" && !areaFrom(v.area) ? "board" : f })(),
+    focus: (() => { const f = oneOf(v.focus, ["board", "pitch", "half", "third", "area"] as const, d.focus); return f === "board" || (f === "area" && !areaFrom(v.area)) ? "pitch" : f })(), // the whole board is gone: the frame follows the pitch
     area: areaFrom(v.area),
     focusEnd: oneOf(v.focusEnd, ["attack", "defend"] as const, d.focusEnd),
     frameRatio: oneOf(v.frameRatio, ["auto", "16:9", "4:5", "1:1", "9:16"] as const, d.frameRatio),
@@ -304,8 +304,6 @@ const waitForSaves = (maxMs: number) =>
 /** The save each saved board is waiting on. Opening that board waits for it: it may hold the last change made before Back. */
 const boardSavesInFlight = new Map<string, Promise<unknown>>()
 const waitForBoardSave = (id: string) => boardSavesInFlight.get(id) ?? Promise.resolve()
-/** Tells the board page to open as Braindump (set by the "/braindump" page, read once when the board opens). */
-const boardHandoff = { braindump: false }
 /** Unsaved new boards are kept on this device (one for the board, one for Braindump),
  *  so the browser's Back button, a closed tab or a crash doesn't lose them. Boards with big photos are too large to keep. */
 const DRAFT_MAX_CHARS = 1000000
@@ -326,11 +324,10 @@ const PW = 1050, PH = 680    // pitch dimensions
 const PX = (CW - PW) / 2    // = 175, pitch x offset
 const PY = (CH - PH) / 2    // = 110, pitch y offset
 const SVG_DISPLAY_W = 980 // the board is shown at most 980 × 630 at 100% zoom
+const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) // for the shortcut the start card shows
 
 /** Where the pitch sits on the canvas. Horizontal: as it always has. Vertical: turned a quarter, home goal at the bottom. */
 type PitchGeo = { ox: number; oy: number; sc: number; v: boolean }
-/** The board as it was when you took hold of the pitch to resize or move it */
-type PitchSnap = { geo: PitchGeo; s: number; offX: number; offY: number; players: Player[]; arrows: Arrow[]; texts: TextBox[]; shapes: Shape[]; images: UploadedImage[]; steps: BoardStep[] }
 const VERT_SCALE = 0.78 // an upright pitch is scaled to fit the canvas height
 const pitchGeo = (v: boolean, scale: number, offX: number, offY: number): PitchGeo => v
   ? { ox: (CW - PH * VERT_SCALE) / 2 + offX, oy: (CH - PW * VERT_SCALE) / 2 + offY, sc: scale * VERT_SCALE, v }
@@ -339,8 +336,8 @@ const pitchGeo = (v: boolean, scale: number, offX: number, offY: number): PitchG
 const FIT_SCALE = (v: boolean) => (v ? 1 : 1.15)
 /** The offsets that centre a pitch of this size on the board */
 const centreOff = (v: boolean, s: number) => v ? { x: (PH * VERT_SCALE * (1 - s)) / 2, y: (PW * VERT_SCALE * (1 - s)) / 2 } : { x: (PW * (1 - s)) / 2, y: (PH * (1 - s)) / 2 }
-/** A new board: the whole board on screen and a big, centred pitch you can make bigger or smaller by its corners */
-const NEW_BOARD_SETTINGS: BoardSettings = { ...DEFAULT_BOARD_SETTINGS, editorial: true, pitchScale: FIT_SCALE(false), pitchOffX: centreOff(false, FIT_SCALE(false)).x, pitchOffY: centreOff(false, FIT_SCALE(false)).y }
+/** A new board: a big, centred pitch on grass green */
+const NEW_BOARD_SETTINGS: BoardSettings = { ...DEFAULT_BOARD_SETTINGS, bgColor: "#1a472a", editorial: true, pitchScale: FIT_SCALE(false), pitchOffX: centreOff(false, FIT_SCALE(false)).x, pitchOffY: centreOff(false, FIT_SCALE(false)).y }
 /** Pitch coordinates (the pitch drawn 1050 × 680, home goal on the left) → board coordinates */
 const toCanvas = (g: PitchGeo, px: number, py: number) =>
   g.v ? { x: g.ox + g.sc * py, y: g.oy + g.sc * (PW - px) } : { x: g.ox + g.sc * px, y: g.oy + g.sc * py }
@@ -363,42 +360,49 @@ const onlyInPicture = (n: HTMLElement) => !(n instanceof Element && n.hasAttribu
 const FRAME_SIZES: Record<BoardSettings["frameRatio"], [number, number] | null> = {
   auto: null, "16:9": [1920, 1080], "4:5": [1080, 1350], "1:1": [1080, 1080], "9:16": [1080, 1920],
 }
-/** The part of the board you see and export: the whole board, or the pitch, a half or a third with room for names and the seal, widened to the export shape */
-const frameRect = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], ratio: BoardSettings["frameRatio"], ed?: { strip: boolean; lines: number; pitch?: boolean } | null,
-  area: BoardSettings["area"] = null, nb = 0, pitch = true) => { // nb: the room the points under the pitch need
-  let r = { x: 0, y: 0, w: CW, h: CH }
+/** The part of the pitch on show, as a board rectangle: all of it, a half or a third (at one end), or the area you zoomed into.
+ *  On its own shape an area is widened inside the pitch to a screen's shape (counting the room above and below it), so it never comes out as a thin strip. */
+const shownPart = (g: PitchGeo, focus: BoardSettings["focus"], end: BoardSettings["focusEnd"], area: BoardSettings["area"], ratio: BoardSettings["frameRatio"], k = 1, above = 0, below = 0) => {
   if (focus === "area" && area) {
-    // room round the area so the pieces and names at its edge are whole, then widened to a screen's shape (a tall strip fills the screen too)
-    const p = pitchRect(g, area[0], area[1], area[2], area[3]), pad = Math.max(44, Math.min(p.w, p.h) * 0.06)
-    r = { x: p.x - pad, y: p.y - pad, w: p.w + 2 * pad, h: p.h + 2 * pad + 44 }
+    let p = pitchRect(g, area[0], area[1], area[2], area[3])
     if (ratio === "auto") {
-      const a = r.w / r.h, lo = 1.5, hi = 2
-      if (a < lo) { const w = r.h * lo; r = { ...r, x: r.x - (w - r.w) / 2, w } }
-      else if (a > hi) { const h = r.w / hi; r = { ...r, y: r.y - (h - r.h) / 2, h } }
-      // the extra room comes from the pitch, not from beyond its edge
-      const pr = pitchRect(g, 0, 0, PW, PH)
-      const keep = (lo: number, size: number, plo: number, psize: number, pad0: number, pad1: number) =>
-        size >= psize + pad0 + pad1 ? plo - (size - psize) / 2 : Math.max(plo - pad0, Math.min(lo, plo + psize + pad1 - size))
-      r = { ...r, x: keep(r.x, r.w, pr.x, pr.w, 36, 36), y: keep(r.y, r.h, pr.y, pr.h, 36, 100) }
+      const pr = pitchRect(g, 0, 0, PW, PH), m = 36 * k
+      const fw = p.w + 2 * m, fh = p.h + above + below
+      if (fw / fh < 1.5) { const w = Math.min(pr.w, fh * 1.5 - 2 * m); p = { ...p, x: p.x - (w - p.w) / 2, w } }
+      else if (fw / fh > 2) { const h = Math.min(pr.h, fw / 2 - above - below); p = { ...p, y: p.y - (h - p.h) / 2, h } }
+      p = { ...p, x: Math.max(pr.x, Math.min(p.x, pr.x + pr.w - p.w)), y: Math.max(pr.y, Math.min(p.y, pr.y + pr.h - p.h)) } // the extra room comes from the pitch
     }
-  } else if (focus !== "board") {
-    const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
-    const [x1, x2] = end === "attack" ? [PW - part, PW] : [0, part]
-    const p = pitchRect(g, x1, 0, x2, PH)
-    r = { x: p.x - 36, y: p.y - 36, w: p.w + 72, h: p.h + 100 }
+    return p
   }
-  // The editorial frame: room above for the slate (and under it for the score strip on a narrow frame) and below for the points and the legend.
-  // The whole board already has that room in its margins.
-  if (ed && focus !== "board") {
-    const top = 104 + (ed.strip && r.w < 1100 ? 58 : 0), bottom = 40 + nb
-    r = { ...r, y: r.y - top, h: r.h + top + bottom }
-  } else if (nb && focus !== "board") r = { ...r, h: r.h + nb }
-  // On the whole board, the slate, the points, the issue number and the seal must clear the pitch too (a big or upright pitch reaches almost to the edges)
-  if (focus === "board" && (ed?.pitch || (nb && pitch))) {
-    const p = pitchRect(g, 0, 0, PW, PH)
-    const top = ed ? Math.max(0, 104 - (p.y - r.y)) : 0, bottom = Math.max(0, (ed || nb ? 84 : 0) + nb - (r.y + r.h - p.y - p.h))
-    if (top || bottom) r = { ...r, y: r.y - top, h: r.h + top + bottom }
-  } else if (focus === "board" && nb) r = { ...r, h: r.h + nb }
+  const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
+  const [x1, x2] = end === "attack" ? [PW - part, PW] : [0, part]
+  return pitchRect(g, x1, 0, x2, PH)
+}
+/** The words round the pitch keep their size against it: k is 1 for a full-size pitch lying flat, less for an upright one or a part of it */
+const bandScale = (p: { w: number; h: number }) => Math.max(0.3, Math.min(1.2, Math.max(p.w, p.h) / (PW * FIT_SCALE(false))))
+/** The match line over the pitch, from the bottom up: the strip on its own row on a narrow picture, then the title (with the strip beside it
+ *  on a wide one), then a small row with the step and the issue number. top[row] is how far above the pitch that row's top is; above is the room it all needs. */
+function headLayout(k: number, o: { title: boolean; strip: boolean; small: boolean; narrow: boolean }) {
+  const rows: ["strip" | "title" | "small", number][] = []
+  if (o.strip && o.narrow) rows.push(["strip", 40 * k])
+  if (o.title || (o.strip && !o.narrow)) rows.push(["title", 40 * k])
+  if (o.small) rows.push(["small", 28 * k])
+  const top: Partial<Record<"strip" | "title" | "small", number>> = {}
+  if (!rows.length) return { top, above: 36 * k }
+  let y = 24 * k
+  rows.forEach(([id, h], i) => { y += (i ? 12 * k : 0) + h; top[id] = y })
+  return { top, above: y + 26 * k }
+}
+/** How wide your seal is, roughly (it measures its own words when it's drawn): the points under the pitch leave it this much room */
+const sealWidth = (handle: string, madeWith: boolean) => {
+  const words = (handle ? (handle.length + 1) * 8.9 : 0) + (madeWith ? (handle ? 9 : 0) + 134 : 0)
+  return 14 + (words ? words + 48 : 34)
+}
+/** What you see and export: the part of the pitch on show, the match line just above it and the points and your seal just below it,
+ *  a little room either side, then widened to the export shape. */
+const boardFrame = (p: { x: number; y: number; w: number; h: number }, k: number, above: number, below: number, ratio: BoardSettings["frameRatio"]) => {
+  const m = 36 * k
+  let r = { x: p.x - m, y: p.y - above, w: p.w + 2 * m, h: p.h + above + below }
   const size = FRAME_SIZES[ratio]
   if (size) {
     const a = size[0] / size[1]
@@ -482,7 +486,7 @@ function BallGlyph({ r, icon = false }: { r: number; icon?: boolean }) {
 const SWATCHES = ["#ffffff", "#000000", PS_VOLT, "#f87171", "#fbbf24", "#60a5fa", "#1d4ed8", "#4ade80", "#f472b6"]
 const SHAPE_FILLS = ["#fbbf24", "#f87171", "#60a5fa", "#4ade80", "#f472b6", PS_VOLT] // new shapes take these in turn
 // Grey (the default), the old near-black, grass, white, then the Night and Paper looks
-const BG_PRESETS = ["#2D2F34","#0d1117","#1a472a","#ffffff","#06080b","#ddd6c3"]
+const BG_PRESETS = ["#1a472a","#2D2F34","#0d1117","#ffffff","#06080b","#ddd6c3"]
 /** Black or white, whichever reads better on this colour (kit numbers). Same answer as before for the original swatches. */
 const inkOn = (hex: string) => {
   const m = /^#([0-9a-f]{6})$/i.exec(hex)
@@ -1178,133 +1182,90 @@ function PitchSVG({ pitchColor, look = "classic", mark = false, upright = false 
   )
 }
 
-/* ─────────────────────────── Editorial frame ───────────────── */
+/* ─────────────────────────── The match line ────────────────── */
 /** "No. 07 · 12.11.26": the board's issue number in your series, and the day it took it */
 const editionStamp = (n: number, day?: string) => `${issueLabel(n)} · ${day || dayStamp()}`
 type EdTeam = { name: string; score: string; pat: KitPattern; c1: string; c2: string }
-type LegendItem = { kind: LineKind | "ghost"; color: string; label: string }
-/** The slate across the top (kicker, title, score strip), the caption and the legend underneath, crop marks at the corners and the edition number. It sits on the board, so every export carries it. */
-function EditorialFrame({ frame, k, ink, title, kicker, strip, note, caption, legend, crop, edition, band, step, legendRight }: {
-  frame: { x: number; y: number; w: number; h: number }; k: number; ink: string
-  title: string; kicker: string; strip: { home: EdTeam; away: EdTeam } | null; note: string
-  caption: string[]; legend: LegendItem[]; crop: boolean; edition: string | null
-  band?: { color: string; top: number; bottom: number } | null // a band in the canvas colour above top and below bottom (the pitch carries on under a half or a third)
-  step?: { n: number; of: number; note: string; fade: number } | null // the step on screen, shown in the slate after the kicker
-  legendRight?: boolean // the creator's seal sits bottom left, so the legend ends at the right instead
-}) {
-  const x0 = frame.x, y0 = frame.y, x1 = frame.x + frame.w, y1 = frame.y + frame.h, m = 36 * k
-  const narrow = frame.w < 1100
-  const cut = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + "…" : t)
-  const font = { fontFamily: "'Barlow Condensed',sans-serif" }
-  const titleY = y0 + (kicker || step ? 88 : 70) * k
-  const stripY = narrow ? y0 + (kicker || step ? 146 : 128) * k : y0 + 62 * k
-  // How wide the kicker is, so the step can sit just after it
-  const kickRef = useRef<SVGTextElement>(null)
-  const [kickW, setKickW] = useState(0)
+/** "● BARCELONA 2 – 2 MADRID ●": each kit, both names and the score (or "v" before there is one). It measures its words, so it can end
+ *  exactly at the right edge of the pitch (align "end") or start at its left edge (align "start"). cy is the middle of the row. */
+function MatchStrip({ x, cy, k, ink, home, away, align }: { x: number; cy: number; k: number; ink: string; home: EdTeam; away: EdTeam; align: "start" | "end" }) {
+  const ref = useRef<SVGTextElement>(null)
+  const [tw, setTw] = useState(0)
   useLayoutEffect(() => {
-    const measure = () => { let w = 0; try { w = kickRef.current?.getBBox().width ?? 0 } catch { /* not drawn yet */ } setKickW(w) }
+    const measure = () => { let w = 0; try { w = ref.current?.getBBox().width ?? 0 } catch { /* not drawn yet */ } setTw(w) }
     measure()
     document.fonts?.ready.then(measure)
-  }, [kicker, k])
-  const cx = narrow ? (x0 + x1) / 2 : x1 - m - 310 * k
-  const ks = narrow ? k * 0.85 : k // a narrow frame gets a slightly smaller strip
-  const side = (t: EdTeam, dir: 1 | -1, id: string) => {
-    const sw = 22 * ks * Math.max(t.score.length, 1)
-    const disc = dir * (14 * ks + sw + 24 * ks)
-    return (
-      <g>
-        <text x={dir * 14 * ks} y={stripY + 14 * ks} textAnchor={dir === 1 ? "start" : "end"} fill={ink} fontSize={44 * ks} fontWeight={800} style={font}>{t.score}</text>
-        <g transform={`translate(${disc},${stripY + 1 * ks})`}>
-          <KitFill cid={`ed-${id}`} r={11 * ks} pat={t.pat} c1={t.c1} c2={t.c2} />
-          <circle r={11 * ks} fill="none" stroke={ink} strokeOpacity={0.5} strokeWidth={1.4} />
-        </g>
-        <text x={disc + dir * 22 * ks} y={stripY + 8 * ks} textAnchor={dir === 1 ? "start" : "end"} fill={ink} fontSize={25 * ks} fontWeight={700}
-          style={{ ...font, letterSpacing: "0.05em", textTransform: "uppercase" }}>{cut(t.name.trim(), narrow ? 11 : 16)}</text>
-      </g>
-    )
-  }
-  const legendW = legend.reduce((s, it) => s + (it.label.length * 8.2 + 62) * k, 0)
-  let lx = legendRight ? x1 - m - legendW + 22 * k : x0 + m
+  }, [home.name, away.name, home.score, away.score, k])
+  const r = 11 * k, gap = 10 * k, font = { fontFamily: "'Barlow Condensed',sans-serif" }
+  const textW = tw || (home.name.length + away.name.length) * 13 * k + 80 * k
+  const x0 = align === "end" ? x - textW - 2 * (2 * r + gap) : x // the strip's left edge
+  const tx = x0 + 2 * r + gap
+  const scored = home.score !== "" || away.score !== ""
+  const disc = (t: EdTeam, cx: number, id: string) => (
+    <g transform={`translate(${cx},${cy})`}>
+      <KitFill cid={`ms-${id}`} r={r} pat={t.pat} c1={t.c1} c2={t.c2} />
+      <circle r={r} fill="none" stroke={ink} strokeOpacity={0.5} strokeWidth={1.4} />
+    </g>
+  )
+  return (
+    <g>
+      {disc(home, x0 + r, "h")}
+      <text ref={ref} x={tx} y={cy + 9 * k} fill={ink} style={{ ...font, textTransform: "uppercase" }}>
+        <tspan fontSize={25 * k} fontWeight={700} style={{ letterSpacing: "0.05em" }}>{home.name}</tspan>
+        <tspan dx={14 * k} fontSize={scored ? 36 * k : 26 * k} fontWeight={800} fillOpacity={scored ? 1 : 0.55}>{scored ? `${home.score || "0"} – ${away.score || "0"}` : "v"}</tspan>
+        <tspan dx={14 * k} fontSize={25 * k} fontWeight={700} style={{ letterSpacing: "0.05em" }}>{away.name}</tspan>
+      </text>
+      {disc(away, tx + textW + gap + r, "a")}
+    </g>
+  )
+}
+/** The match line, right above the part of the pitch on show and lined up with its edges: a small row with the step and the issue number,
+ *  then the title, with the strip beside it (or on its own row under it on a narrow picture). It sits on the board, so every export carries it. */
+function MatchHead({ part, k, ink, rows, title, strip, step, edition, narrow }: {
+  part: { x: number; y: number; w: number; h: number }; k: number; ink: string
+  rows: Partial<Record<"strip" | "title" | "small", number>>
+  title: string; strip: { home: EdTeam; away: EdTeam } | null; narrow: boolean
+  step: { n: number; of: number; note: string; fade: number } | null; edition: string | null
+}) {
+  const font = { fontFamily: "'Barlow Condensed',sans-serif" }
+  const x0 = part.x, x1 = part.x + part.w
+  const stripW = strip ? (strip.home.name.length + strip.away.name.length) * 13 * k + 150 * k : 0 // about how wide the strip is, so a long title stops short of it
+  const room = narrow || !strip ? part.w : part.w - stripW - 24 * k
+  const max = Math.max(8, Math.floor(room / (22 * k)))
+  const cut = (t: string) => (t.length > max ? t.slice(0, max - 1) + "…" : t)
+  const at = (id: "strip" | "title" | "small") => part.y - (rows[id] ?? 0) // the top of a row
   return (
     <g style={{ pointerEvents: "none" }}>
-      {/* On a half or a third the pitch carries on under the slate and the caption: a band in the canvas colour keeps them on clean ground */}
-      {band && (
-        <g>
-          <defs>
-            <linearGradient id="ed-band-top" x1="0" y1="0" x2="0" y2="1">
-              <stop offset={Math.max(0, (band.top - 30 * k - y0) / Math.max(1, band.top - y0))} stopColor={band.color} />
-              <stop offset={1} stopColor={band.color} stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="ed-band-bottom" x1="0" y1="0" x2="0" y2="1">
-              <stop offset={0} stopColor={band.color} stopOpacity={0} />
-              <stop offset={Math.min(1, (30 * k) / Math.max(1, y1 - band.bottom))} stopColor={band.color} />
-            </linearGradient>
-          </defs>
-          {band.top > y0 && <rect x={x0 - 2} y={y0 - 2} width={x1 - x0 + 4} height={band.top - y0 + 2} fill="url(#ed-band-top)" />}
-          {band.bottom < y1 && <rect x={x0 - 2} y={band.bottom} width={x1 - x0 + 4} height={y1 - band.bottom + 2} fill="url(#ed-band-bottom)" />}
-        </g>
+      {rows.small !== undefined && step && <StepTag x={x0} y={at("small")} k={k * 0.9} n={step.n} of={step.of} note={step.note} fade={step.fade} />}
+      {rows.small !== undefined && edition && (
+        <text x={x1} y={at("small") + 19 * k} textAnchor="end" fill={ink} fillOpacity={0.62} fontSize={14 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.16em" }}>{edition}</text>
       )}
-      {/* Slate */}
-      {kicker && (
-        <g>
-          <rect x={x0 + m} y={y0 + 24 * k} width={10 * k} height={10 * k} fill={PS_VOLT} stroke={ink === "#000000" ? ink : "none"} strokeWidth={1.2} />
-          <text ref={kickRef} x={x0 + m + 20 * k} y={y0 + 34 * k} fill={ink} fillOpacity={0.78} fontSize={15 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.22em", textTransform: "uppercase" }}>{kicker}</text>
-        </g>
+      {rows.title !== undefined && title && (
+        <text x={x0} y={at("title") + 36 * k} fill={ink} fontSize={46 * k} fontWeight={800} style={{ ...font, letterSpacing: "0.01em", textTransform: "uppercase" }}>{cut(title)}</text>
       )}
-      {step && (
-        <StepTag x={kicker ? x0 + m + 20 * k + (kickW || kicker.length * 10.5 * k) + 18 * k : x0 + m} y={y0 + 15.5 * k} k={k * 0.9} n={step.n} of={step.of} note={step.note} fade={step.fade} />
-      )}
-      {title && (
-        <text x={x0 + m} y={titleY} fill={ink} fontSize={46 * k} fontWeight={800} style={{ ...font, letterSpacing: "0.01em", textTransform: "uppercase" }}>
-          {cut(title, narrow ? 26 : 40)}
-        </text>
-      )}
-      {strip && (
-        <g transform={`translate(${cx},0)`}>
-          <g transform="translate(0,0)">{side(strip.home, -1, "h")}</g>
-          <text x={0} y={stripY + 10 * k} textAnchor="middle" fill={ink} fillOpacity={0.55} fontSize={34 * ks} fontWeight={600} style={font}>{strip.home.score || strip.away.score ? "–" : "v"}</text>
-          <g>{side(strip.away, 1, "a")}</g>
-          {note && <text x={0} y={stripY + 40 * k} textAnchor="middle" fill={ink} fillOpacity={0.7} fontSize={14 * k} fontWeight={700} style={{ ...font, letterSpacing: "0.24em", textTransform: "uppercase" }}>{note}</text>}
-        </g>
-      )}
-      {/* Caption, then the legend */}
-      {caption.map((line, i) => (
-        <text key={i} x={x0 + m} y={y1 - 62 * k - (caption.length - 1 - i) * 22 * k} fill={ink} fillOpacity={0.88} fontSize={15 * k} style={{ fontFamily: "'Inter',sans-serif" }}>{line}</text>
-      ))}
-      <g transform={`translate(0,${y1 - 28 * k})`}>
-        {legend.map(it => {
-          const x = lx
-          lx += (it.label.length * 8.2 + 62) * k
-          const w = (it.kind === "shot" ? 4 : 2.6) * k
-          return (
-            <g key={it.kind}>
-              {it.kind === "ghost" ? (
-                <g transform={`translate(${x + 8 * k},0)`}><circle r={7 * k} fill={it.color} fillOpacity={0.45} stroke={ink} strokeOpacity={0.6} strokeWidth={1.2} strokeDasharray="3,2" /></g>
-              ) : (
-                <g>
-                  {it.kind === "shot" && <line x1={x} x2={x + 26 * k} y1={0} y2={0} stroke="rgba(0,0,0,0.45)" strokeWidth={w + 2} strokeLinecap="round" />}
-                  {it.kind === "dribble"
-                    ? <path d={wavyPath(x, 0, x + 26 * k, 0, x + 13 * k, 0, 3.5 * k, 9 * k)} fill="none" stroke={it.color} strokeWidth={w} strokeLinecap="round" />
-                    : <line x1={x} x2={x + 26 * k} y1={0} y2={0} stroke={it.color} strokeWidth={w} strokeLinecap="round" strokeDasharray={it.kind === "run" ? `${6 * k},${4 * k}` : undefined} />}
-                  {it.kind !== "line" && <polygon points={`${x + 31 * k},0 ${x + 23 * k},${-4.6 * k} ${x + 23 * k},${4.6 * k}`} fill={it.color} />}
-                </g>
-              )}
-              <text x={x + 40 * k} y={5 * k} fill={ink} fillOpacity={0.82} fontSize={15 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.12em", textTransform: "uppercase" }}>{it.label}</text>
-            </g>
-          )
-        })}
-      </g>
-      {/* Edition number */}
-      {edition && <text x={x1 - (crop ? 24 : 14) * k} y={y1 - (crop ? 62 : 52) * k} textAnchor="end" fill={ink} fillOpacity={0.62} fontSize={14 * k} fontWeight={600} style={{ ...font, letterSpacing: "0.16em" }}>{edition}</text>}
-      {/* Crop marks */}
-      {crop && (
-        <g stroke={ink} strokeOpacity={0.6} strokeWidth={1.4} fill="none" strokeLinecap="square">
-          {([[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]] as const).map(([px, py, sx, sy], i) => (
-            <path key={i} d={`M ${px + sx * 8 * k} ${py + sy * 30 * k} V ${py + sy * 8 * k} H ${px + sx * 30 * k}`} />
-          ))}
-          <path d={`M ${(x0 + x1) / 2 - 8 * k} ${y0 + 8 * k} h ${16 * k} M ${(x0 + x1) / 2 - 8 * k} ${y1 - 8 * k} h ${16 * k} M ${x0 + 8 * k} ${(y0 + y1) / 2 - 8 * k} v ${16 * k} M ${x1 - 8 * k} ${(y0 + y1) / 2 - 8 * k} v ${16 * k}`} />
-        </g>
-      )}
+      {strip && (narrow
+        ? rows.strip !== undefined && <MatchStrip x={x0} cy={at("strip") + 20 * k} k={k} ink={ink} home={strip.home} away={strip.away} align="start" />
+        : rows.title !== undefined && <MatchStrip x={x1} cy={at("title") + 22 * k} k={k} ink={ink} home={strip.home} away={strip.away} align="end" />)}
+    </g>
+  )
+}
+/** On a half, a third or an area the pitch carries on past the part on show: bands in the canvas colour keep the match line and the points on clean ground */
+function PartBand({ frame, part, k, color }: { frame: { x: number; y: number; w: number; h: number }; part: { x: number; y: number; w: number; h: number }; k: number; color: string }) {
+  const x0 = frame.x - 2, w = frame.w + 4, top = part.y - 2, bottom = part.y + part.h + 2, y1 = frame.y + frame.h
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      <defs>
+        <linearGradient id="part-band-top" x1="0" y1="0" x2="0" y2="1">
+          <stop offset={Math.max(0, (top - 30 * k - frame.y) / Math.max(1, top - frame.y))} stopColor={color} />
+          <stop offset={1} stopColor={color} stopOpacity={0} />
+        </linearGradient>
+        <linearGradient id="part-band-bottom" x1="0" y1="0" x2="0" y2="1">
+          <stop offset={0} stopColor={color} stopOpacity={0} />
+          <stop offset={Math.min(1, (30 * k) / Math.max(1, y1 - bottom))} stopColor={color} />
+        </linearGradient>
+      </defs>
+      {top > frame.y && <rect x={x0} y={frame.y - 2} width={w} height={top - frame.y + 2} fill="url(#part-band-top)" />}
+      {bottom < y1 && <rect x={x0} y={bottom} width={w} height={y1 - bottom + 2} fill="url(#part-band-bottom)" />}
     </g>
   )
 }
@@ -2256,7 +2217,7 @@ function TemplateModal({
         <div className="flex-1 overflow-y-auto p-4">
           {tab === "drops" && (
             <>
-              <p className="text-xs mb-3" style={{ color: TEXT_MUTED }}>Numbered boards, each a real situation in the editorial frame. Open one and make it your own: it starts a new board, so nothing you've saved changes.</p>
+              <p className="text-xs mb-3" style={{ color: TEXT_MUTED }}>Numbered boards, each a real situation with its title and notes. Open one and make it your own: it starts a new board, so nothing you've saved changes.</p>
               <div className="flex flex-wrap gap-1.5 mb-3">
                 {(["All", ...DROP_CATS] as const).map(c => (
                   <button key={c} onClick={() => setCat(c)} aria-pressed={cat === c}
@@ -2375,7 +2336,7 @@ function TacticsBoard() {
   const autoName = useRef(dayName("Board")) // an unnamed board's name: the day it was made, "Board · 12 Nov"
   const [editingTitle, setEditingTitle] = useState(false)
   const [editingText, setEditingText] = useState<string | null>(null)
-  const [bgColor, setBgColor] = useState(DEFAULT_BOARD_SETTINGS.bgColor)
+  const [bgColor, setBgColor] = useState(NEW_BOARD_SETTINGS.bgColor)
   const [showPitch, setShowPitch] = useState(true)
   const [canvasMode, setCanvasMode] = useState<"full" | "half" | "blank">("full")
   const [pitchColor, setPitchColor] = useState<"green" | "white">("green")
@@ -2384,7 +2345,6 @@ function TacticsBoard() {
   const [pitchOffY, setPitchOffY] = useState(NEW_BOARD_SETTINGS.pitchOffY)
   const pitchOffXRef = useRef(0)
   const pitchOffYRef = useRef(0)
-  const [hoveredPitch, setHoveredPitch] = useState(false)
   const [homeColor, setHomeColor] = useState("#fbbf24")
   const [awayColor, setAwayColor] = useState("#1d4ed8")
   const [homePat, setHomePat] = useState<KitPattern>("solid")
@@ -2399,7 +2359,7 @@ function TacticsBoard() {
   const [nameStyle, setNameStyle] = useState<BoardSettings["nameStyle"]>("halo")
   const [tokenStyle, setTokenStyle] = useState<BoardSettings["tokenStyle"]>("classic")
   const [vertical, setVertical] = useState(false)
-  const [focus, setFocus] = useState<BoardSettings["focus"]>("board")
+  const [focus, setFocus] = useState<BoardSettings["focus"]>("pitch")
   const [focusEnd, setFocusEnd] = useState<BoardSettings["focusEnd"]>("attack")
   const [area, setArea] = useState<BoardSettings["area"]>(null) // the area zoomed into
   const [dock, setDockPlace] = useState<DockPlace>(readDock) // the tools in a row under the board, or down the side
@@ -2420,11 +2380,12 @@ function TacticsBoard() {
   const [notesEditing, setNotesEditing] = useState(false) // writing the points, in place
   const endNotes = useCallback(() => { setNotesEditing(false); setPoints(p => cleanPoints(p)) }, [])
   const [showLegend, setShowLegend] = useState(true); const [cropMarks, setCropMarks] = useState(true); const [showEdition, setShowEdition] = useState(true)
-  const [sealSide, setSealSide] = useState<"left" | "right">("left")
+  const [sealSide, setSealSide] = useState<"left" | "right">("right")
   const [issueNo, setIssueNo] = useState(0); const [issueDay, setIssueDay] = useState("") // this board's issue number (0 = none yet) and the day it took it
   const [nextIssue, setNextIssue] = useState<number | null>(null) // the number its first export will take, when known
   const [noIssue, setNoIssue] = useState(false) // an export going out without a number, because it couldn't be fetched
   const [exportNote, setExportNote] = useState("") // a short word after Copy: "Copied" or why it didn't work
+  const [cleared, setCleared] = useState(0) // when the pitch was last cleared: "Pitch cleared · Undo" shows for a few seconds
   const [animSpeed, setAnimSpeed] = useState<BoardSettings["animSpeed"]>("normal")
   const [endCard, setEndCard] = useState(true)
   /* ── Steps: a move shown one moment at a time. The step on screen is the live board; the others wait in steps ── */
@@ -2432,7 +2393,7 @@ function TacticsBoard() {
   const [stepIdx, setStepIdx] = useState(0) // the step on screen
   const [play, setPlay] = useState<null | { t: number }>(null) // the moment of the move on screen, while it plays or is being exported
   const [making, setMaking] = useState<null | { fmt: "gif" | "mp4"; done: number }>(null) // a GIF or a video being made
-  const [kitEditor, setKitEditor] = useState<Record<"home" | "away", "" | "more" | "own">>({ home: "", away: "" }) // a team's kits: the few, all of them, or your own
+  const [kitEditor, setKitEditor] = useState<Record<"home" | "away", "" | "top" | "more" | "own">>({ home: "", away: "" }) // a team's kits: closed, the few, all of them, or your own
   const [namesFor, setNamesFor] = useState<"home" | "away" | null>(null) // the team whose names are open
   const [pasteFor, setPasteFor] = useState<"home" | "away" | null>(null) // the "Paste the line-up" box is open for this team
   const [dropTxt, setDropTxt] = useState<Record<"home" | "away", string>>({ home: "", away: "" }) // Drop the XI: what's in the strip for each team
@@ -2471,7 +2432,6 @@ function TacticsBoard() {
   }, [])
   const [naming, setNaming] = useState<{ ids: string[]; i: number } | null>(null) // naming players on the pitch, one after another
   const [sheetHl, setSheetHl] = useState<string | null>(null) // the player whose team-sheet row you're in
-  const [pasteOpen, setPasteOpen] = useState(false) // the team sheet's "paste a list" box
   const namingRef = useRef<(from?: string) => void>(() => {})
   const [kitMode, setKitMode] = useState<null | "gk" | "own">(null) // the kit choice open for the selected player
   useEffect(() => { setKitMode(null) }, [sel?.id])
@@ -2479,13 +2439,12 @@ function TacticsBoard() {
   const [showTemplates, setShowTemplates] = useState(false)
   const [sideTab, setSideTab] = useState<"selected" | "board">("board")
   const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
-  const [boardGroups, setBoardGroups] = useState({ frame: true, teams: true, pitch: false, editorial: false, animation: false })
+  const [boardGroups, setBoardGroups] = useState({ match: true, teams: true, look: false, crop: false })
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [homeFormation, setHomeFormation] = useState("")
   const [homeShape, setHomeShape] = useState<TeamShape>("base")
   const [awayFormation, setAwayFormation] = useState("")
   const [awayShape, setAwayShape] = useState<TeamShape>("base")
-  const [lineupText, setLineupText] = useState("")
   const [squads, setSquads] = useState<Squad[]>(readSquads)
   const [squadId, setSquadId] = useState("")
 
@@ -2494,7 +2453,6 @@ function TacticsBoard() {
   const [showTour, setShowTour] = useState(false)
   const { theme, toggle: toggleTheme } = useTheme()
   const [showMyBoards, setShowMyBoards] = useState(false)
-  const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [currentBoardId, setCurrentBoardId] = useState<string | null>(null)
@@ -2583,19 +2541,7 @@ function TacticsBoard() {
     return () => { cancelled = true }
   }, [authUser?.id])
 
-  // Opening as Braindump: set by the "/braindump" page before the board mounts
   const entryRef = useRef<"board" | "braindump" | "opened">("board") // how you got here (decides which unsaved draft comes back)
-  useEffect(() => {
-    if (boardHandoff.braindump) {
-      boardHandoff.braindump = false
-      entryRef.current = "braindump"
-      setWorkspaceMode("brainstorm")
-      setCanvasMode("blank")
-      setBgColor(DEFAULT_BOARD_SETTINGS.bgColor)
-      setShowPitch(false)
-      return
-    }
-  }, [])
 
   useEffect(() => {
     if (!authUser) return
@@ -2619,6 +2565,7 @@ function TacticsBoard() {
     if (running && !forceNew) return running // one save at a time
     // What gets saved is decided now, even when it has to wait for a save that's already running
     const snap: SaveSnap = { epoch: boardEpochRef.current, uid: authUser.id, title: title.trim() || autoName.current, narrative, data: collectBoard() }
+    rememberXI(authUser.id) // your XI is kept for Same XI on the next new board
     // "Save as new board" waits for the running save, then makes its copy
     const p = running ? running.then(() => startSave(snap, true, auto)) : startSave(snap, forceNew, auto)
     if (forceNew) {
@@ -3116,7 +3063,7 @@ function TacticsBoard() {
 
   /* ── Drag refs ── */
   const dragRef = useRef<{
-    kind: "move" | "player" | "text" | "image" | "arrowCp" | "arrowP1" | "arrowP2" | "resizeShape" | "resizeText" | "resizeImage" | "resizePlayer" | "resizePitch" | "zone" | "movePitch"
+    kind: "move" | "player" | "text" | "image" | "arrowCp" | "arrowP1" | "arrowP2" | "resizeShape" | "resizeText" | "resizeImage" | "resizePlayer" | "zone"
     id: string; ox: number; oy: number
   } | null>(null)
   const panDragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
@@ -3214,10 +3161,13 @@ function TacticsBoard() {
     return () => ro.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  /** Zoom goes from 80% to 200%, where 100% is the board filling the space it has */
+  const ZOOM_STEPS = [0.8, 1, 1.25, 1.5, 2]
   const applyZoom = useCallback((delta: number, cx?: number, cy?: number) => {
     userViewRef.current = true
+    const fz = fitZoom()
     setZoom(z => {
-      const nz = Math.min(6, Math.max(0.2, z * delta))
+      const nz = Math.min(2 * fz, Math.max(0.8 * fz, z * delta))
       if (cx !== undefined && cy !== undefined) {
         const rect = canvasRef.current?.getBoundingClientRect()
         if (rect) {
@@ -3232,6 +3182,16 @@ function TacticsBoard() {
   }, [])
 
   const fitToView = () => { userViewRef.current = false; setZoom(fitZoom()); setPanX(0); setPanY(fitPanY()) }
+  /** − and + go to the next of 80, 100, 125, 150 and 200% */
+  const stepZoom = (dir: 1 | -1) => {
+    const fz = fitZoom(), now = zoom / fz
+    const next = dir > 0 ? ZOOM_STEPS.find(v => v > now + 0.01) : [...ZOOM_STEPS].reverse().find(v => v < now - 0.01)
+    if (next === undefined) return
+    if (Math.abs(next - 1) < 0.001) { fitToView(); return }
+    applyZoom((next * fz) / zoom)
+  }
+  const stepZoomRef = useRef(stepZoom)
+  stepZoomRef.current = stepZoom
 
   /* ── Mouse wheel zoom ── */
   useEffect(() => {
@@ -3443,8 +3403,8 @@ function TacticsBoard() {
         undoPoint("nudge:" + selection.map(s => s.id).join())
         nudge(withLinked(selection), dx, dy)
       }
-      if (e.key === "+" || e.key === "=") applyZoom(1.15)
-      if (e.key === "-") applyZoom(0.87)
+      if (e.key === "+" || e.key === "=") stepZoomRef.current(1)
+      if (e.key === "-") stepZoomRef.current(-1)
       if (e.key === "0") fitToView()
       if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
         if (e.key === "v" || e.key === "V") sw("select")
@@ -3571,24 +3531,49 @@ function TacticsBoard() {
   const edBoard = isAutoName(title) ? "" : title.trim() // an unnamed board has no headline
   // the number in the frame: the board's own, or (before its first export) the one it will take; none when that isn't known
   const edition = issueNo ? editionStamp(issueNo, issueDay) : noIssue || !nextIssue ? null : editionStamp(nextIssue)
-  const edStrip = editorial && (homeName.trim() !== "" || awayName.trim() !== "" || homeScore !== "" || awayScore !== "")
-  const pitchDragRef = useRef<PitchSnap | null>(null) // the board as it was when a pitch resize or move began
-  const [heldFrame, setHeldFrame] = useState<{ x: number; y: number; w: number; h: number } | null>(null) // the view holds still while you resize or move the pitch
-  const frameArgs = [geo, canvasMode === "blank" ? "board" : presenting && focus === "board" ? "pitch" : focus, focusEnd, frameRatio, editorial ? { strip: edStrip, lines: 0, pitch: canvasMode !== "blank" } : null, area] as const
+  const edStrip = awayName.trim() !== "" || homeScore !== "" || awayScore !== "" // the strip shows once there's an opponent or a score
+  /* The frame hugs the pitch: the match line just above the part on show, the points and your seal just below it */
   const shownPoints = cleanPoints(points)
-  // the points need room under the pitch: how much depends on how wide the frame is, so it's measured on the frame without them
-  const bare = frameRect(...frameArgs) // the frame without the points
-  const wideNotes = bare.w / bare.h >= 1.3 // a wide picture sets the points side by side; a tall one lists them
-  const pointsRoom = notesEditing && !presenting && !play ? editorRoom(points) : shownPoints.length ? notesRoom(shownPoints, bare.w, wideNotes) : 0
-  const frame = heldFrame ?? frameRect(...frameArgs, pointsRoom, canvasMode !== "blank")
-  // where the pitch ends on screen, so the points sit right under it (none on a blank board, or when the pitch runs past the frame)
-  const pitchEnd = (() => { if (canvasMode === "blank") return undefined; const pr = pitchRect(geo, 0, 0, PW, PH), end = pr.y + pr.h; return end < frame.y + frame.h ? end : undefined })()
-  const sealK = Math.min(1, Math.min(frame.w, frame.h) / CH) // the seal and the legend shrink with a small frame
+  const rawPart = shownPart(geo, focus, focusEnd, area, "16:9")
+  const sealK = bandScale(rawPart) // the words round the pitch, and your seal, keep their size against it
+  const narrowHead = rawPart.w / sealK < 1000 // a narrow picture puts the strip on its own row
+  const head = headLayout(sealK, { title: !!edBoard, strip: edStrip, small: stepList.length > 1 || (showEdition && !!edition), narrow: narrowHead })
+  const sealRoom = (sealWidth(creatorHandle, creatorBrand.madeWith) + 24) * sealK // the points leave your seal this much room beside them
+  const notesW = Math.max(220 * sealK, rawPart.w - sealRoom)
+  const wideNotes = rawPart.w / rawPart.h >= 1.2 // a wide part sets the points side by side; a tall one lists them
+  const writingNotes = notesEditing && !presenting && !play
+  const notesH = writingNotes ? (editorRoom(points) - 18) * sealK : shownPoints.length ? notesLayout(shownPoints, notesW + 72 * sealK, sealK, wideNotes).h : 0
+  const below = Math.max(52 * sealK, (writingNotes ? 18 : 24) * sealK + notesH) + 26 * sealK
+  const partRect = shownPart(geo, focus, focusEnd, area, frameRatio, sealK, head.above, below) // the part of the pitch in view
+  const frame = boardFrame(partRect, sealK, head.above, below, frameRatio)
+  const pitchEnd = partRect.y + partRect.h // the points and your seal sit just under the part on show
+  const notesX = sealSide === "right" ? partRect.x : partRect.x + partRect.w - notesW // the points take the side your seal doesn't
   const dispW = Math.min(SVG_DISPLAY_W, (SVG_DISPLAY_W * CH / CW) * frame.w / frame.h)
   const dispRef = useRef({ w: dispW, h: dispW * frame.h / frame.w })
   dispRef.current = { w: dispW, h: dispW * frame.h / frame.w }
   // A new frame fits the screen again
-  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode, editorial, edStrip, pointsRoom, area, presenting, dock, view3d]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fitToView() }, [vertical, focus, focusEnd, frameRatio, canvasMode, Math.round(head.above), Math.round(below), area, presenting, dock, view3d]) // eslint-disable-line react-hooks/exhaustive-deps
+  /* An empty board shows its start card in the middle of the pitch on screen: where that is, measured whenever the view moves */
+  const boardEmpty = players.length === 0 && arrows.length === 0 && texts.length === 0 && shapes.length === 0 && images.length === 0 && customZones.length === 0
+  const partBoxRef = useRef<SVGRectElement>(null)
+  const [startBox, setStartBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  useEffect(() => {
+    if (!boardEmpty) { setStartBox(null); return }
+    let raf = 0, until = performance.now() + 700 // the 3D tilt and the panel take a moment to settle
+    const measure = () => {
+      const a = partBoxRef.current?.getBoundingClientRect(), b = canvasRef.current?.getBoundingClientRect()
+      if (a && b && a.width > 0) {
+        const n = { x: a.left - b.left, y: a.top - b.top, w: a.width, h: a.height }
+        setStartBox(o => (o && Math.abs(o.x - n.x) + Math.abs(o.y - n.y) + Math.abs(o.w - n.w) + Math.abs(o.h - n.h) < 1 ? o : n))
+      }
+      if (performance.now() < until) raf = requestAnimationFrame(measure)
+    }
+    measure()
+    const el = canvasRef.current
+    const ro = el && typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => { cancelAnimationFrame(raf); until = performance.now() + 400; measure() }) : null
+    if (el && ro) ro.observe(el)
+    return () => { cancelAnimationFrame(raf); ro?.disconnect() }
+  }, [boardEmpty, zoom, panX, panY, view3d, vertical, frame.x, frame.y, frame.w, frame.h, panelOpen, presenting]) // eslint-disable-line react-hooks/exhaustive-deps
   /** Turns the pitch upright (or back). Everything on it moves with it, so every piece keeps its place on the pitch. One undo step. */
   const setOrientation = (v: boolean) => {
     if (v === vertical) return
@@ -3735,81 +3720,85 @@ function TacticsBoard() {
     setPlayers(prev => prev.map(p => wearsKit(p, cur, base) ? { ...p, ...kitProps(k) } : p))
   }
   /** One team in the Teams group: its name, formation, kit and names */
+  /** One team in the panel: its kit (tap the disc for the kits), its formation, and Names (the team sheet) or Add (the whole team in its formation).
+   *  The names and the score are written in Match. */
   const teamBlock = (team: "home" | "away") => {
     const k = kitOf(team)
     const label = team === "home" ? "Home" : "Away"
-    const name = team === "home" ? homeName : awayName
-    const call = name.trim() || label // what the buttons call the team
+    const name = (team === "home" ? homeName : awayName).trim()
+    const call = name || (team === "home" ? "Your team" : "Opponent") // what the buttons call the team
     const there = players.some(p => teamOf(p) === team)
-    const view = kitEditor[team]
+    const view = kitEditor[team] // "" = the kits are closed
     const match = KITS.find(x => x.pat === k.pat && x.c1 === k.c1 && (k.pat === "solid" || x.c2 === k.c2))
     const shown = view === "more" ? KITS : [...KITS.filter(x => TOP_KITS.includes(x.id)), ...(match && !TOP_KITS.includes(match.id) ? [match] : [])]
     const link = (text: string, v: "more" | "own") => (
-      <button onClick={() => setKitEditor(e => ({ ...e, [team]: e[team] === v ? "" : v }))} aria-expanded={view === v}
+      <button onClick={() => setKitEditor(e => ({ ...e, [team]: e[team] === v ? "top" : v }))} aria-expanded={view === v}
         className="text-xs font-semibold hover:underline" style={{ color: view === v ? TEXT_PRIMARY : TEXT_MUTED, background: "transparent", border: "none", padding: 0 }}>{text}</button>
     )
+    const btn = { background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }
     return (
       <div key={team} className="flex flex-col gap-2 pb-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
         <div className="flex items-center gap-2">
-          <KitDisc id={`${team}-head`} size={24} pat={k.pat} c1={k.c1} c2={k.c2} />
-          <input value={name} maxLength={30} aria-label={`${label} team name`} placeholder={`${label} team name`}
-            onChange={e => { undoPoint(`${team}Name`); (team === "home" ? setHomeName : setAwayName)(e.target.value) }}
-            className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none"
-            style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-        </div>
-        <div className="flex gap-1.5">
-          <div className="flex-1 min-w-0">
+          <button onClick={() => setKitEditor(e => ({ ...e, [team]: e[team] ? "" : "top" }))} aria-expanded={view !== ""} aria-label={`${call}'s kit`} title="Change the kit"
+            className="rounded-full flex-shrink-0" style={{ padding: 2, border: `2px solid ${view ? ACCENT_SOLID : "transparent"}`, background: "transparent", cursor: "pointer" }}>
+            <KitDisc id={`${team}-head`} size={24} pat={k.pat} c1={k.c1} c2={k.c2} />
+          </button>
+          <span className="flex-1 min-w-0 truncate text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>{call}</span>
+          <div style={{ width: 104, flexShrink: 0 }}>
             <FormationPicker label={label} value={(team === "home" ? homeFormation : awayFormation) || "4-3-3"} onChange={v => setTeamFormation(team, v)} />
           </div>
+        </div>
+        <div className="flex gap-1.5">
           {there ? (
             <button onClick={() => openNames(team)} aria-pressed={namesFor === team}
-              className="px-3 rounded text-xs font-semibold transition-colors"
-              style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${namesFor === team ? ACCENT_SOLID : DS_BORDER}` }}>Names</button>
+              className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors" style={{ ...btn, borderColor: namesFor === team ? ACCENT_SOLID : DS_BORDER }}>Names</button>
           ) : (
-            <button onClick={() => addTeam(team)} title={`Add the ${label.toLowerCase()} team`}
-              className="px-3 rounded text-xs font-semibold hover:brightness-110"
-              style={{ background: k.c1, color: inkOn(k.c1), border: `1px solid ${DS_BORDER}` }}>+ {label}</button>
+            <button onClick={() => addTeam(team)} title={`Add ${call} in ${(team === "home" ? homeFormation : awayFormation) || "4-3-3"}`}
+              className="flex-1 py-1.5 rounded text-xs font-semibold hover:brightness-110" style={{ background: k.c1, color: inkOn(k.c1), border: `1px solid ${DS_BORDER}` }}>+ Add {call}</button>
           )}
+          <button onClick={() => setPasteFor(team)} className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110" style={btn}>Drop the XI</button>
         </div>
-        <button onClick={() => setPasteFor(team)}
-          className="self-start text-xs font-semibold hover:underline" style={{ color: ACCENT_TEXT, background: "transparent", border: "none", padding: 0 }}>Drop the XI</button>
         {!there && squads.length > 0 && (
           <select value="" aria-label="Saved squad"
             onChange={e => { const q = squads.find(x => x.id === e.target.value); if (q) { applyLineup(team, q.players, q); setSquadId(q.id) } }}
-            className="rounded px-2 py-1 text-xs outline-none"
-            style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
+            className="rounded px-2 py-1 text-xs outline-none" style={btn}>
             <option value="">Or add a saved squad…</option>
             {squads.map(q => <option key={q.id} value={q.id}>{q.name} ({q.players.length})</option>)}
           </select>
         )}
-        <p className="text-xs" style={{ color: TEXT_MUTED }}>Kit · {match ? match.name : "Your own"}</p>
-        <div className="flex flex-wrap" style={{ gap: 3 }}>
-          {shown.map(x => {
-            const on = match?.id === x.id
-            return (
-              <button key={x.id} title={x.name} aria-label={`${label} kit: ${x.name}`} aria-pressed={on} onClick={() => applyTeamKit(team, x)}
-                className="rounded-full transition-transform hover:scale-110"
-                style={{ padding: 2, border: `2px solid ${on ? ACCENT_SOLID : "transparent"}`, background: "transparent" }}>
-                <KitDisc id={`${team}-${x.id}`} size={20} pat={x.pat} c1={x.c1} c2={x.c2} />
-              </button>
-            )
-          })}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {link(view === "more" ? "Fewer kits" : `More kits (${KITS.length})`, "more")}
-          <span className="text-xs" style={{ color: TEXT_MUTED }}>·</span>
-          {link("Make your own", "own")}
-        </div>
-        {view === "own" && (
-          <div className="flex flex-col gap-2.5">
-            <ColorPicker label="Main colour" colors={SWATCHES} selected={k.c1}
-              onSelect={c => applyTeamKit(team, { ...k, c1: c, num: k.pat === "solid" ? inkOn(c) : k.num }, `${team}Colour`)} />
-            <PatternRow value={k.pat}
-              onChange={pt => applyTeamKit(team, { ...k, pat: pt, c2: pt !== "solid" && k.c2 === k.c1 ? (k.c1 === "#ffffff" ? "#111111" : "#ffffff") : k.c2 })} />
-            {k.pat !== "solid" && (
-              <ColorPicker label="Second colour" colors={SWATCHES} selected={k.c2} onSelect={c => applyTeamKit(team, { ...k, c2: c }, `${team}Second`)} />
+        {view !== "" && (
+          <div className="flex flex-col gap-2 pt-1">
+            <p className="text-xs" style={{ color: TEXT_MUTED }}>Kit · {match ? match.name : "Your own"}</p>
+            <div className="flex flex-wrap" style={{ gap: 3 }}>
+              {shown.map(x => {
+                const on = match?.id === x.id
+                return (
+                  <button key={x.id} title={x.name} aria-label={`${label} kit: ${x.name}`} aria-pressed={on} onClick={() => applyTeamKit(team, x)}
+                    className="rounded-full transition-transform hover:scale-110"
+                    style={{ padding: 2, border: `2px solid ${on ? ACCENT_SOLID : "transparent"}`, background: "transparent" }}>
+                    <KitDisc id={`${team}-${x.id}`} size={20} pat={x.pat} c1={x.c1} c2={x.c2} />
+                  </button>
+                )
+              })}
+            </div>
+            <div className="flex items-center gap-1.5">
+              {link(view === "more" ? "Fewer kits" : `More kits (${KITS.length})`, "more")}
+              <span className="text-xs" style={{ color: TEXT_MUTED }}>·</span>
+              {link("Make your own", "own")}
+            </div>
+            {view === "own" && (
+              <div className="flex flex-col gap-2.5">
+                <ColorPicker label="Main colour" colors={SWATCHES} selected={k.c1}
+                  onSelect={c => applyTeamKit(team, { ...k, c1: c, num: k.pat === "solid" ? inkOn(c) : k.num }, `${team}Colour`)} />
+                <PatternRow value={k.pat}
+                  onChange={pt => applyTeamKit(team, { ...k, pat: pt, c2: pt !== "solid" && k.c2 === k.c1 ? (k.c1 === "#ffffff" ? "#111111" : "#ffffff") : k.c2 })} />
+                {k.pat !== "solid" && (
+                  <ColorPicker label="Second colour" colors={SWATCHES} selected={k.c2} onSelect={c => applyTeamKit(team, { ...k, c2: c }, `${team}Second`)} />
+                )}
+                <ColorPicker label="Number colour" colors={SWATCHES} selected={k.num} onSelect={c => applyTeamKit(team, { ...k, num: c }, `${team}Number`)} />
+              </div>
             )}
-            <ColorPicker label="Number colour" colors={SWATCHES} selected={k.num} onSelect={c => applyTeamKit(team, { ...k, num: c }, `${team}Number`)} />
+            <p className="text-xs" style={{ color: TEXT_MUTED }}>Kits are named by colour only. PitchStudio is not affiliated with any club, league or player.</p>
           </div>
         )}
         {namesFor === team && there && (
@@ -3818,27 +3807,12 @@ function TacticsBoard() {
             <TeamSheet rows={sheetRows(team)} color={team === "home" ? { bg: homeColor, fg: homeNum } : { bg: awayColor, fg: awayNum }}
               onPick={setSheetHl} onChange={sheetEdit} />
             <button onClick={() => startNaming(sheetRows(team)[0]?.id)}
-              className="py-1.5 rounded text-xs font-semibold hover:brightness-110 flex items-center justify-center gap-1.5"
-              style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}><TextCursorInput size={13} /> Type them on the pitch (N)</button>
-            <button onClick={() => setPasteOpen(v => !v)} aria-expanded={pasteOpen}
-              className="text-xs font-semibold text-left hover:underline" style={{ color: TEXT_MUTED, background: "transparent", border: "none", padding: 0 }}>
-              {pasteOpen ? "Hide the paste box" : "Paste a list instead"}
-            </button>
-            {pasteOpen && <>
-            <textarea value={lineupText} onChange={e => setLineupText(e.target.value)} rows={7} aria-label="Lineup names"
-              placeholder={"One per line or with commas: goalkeeper first, then each line right to left. A shirt number next to a name is used too."}
-              className="rounded px-2 py-1.5 text-xs outline-none resize-y"
-              style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-            <button disabled={!lineupText.trim()} onClick={() => applyLineup(team, parseLineup(lineupText))}
-              className="py-1.5 rounded text-xs font-semibold hover:brightness-110"
-              style={{ background: ACCENT_SOLID, color: ACCENT_INK, opacity: lineupText.trim() ? 1 : 0.4 }}>Name {call}</button>
-            </>}
+              className="py-1.5 rounded text-xs font-semibold hover:brightness-110 flex items-center justify-center gap-1.5" style={btn}><TextCursorInput size={13} /> Type them on the pitch (N)</button>
             {squads.length > 0 && (
               <div className="flex gap-1.5">
                 <select value="" aria-label="Saved squad"
                   onChange={e => { const q = squads.find(x => x.id === e.target.value); if (q) { applyLineup(team, q.players, q); setSquadId(q.id); setNamesFor(null) } }}
-                  className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none"
-                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
+                  className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none" style={btn}>
                   <option value="">Use a saved squad…</option>
                   {squads.map(q => <option key={q.id} value={q.id}>{q.name} ({q.players.length})</option>)}
                 </select>
@@ -3848,11 +3822,10 @@ function TacticsBoard() {
                 </button>
               </div>
             )}
-            <button onClick={() => saveSquad(team)}
+            <button onClick={() => saveSquad(team)} title="Keeps the names, numbers and kit in your account, for any board on any device"
               className="text-xs font-semibold text-left hover:underline" style={{ color: TEXT_MUTED, background: "transparent", border: "none", padding: 0 }}>
               Save {call} as a squad
             </button>
-            <p className="text-xs" style={{ color: TEXT_MUTED }}>A squad keeps the names, numbers and kit in your account, for any board on any device.</p>
           </div>
         )}
       </div>
@@ -3936,7 +3909,7 @@ function TacticsBoard() {
       } else if (team === "home") setHomeShape(shape)
       else setAwayShape(shape)
     }
-    setPlayers(ball === "none" ? list : easeApart(list))
+    setPlayers(easeApart(list)) // two lineups as written can stand on the same spots: never on top of each other
     ;(window as any).posthog?.capture("possession_set", { ball })
   }
   /** A team's formation: a team on the board moves into it straight away. One undo step. */
@@ -3947,7 +3920,7 @@ function TacticsBoard() {
     const shape = shapeFor(team, ballSide)
     if (players.some(p => teamOf(p) === team)) {
       const list = placeTeam(players, f, team, shape)
-      setPlayers(shape === "base" ? list : easeApart(list))
+      setPlayers(easeApart(list))
     }
     recordFormation(team, f.name, shape)
     ;(window as any).posthog?.capture("formation_used", { formation: f.name, shape })
@@ -3957,7 +3930,7 @@ function TacticsBoard() {
     const f = formationFor(team), shape = shapeFor(team, ballSide)
     undoPoint()
     const list = placeTeam(players, f, team, shape)
-    setPlayers(shape === "base" ? list : easeApart(list))
+    setPlayers(easeApart(list))
     recordFormation(team, f.name, shape)
     ;(window as any).posthog?.capture("formation_used", { formation: f.name, shape })
   }
@@ -3969,14 +3942,15 @@ function TacticsBoard() {
     const spot = matchPoints(at, shapePositions(f, shape)), rank = new Map(sheetOrder(f.positions).map((j, k) => [j, k]))
     return mine.map((p, i) => ({ p, k: spot[i] < 0 ? 100 + i : rank.get(spot[i])! })).sort((a, b) => a.k - b.k).map(e => e.p)
   }
-  /** Names a team from a pasted list or a saved squad (a squad also brings its kit and team name). A team that isn't on the board yet is added first. One undo step. */
-  const applyLineup = (team: "home" | "away", entries: { name: string; num?: string }[], squad?: Squad) => {
+  /** Names a team from a pasted list or a saved squad (a squad also brings its kit and team name). A team that isn't on the board yet is added first,
+   *  in the formation given (or its own). One undo step. */
+  const applyLineup = (team: "home" | "away", entries: { name: string; num?: string }[], squad?: Squad, formation?: string) => {
     if (!entries.length) return
     undoPoint()
     let list = players, { f, shape } = formationOf(team)
     if (!list.some(p => teamOf(p) === team)) {
-      f = formationFor(team); shape = shapeFor(team, ballSide)
-      list = placeTeam(list, f, team, shape)
+      f = FORMATIONS.find(x => x.name === formation) ?? formationFor(team); shape = shapeFor(team, ballSide)
+      list = easeApart(placeTeam(list, f, team, shape))
       recordFormation(team, f.name, shape)
     }
     const order = lineupOf(list, team, f, shape)
@@ -4001,7 +3975,7 @@ function TacticsBoard() {
     const known = FORMATIONS.find(x => x.name === news.formation)
     const f = known ?? formationFor(team), shape = shapeFor(team, ballSide)
     let list = placeTeam(players, f, team, shape)
-    if (shape !== "base") list = easeApart(list)
+    list = easeApart(list)
     recordFormation(team, f.name, shape)
     const order = lineupOf(list, team, f, shape)
     const named = new Map(order.slice(0, news.names.length).map((p, i) => [p.id, news.names[i]]))
@@ -4025,7 +3999,7 @@ function TacticsBoard() {
       const known = wrote ? FORMATIONS.find(x => x.name === news.formation) : undefined
       const f = known ?? formationFor(team), shape = shapeFor(team, ballSide)
       list = placeTeam(list, f, team, shape)
-      if (shape !== "base") list = easeApart(list)
+      list = easeApart(list)
       recordFormation(team, f.name, shape)
       const order = lineupOf(list, team, f, shape)
       const byId = new Map(order.map((q, i) => [q.id, news.names[i]]))
@@ -4065,6 +4039,28 @@ function TacticsBoard() {
     const sq: Squad = { id: uid(), name: teamName || (team === "home" ? "Home squad" : "Away squad"), teamName, kit: kitOf(team), players: order.map(p => ({ name: p.name, num: p.num })) }
     const next = [...squads.filter(x => x.name !== sq.name), sq]
     setSquads(next); writeSquads(next, authUser?.id); setSquadId(sq.id)
+  }
+  /** Same XI: the last XI you saved on a board (names, numbers, kit and formation), kept on this device, so next week's board starts from it.
+   *  Kept when a board with at least nine of your team named is saved. */
+  const xiKey = (id: string) => `ps-last-xi-${id}`
+  const [lastXI, setLastXI] = useState<(Squad & { formation: string }) | null>(null)
+  useEffect(() => {
+    if (!authUser) return
+    try { const v = JSON.parse(localStorage.getItem(xiKey(authUser.id)) || "null"); const q = goodSquads([v])[0]; setLastXI(q && typeof v.formation === "string" ? { ...q, formation: v.formation } : null) } catch { setLastXI(null) }
+  }, [authUser?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const rememberXI = (userId: string) => {
+    const { f, shape } = formationOf("home")
+    const order = lineupOf(players, "home", f, shape)
+    if (order.filter(p => p.name.trim() && !POS_CODES.has(p.name.trim())).length < 9) return
+    const teamName = homeName.trim()
+    const xi = { id: "last-xi", name: teamName || "Your XI", teamName, kit: kitOf("home"), formation: f?.name ?? "4-3-3", players: order.map(p => ({ name: POS_CODES.has(p.name.trim()) ? "" : p.name, num: p.num })) }
+    try { localStorage.setItem(xiKey(userId), JSON.stringify(xi)) } catch { /* storage full: Same XI just won't update */ }
+    setLastXI(xi)
+  }
+  const applyLastXI = () => {
+    if (!lastXI) return
+    applyLineup("home", lastXI.players, lastXI, lastXI.formation)
+    ;(window as any).posthog?.capture("same_xi_used", { formation: lastXI.formation })
   }
   const deleteSquad = (id: string) => {
     const next = squads.filter(x => x.id !== id)
@@ -4107,13 +4103,8 @@ function TacticsBoard() {
     undoPoint("sheet:" + id + Object.keys(patch).join())
     setPlayers(ps => ps.map(p => (p.id === id ? { ...p, ...(patch.name !== undefined ? { name: patch.name.slice(0, 30) } : {}), ...(patch.num !== undefined ? { num: patch.num } : {}) } : p)))
   }
-  /** Opens a team's names, filled in with the team as it stands: number and name, goalkeeper first */
-  const openNames = (team: "home" | "away") => {
-    if (namesFor === team) { setNamesFor(null); return }
-    const { f, shape } = formationOf(team)
-    setLineupText(lineupOf(players, team, f, shape).map(p => `${p.num} ${p.name}`.trim()).join(String.fromCharCode(10))) // one player per line
-    setNamesFor(team)
-  }
+  /** Opens (or closes) a team's sheet: every player's number and name, goalkeeper first */
+  const openNames = (team: "home" | "away") => setNamesFor(n => (n === team ? null : team))
 
   /* ── SVG pointer events (unifies mouse, touch, and pen) ── */
   const onSVGMouseMove = useCallback((e: React.PointerEvent) => {
@@ -4160,61 +4151,13 @@ function TacticsBoard() {
     }))
     else if (d.kind === "resizePlayer") setPlayers(p => p.map(pl => pl.id === d.id ? { ...pl, scale: Math.max(0.5, (Math.hypot(x - pl.x, y - pl.y) - d.ox) / pieceBase(pl)) } : pl)) // the handle stays under the cursor (ox = where on the handle you grabbed it)
     else if (d.kind === "resizeImage") setImages(i => i.map(im => im.id === d.id ? { ...im, width: Math.max(20, x - im.x), height: Math.max(20, y - im.y) } : im))
-    else if (d.kind === "resizePitch" && pitchDragRef.current) {
-      // the corner you hold follows the pointer and the opposite corner stays where it is; the pitch keeps its shape and stays on the board
-      const ps = pitchDragRef.current, r0 = pitchRect(ps.geo, 0, 0, PW, PH), w1 = r0.w / ps.s, a = r0.h / r0.w
-      const right = d.id.endsWith("r"), bottom = d.id.includes("-b")
-      const ax = right ? r0.x : r0.x + r0.w, ay = bottom ? r0.y : r0.y + r0.h
-      const most = Math.min(right ? CW - ax : ax, (bottom ? CH - ay : ay) / a)
-      const w = Math.max(w1 * 0.3, Math.min(most, Math.max(right ? x - ax : ax - x, ((bottom ? y - ay : ay - y)) / a)))
-      const left = right ? ax : ax - w, top = bottom ? ay : ay - w * a, base = pitchGeo(ps.geo.v, w / w1, 0, 0)
-      reshapePitch(ps, w / w1, left - base.ox, top - base.oy)
-    }
-    else if (d.kind === "movePitch" && pitchDragRef.current) {
-      const ps = pitchDragRef.current, r0 = pitchRect(ps.geo, 0, 0, PW, PH)
-      const nx = Math.max(0, Math.min(CW - r0.w, r0.x + x - d.ox)), ny = Math.max(0, Math.min(CH - r0.h, r0.y + y - d.oy))
-      reshapePitch(ps, ps.s, ps.offX + nx - r0.x, ps.offY + ny - r0.y)
-    }
   }, [svgXY, shapeKind])
 
   // Ends a move, a drag or a box-select wherever you let go, even off the board (it used to leave the piece stuck to the pointer)
-  /** Puts the pitch at a new size and place; everything on it goes with it (worked out from the snapshot taken when the drag began, so nothing drifts) */
-  const reshapePitch = (snap: PitchSnap, s: number, offX: number, offY: number) => {
-    const from = snap.geo, to = pitchGeo(from.v, s, offX, offY), k = to.sc / from.sc
-    const T = (x: number, y: number) => { const q = toPitch(from, x, y); return toCanvas(to, q.x, q.y) }
-    const r0 = pitchRect(from, 0, 0, PW, PH)
-    const on = (x: number, y: number) => x > r0.x - 40 && x < r0.x + r0.w + 40 && y > r0.y - 40 && y < r0.y + r0.h + 40 // on the pitch (or just off it)
-    const mP = (p: Player) => (on(p.x, p.y) ? { ...p, ...T(p.x, p.y) } : p)
-    const mA = (a: Arrow) => { if (!on(a.x1, a.y1) && !on(a.x2, a.y2)) return a; const a1 = T(a.x1, a.y1), a2 = T(a.x2, a.y2), c = T(a.cpx, a.cpy); return { ...a, x1: a1.x, y1: a1.y, x2: a2.x, y2: a2.y, cpx: c.x, cpy: c.y } }
-    const mT = (tb: TextBox) => { const h = textBoxH(tb); if (!on(tb.x + tb.width / 2, tb.y + h / 2)) return tb; const c = T(tb.x + tb.width / 2, tb.y + h / 2); return { ...tb, x: c.x - tb.width / 2, y: c.y - h / 2 } }
-    const mS = (sh: Shape): Shape => {
-      if (sh.kind === "polygon") return sh.pts.some(([x, y]) => on(x, y)) ? { ...sh, pts: sh.pts.map(([x, y]) => { const q = T(x, y); return [q.x, q.y] as [number, number] }) } : sh
-      if (!on(sh.x + sh.w / 2, sh.y + sh.h / 2)) return sh
-      const c = T(sh.x + sh.w / 2, sh.y + sh.h / 2), w = sh.w * k, h = sh.h * k
-      return { ...sh, x: c.x - w / 2, y: c.y - h / 2, w, h }
-    }
-    const mI = (im: UploadedImage) => { if (im.layer === "background" || !on(im.x + im.width / 2, im.y + im.height / 2)) return im; const c = T(im.x + im.width / 2, im.y + im.height / 2); return { ...im, x: c.x - im.width / 2, y: c.y - im.height / 2 } }
-    setPlayers(snap.players.map(mP)); setArrows(snap.arrows.map(mA)); setTexts(snap.texts.map(mT)); setShapes(snap.shapes.map(mS)); setImages(snap.images.map(mI))
-    if (snap.steps.length) setSteps(snap.steps.map(f => ({ ...f, players: f.players.map(mP), arrows: f.arrows.map(mA), texts: f.texts.map(mT), shapes: f.shapes.map(mS) })))
-    setPitchScale(s); setPitchOffX(offX); setPitchOffY(offY)
-  }
-  const pitchSnap = (): PitchSnap => ({ geo: geoRef.current, s: pitchScale, offX: pitchOffX, offY: pitchOffY, players, arrows, texts, shapes, images, steps })
-  /** The biggest the pitch can be and still fit on the board */
-  const maxPitch = () => { const g = geoRef.current, r0 = pitchRect(g, 0, 0, PW, PH), w1 = r0.w / pitchScale, h1 = r0.h / pitchScale; return Math.min(CW / w1, CH / h1) }
-  /** A new size from the slider or Reset: about the pitch's centre, kept on the board */
-  const sizePitch = (s: number, centre = false) => {
-    const snap = pitchSnap(), r0 = pitchRect(snap.geo, 0, 0, PW, PH), sc = Math.max(0.3, Math.min(maxPitch(), s))
-    const w = (r0.w / snap.s) * sc, h = (r0.h / snap.s) * sc
-    const cx = centre ? CW / 2 : r0.x + r0.w / 2, cy = centre ? CH / 2 : r0.y + r0.h / 2
-    const left = Math.max(0, Math.min(CW - w, cx - w / 2)), top = Math.max(0, Math.min(CH - h, cy - h / 2)), base = pitchGeo(snap.geo.v, sc, 0, 0)
-    reshapePitch(snap, sc, left - base.ox, top - base.oy)
-  }
-
   const endDrag = () => {
     const m = moveRef.current
     if (dragRef.current?.kind === "move" && m && !m.live && m.keep) setSelection([m.item]) // a plain click on one of several selected pieces selects just that one
     dragRef.current = null; moveRef.current = null; dragStartedRef.current = false
-    setHeldFrame(null); pitchDragRef.current = null
     const mq = marqueeRef.current
     marqueeRef.current = null
     if (mq && marquee) {
@@ -4390,10 +4333,10 @@ function TacticsBoard() {
   }
 
   /* ── Export ── */
-  /** Before an export: a board in the editorial frame takes its issue number from your account, once, and keeps it.
+  /** Before an export: a board with its issue number on takes the number from your account, once, and keeps it.
    *  If the number can't be fetched, this export goes out without one rather than with a wrong one. */
   const numberBoard = async () => {
-    if (!editorial || !showEdition || issueNo || !authUser) return
+    if (!showEdition || issueNo || !authUser) return
     const n = await takeIssue(authUser.id)
     if (n) { setIssueNo(n); setIssueDay(dayStamp()); setNextIssue(n + 1); setNoIssue(false) } else setNoIssue(true)
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
@@ -4451,6 +4394,7 @@ function TacticsBoard() {
     finally { setSelection(keepSelection); setNoIssue(false) }
   }
   useEffect(() => { if (!exportNote) return; const t = setTimeout(() => setExportNote(""), 3200); return () => clearTimeout(t) }, [exportNote])
+  useEffect(() => { if (!cleared) return; const t = setTimeout(() => setCleared(0), 6000); return () => clearTimeout(t) }, [cleared])
 
   /* ── Steps ── */
   const playRaf = useRef(0) // the animation frame while the move plays on the board
@@ -4661,20 +4605,23 @@ function TacticsBoard() {
   /* ── What the board shows: the live board, or one moment of the move while it plays or is exported ── */
   const view = play && timeline ? viewAt(timeline, play.t) : null
   const shown = view ?? { players, arrows, texts, shapes, customZones, fade: new Map<string, number>() }
-  const legendArrows = stepList.length > 1 ? stepList.flatMap(f => f.arrows) : arrows // the legend covers every step, so it stays put while the move plays
-  const legendGhosts = (stepList.length > 1 ? stepList.flatMap(f => f.players) : players).some(p => p.ghost)
-  /** The part of the pitch in view: all of it, a half or a third */
-  const partRect = (() => {
-    if (focus === "area" && area) return pitchRect(geo, area[0], area[1], area[2], area[3])
-    const part = focus === "half" ? PW / 2 : focus === "third" ? PW / 3 : PW
-    const [x1, x2] = focusEnd === "attack" ? [PW - part, PW] : [0, part]
-    return pitchRect(geo, x1, 0, x2, PH)
-  })()
 
   /* ── The stage: the tools in the dock, zooming into an area, and Present ── */
   const pickTool = (t: Tool) => { setTool(t); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }
   const toolItem = (id: Tool, icon: React.ReactNode, label: string, key: string, tint?: string): DockItem =>
     ({ id, icon, label, key, tint, pressed: tool === id, onClick: () => pickTool(id) })
+  /** Clears the pitch to start again: every piece, line, shape, zone, text, photo on it and step goes. The title, the teams, the score,
+   *  the points and a photo behind the pitch stay, and it's still the same board. One undo step, offered straight away. */
+  const pitchBusy = players.length > 0 || arrows.length > 0 || texts.length > 0 || shapes.length > 0 || customZones.length > 0 || images.some(i => i.layer === "overlay") || stepList.length > 1
+  const clearPitch = () => {
+    if (!pitchBusy) return
+    undoPoint()
+    setPlayers([]); setArrows([]); setTexts([]); setShapes([]); setCustomZones([])
+    setImages(l => l.filter(i => i.layer === "background"))
+    setSteps([]); setStepIdx(0); setSelection([]); setArrowDraft(null); setPolyDraft(null)
+    setCleared(Date.now())
+  }
+  useEffect(() => { if (pitchBusy) setCleared(0) }, [pitchBusy]) // anything new on the pitch (or Undo) ends the message
   const dockGroups: DockItem[][] = [
     [toolItem("select", <MousePointer2 size={19} />, "Select", "V"), toolItem("pan", <Hand size={19} />, "Pan", "H")],
     [toolItem("homePlayer", <UserPlus size={19} />, "Home player", "1", homeColor), toolItem("awayPlayer", <UserPlus size={19} />, "Away player", "2", awayColor),
@@ -4685,7 +4632,8 @@ function TacticsBoard() {
       toolItem("shape", <Pentagon size={19} />, "Shapes", "S"), toolItem("zone", <Square size={19} />, "Zone", "Z"),
       { id: "image", icon: <ImagePlus size={19} />, label: "Upload image", key: "I", onClick: () => fileInputRef.current?.click() }],
     [{ id: "panel", icon: <SlidersHorizontal size={18} />, label: panelOpen ? "Hide the settings" : "Board settings", pressed: panelOpen, onClick: () => setPanelOpen(v => !v) },
-      { id: "help", icon: <HelpCircle size={18} />, label: "Keyboard shortcuts", onClick: () => setShowShortcuts(true) }],
+      { id: "help", icon: <HelpCircle size={18} />, label: "Keyboard shortcuts", onClick: () => setShowShortcuts(true) },
+      { id: "clear", icon: <Trash2 size={18} />, label: "Clear the pitch", tint: "#f87171", disabled: !pitchBusy, onClick: clearPitch }],
   ]
   /** Zooms into the part of the pitch dragged over: at least a fifth of it each way (so pieces stay a sensible size), inside the pitch */
   const pickArea = (r: { x1: number; y1: number; x2: number; y2: number }) => {
@@ -4727,7 +4675,16 @@ function TacticsBoard() {
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
     }
   }, [presenting]) // eslint-disable-line react-hooks/exhaustive-deps
-  const apron = pitchStyle === "classic" ? (pitchColor === "white" ? "#e3e6e0" : "#1a5a2d") : PITCH_LOOKS[pitchStyle].b
+
+  /** A group's head in the Board tab: tap to open or close it */
+  const groupHead = (key: keyof typeof boardGroups, label: string, tour?: string) => (
+    <button data-tour={tour} aria-expanded={boardGroups[key]} onClick={() => setBoardGroups(g => ({ ...g, [key]: !g[key] }))}
+      className="w-full flex items-center gap-2 px-3 transition-colors ps-sec hover:bg-[var(--ps-hover)]"
+      style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}>
+      {boardGroups[key] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+      {label}
+    </button>
+  )
 
   /* ─────────── RENDER ─────────── */
   return (
@@ -4735,25 +4692,21 @@ function TacticsBoard() {
       style={{ fontFamily: "'Inter', sans-serif", background: SURFACE_BASE, color: TEXT_PRIMARY }}>
       <style>{STAGE_CSS + NAMES_CSS + `
         .ps-sec { height: 38px !important; font: 500 12px 'JetBrains Mono', monospace !important; letter-spacing: .16em !important; text-transform: uppercase; }
-        .ps-looks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .ps-looks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
         .ps-looks button { display: flex; flex-direction: column; gap: 5px; padding: 4px 4px 6px; border-radius: 11px; border: 2px solid ${DS_BORDER}; background: ${SURFACE_2}; cursor: pointer; color: ${TEXT_MUTED}; font: 600 12px 'Inter', sans-serif; text-align: left; transition: border-color .15s, color .15s; }
         .ps-looks button svg { width: 100%; height: auto; border-radius: 7px; display: block; }
         .ps-looks button span { padding: 0 3px; }
         .ps-looks button.on { border-color: #7cc4ff; color: ${TEXT_PRIMARY}; }
         .ps-looks button:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }
-        .ps-start-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 10; }
-        .ps-start-ghost { position: absolute; width: min(70%, 820px); opacity: .2; }
-        .ps-start { position: relative; pointer-events: auto; width: min(560px, calc(100% - 32px)); text-align: center; background: rgba(23,24,27,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 20px; padding: 28px 30px 22px; box-shadow: 0 30px 70px -20px rgba(0,0,0,.7); backdrop-filter: blur(6px); }
-        .ps-start-k { margin: 0; font: 500 12px 'JetBrains Mono', monospace; letter-spacing: .16em; text-transform: uppercase; color: ${TEXT_MUTED}; }
-        .ps-start-h { margin: 10px 0 8px; font: 400 clamp(30px, 4vw, 40px)/1.02 'Anton', 'Bebas Neue', sans-serif; letter-spacing: .01em; color: #f5f5f7; }
-        .ps-start-b { margin: 0 auto 18px; max-width: 440px; font-size: 14px; line-height: 1.45; color: ${TEXT_MUTED}; }
-        .ps-start-go { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 26px; border: none; border-radius: 12px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 15px 'Inter', sans-serif; cursor: pointer; transition: transform .15s, filter .15s; }
+        .ps-start { position: absolute; z-index: 10; width: 300px; box-sizing: border-box; text-align: center; background: rgba(23,24,27,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; padding: 18px 18px 14px; box-shadow: 0 24px 60px -20px rgba(0,0,0,.7); backdrop-filter: blur(6px); transform-origin: center; }
+        .ps-start-h { margin: 0 0 12px; font: 400 30px/1 'Anton', 'Bebas Neue', sans-serif; letter-spacing: .02em; color: #f5f5f7; }
+        .ps-start-go { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 20px; border: none; border-radius: 11px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 14px 'Inter', sans-serif; cursor: pointer; transition: transform .15s, filter .15s; }
         .ps-start-go:hover { filter: brightness(1.05); transform: translateY(-1px); }
         .ps-start-go:focus-visible, .ps-start-alt button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-        .ps-start-alt { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
-        .ps-start-alt button { height: 34px; padding: 0 13px; border-radius: 9px; border: 1px solid rgba(255,255,255,.13); background: transparent; color: #c9c9d1; font: 600 12.5px 'Inter', sans-serif; cursor: pointer; transition: border-color .15s, color .15s; }
+        .ps-start-alt { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
+        .ps-start-alt button { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.13); background: transparent; color: #c9c9d1; font: 600 12px 'Inter', sans-serif; cursor: pointer; transition: border-color .15s, color .15s; }
         .ps-start-alt button:hover { border-color: rgba(255,255,255,.3); color: #fff; }
-        .ps-start-tip { margin: 14px 0 0; font-size: 12px; color: #8a8a94; }
+        .ps-start-tip { margin: 10px 0 0; font-size: 12px; color: #8a8a94; }
         .ps-start-tip kbd { font: 500 12px 'JetBrains Mono', monospace; border: 1px solid rgba(255,255,255,.18); border-radius: 4px; padding: 0 5px; }
         [data-theme="light"] .ps-start { background: rgba(255,255,255,.96); border-color: rgba(0,0,0,.1); }
         [data-theme="light"] .ps-start-h { color: #121316; }
@@ -4771,7 +4724,7 @@ function TacticsBoard() {
         .ps-savestate::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: currentColor; opacity: .6; }
         .ps-savestate[data-state="saved"]::before { background: ${ACCENT_SOLID}; opacity: 1; }
         .ps-savestate[data-state="error"] { color: ${DS_ERROR}; }
-        @media (max-width: 600px) { .ps-savestate { display: none; } .ps-start { padding: 22px 18px 18px; } }
+        @media (max-width: 600px) { .ps-savestate { display: none; } }
         @media (prefers-reduced-motion: reduce) { .ps-start-go { transition: none; } }`}</style>
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
 
@@ -4815,11 +4768,19 @@ function TacticsBoard() {
           </div>
         )}
         <div className="flex flex-1 justify-end items-center gap-1.5 min-w-0">
+          {/* New board: a fresh board, one press away */}
+          {authUser && (
+            <button onClick={async () => { if (await confirmLeave()) navigateBoard("/board") }} title="New board" aria-label="New board"
+              className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors hover:brightness-110"
+              style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
+              <Plus size={13} /> <span className="whitespace-nowrap">New</span>
+            </button>
+          )}
           {/* Templates */}
           <button onClick={() => setShowTemplates(true)} title="Templates"
             className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
             style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
-            <BookOpen size={13} /> <span className="hidden min-[1440px]:inline whitespace-nowrap">Templates</span>
+            <BookOpen size={13} /> <span className="hidden min-[1600px]:inline whitespace-nowrap">Templates</span>
           </button>
           {/* My Boards */}
           {authUser && (
@@ -4908,6 +4869,11 @@ function TacticsBoard() {
                     </button>
                   )
                 })}
+                <button role="menuitemcheckbox" aria-checked={endCard} onClick={() => { undoPoint(); setEndCard(v => !v) }} title="Your crest and handle at the end of a GIF or a video"
+                  className="flex items-center justify-between gap-2 px-3 py-2 text-xs hover:bg-[var(--ps-hover)] transition-colors text-left font-semibold"
+                  style={{ borderTop: `1px solid ${DS_BORDER}`, color: TEXT_PRIMARY }}>
+                  End card <span style={{ color: endCard ? ACCENT_TEXT : TEXT_MUTED }}>{endCard ? "On" : "Off"}</span>
+                </button>
               </div>
             )}
           </div>
@@ -4938,7 +4904,6 @@ function TacticsBoard() {
                   ] : []),
                   { label: theme === "night" ? "Day mode" : "Night mode", icon: theme === "night" ? <Sun size={13} /> : <Moon size={13} />, run: toggleTheme },
                   ...(authUser ? [{ label: "Take the tour", icon: <HelpCircle size={13} />, run: () => setShowTour(true) }] : []),
-                  { label: "Clear board", icon: <Trash2 size={13} />, run: () => setShowClearConfirm(true), danger: true },
                   authUser
                     ? { label: "Sign Out", icon: <LogOut size={13} />, run: async () => { if (await confirmLeave()) supabase.auth.signOut() }, danger: true }
                     : { label: "Sign In", icon: <LogIn size={13} />, run: () => navigateBoard("/signin") },
@@ -4956,126 +4921,9 @@ function TacticsBoard() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* ── Icon Rail ── (when the tools are down the side) */}
-        {dock === "side" && !presenting && (
-        <div style={{ width: 52, flexShrink: 0, height: "100%", background: SURFACE_1, borderRight: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 8, paddingBottom: 8 }}>
-          <style>{`
-            .rl-wrap { position: relative; width: 100%; display: flex; justify-content: center; margin-bottom: 2px; }
-            .rl-tip { display: none; position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); background: ${SURFACE_2}; border: 1px solid ${DS_BORDER}; border-radius: 6px; padding: 5px 9px; font-size: 12px; color: ${TEXT_PRIMARY}; white-space: nowrap; z-index: 200; pointer-events: none; font-family: 'Inter', sans-serif; }
-            .rl-wrap:hover .rl-tip { display: block; }
-            @media (max-height: 640px) { .rl-wrap { margin-bottom: 0; } .rl-wrap > button { height: 32px !important; } }
-          `}</style>
-
-          {([
-            { id: "select" as Tool, ic: <MousePointer2 size={17} />, lbl: "Select", sc: "V", tint: TEXT_MUTED as string },
-            { id: "pan" as Tool, ic: <Hand size={17} />, lbl: "Pan", sc: "H", tint: TEXT_MUTED as string },
-          ]).map(btn => (
-            <div key={btn.id} className="rl-wrap">
-              <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
-                onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
-                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? ACCENT_INK : btn.tint, transition: "background 0.12s, color 0.12s" }}
-                onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
-                onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = btn.tint } }}>
-                {btn.ic}
-              </button>
-              <div className="rl-tip">{btn.lbl} <span style={{ opacity: 0.5 }}>{btn.sc}</span></div>
-            </div>
-          ))}
-
-          <div style={{ width: 24, height: 1, background: DS_BORDER, margin: "6px auto" }} />
-
-          {([
-            { id: "homePlayer" as Tool, ic: <UserPlus size={17} />, lbl: "Home player", sc: "1", tint: homeColor },
-            { id: "awayPlayer" as Tool, ic: <UserPlus size={17} />, lbl: "Away player", sc: "2", tint: awayColor },
-            { id: "marker" as Tool, ic: <X size={17} strokeWidth={3} />, lbl: "✕ marker", sc: "X", tint: MARKER_COLOR },
-            { id: "ball" as Tool, ic: <svg width={17} height={17} viewBox="-12 -12 24 24"><BallGlyph r={10} icon /></svg>, lbl: "Ball", sc: "B", tint: TEXT_PRIMARY },
-          ]).map(btn => (
-            <div key={btn.id} className="rl-wrap">
-              <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
-                onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
-                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? ACCENT_INK : btn.tint, transition: "background 0.12s, color 0.12s" }}
-                onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
-                onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = btn.tint } }}>
-                {btn.ic}
-              </button>
-              <div className="rl-tip">{btn.lbl} <span style={{ opacity: 0.5 }}>{btn.sc}</span></div>
-            </div>
-          ))}
-
-          <div style={{ width: 24, height: 1, background: DS_BORDER, margin: "6px auto" }} />
-
-          {([
-            { id: "arrow" as Tool, ic: <ArrowUpRight size={17} />, lbl: "Arrow", sc: "A" },
-            { id: "text" as Tool, ic: <Type size={17} />, lbl: "Text", sc: "T" },
-            { id: "shape" as Tool, ic: <Pentagon size={17} />, lbl: "Shapes", sc: "S" },
-            { id: "zone" as Tool, ic: <Square size={17} />, lbl: "Zone", sc: "Z" },
-          ]).map(btn => (
-            <div key={btn.id} className="rl-wrap">
-              <button aria-label={btn.lbl} aria-pressed={tool === btn.id}
-                onClick={() => { setTool(btn.id); setArrowDraft(null); setPolyDraft(null); shapeDrawRef.current = null; setShapeDraftPreview(null) }}
-                style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: tool === btn.id ? ACCENT_GRADIENT : "transparent", color: tool === btn.id ? ACCENT_INK : TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
-                onMouseEnter={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY } }}
-                onMouseLeave={e => { if (tool !== btn.id) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED } }}>
-                {btn.ic}
-              </button>
-              <div className="rl-tip">{btn.lbl} <span style={{ opacity: 0.5 }}>{btn.sc}</span></div>
-            </div>
-          ))}
-
-          <div style={{ width: 24, height: 1, background: DS_BORDER, margin: "6px auto" }} />
-
-          <div className="rl-wrap">
-            <button aria-label="Upload image"
-              onClick={() => fileInputRef.current?.click()}
-              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED }}>
-              <ImagePlus size={17} />
-            </button>
-            <div className="rl-tip">Upload image <span style={{ opacity: 0.5 }}>I</span></div>
-          </div>
-
-          <div style={{ flex: 1 }} />
-
-          <div className="rl-wrap" style={{ marginBottom: 0 }}>
-            <button aria-label={panelOpen ? "Collapse panel" : "Expand panel"}
-              onClick={() => setPanelOpen(v => !v)}
-              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED }}>
-              {panelOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
-            </button>
-            <div className="rl-tip">{panelOpen ? "Collapse panel" : "Expand panel"}</div>
-          </div>
-
-          <div style={{ width: 24, height: 1, background: DS_BORDER, margin: "6px auto" }} />
-
-          <div className="rl-wrap" style={{ marginBottom: 0 }}>
-            <button aria-label="Keyboard shortcuts"
-              onClick={() => setShowShortcuts(true)}
-              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: TEXT_MUTED, transition: "background 0.12s, color 0.12s" }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2; (e.currentTarget as HTMLButtonElement).style.color = TEXT_PRIMARY }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = TEXT_MUTED }}>
-              <HelpCircle size={17} />
-            </button>
-            <div className="rl-tip">Keyboard shortcuts</div>
-          </div>
-          <div className="rl-wrap" style={{ marginBottom: 0, marginTop: 2 }}>
-            <button aria-label="Tools under the board" onClick={() => { setDockPlace("bottom"); saveDock("bottom") }}
-              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: TEXT_MUTED }}>
-              <PanelBottom size={17} />
-            </button>
-            <div className="rl-tip">Tools under the board</div>
-          </div>
-        </div>
-        )}
-
         {panelOpen && !presenting && (
-        <aside className={dock === "bottom" ? "st-glass st-panel" : undefined}
-          data-panel-side={panelSide}
-          style={dock === "bottom"
-            ? { order: panelSide === "right" ? 2 : 0, width: 300, flexShrink: 0, margin: panelSide === "right" ? "12px 12px 12px 0" : "12px 0 12px 12px", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden" }
-            : { order: panelSide === "right" ? 2 : 0, width: 248, flexShrink: 0, height: "100%", background: SURFACE_BASE, [panelSide === "right" ? "borderLeft" : "borderRight"]: `1px solid ${DS_BORDER}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <aside className="st-glass st-panel" data-panel-side={panelSide}
+          style={{ order: panelSide === "right" ? 2 : 0, width: 300, flexShrink: 0, margin: panelSide === "right" ? "12px 12px 12px 0" : "12px 0 12px 12px", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, margin: 10, flexShrink: 0 }}>
           <div style={{ flex: 1, display: "flex", gap: 2, padding: 3, borderRadius: 10, background: SURFACE_2 }}>
             {(["board", "selected"] as const).map(t => (
@@ -5406,8 +5254,10 @@ function TacticsBoard() {
                         onChange={e => updT({ width: +e.target.value })} className="w-full accent-green-400" />
                     </label>
                     <ColorPicker label="Text colour" colors={SWATCHES} selected={selT.fg} onSelect={c => updT({ fg: c })} />
+                    {!selT.noBox && <>
                     <ColorPicker label="Background" colors={SWATCHES} selected={selT.bg} onSelect={c => updT({ bg: c })} allowTransparent={true} />
                     <ColorPicker label="Border" colors={SWATCHES} selected={selT.border} onSelect={c => updT({ border: c })} allowTransparent={true} />
+                    </>}
                     <div className="flex gap-2">
                       <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                         <input type="checkbox" checked={selT.bold} onChange={e => updT({ bold: e.target.checked })} className="accent-green-400" />
@@ -5613,254 +5463,153 @@ function TacticsBoard() {
             )}
           </div>}
 
-          {/* ── BOARD TAB ── (five groups: Frame, Teams, Pitch, Editorial, Animation) */}
+          {/* ── BOARD TAB ── (four groups: Match, Teams, Look, Crop and size) */}
           {sideTab === "board" && <div style={{ flex: 1, overflowY: "auto" }}>
 
-            <button aria-expanded={boardGroups.frame}
-              onClick={() => setBoardGroups(g => ({ ...g, frame: !g.frame }))}
-              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.frame ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Frame
-            </button>
-            {boardGroups.frame && (
-              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <Segmented label="View" value={view3d ? "3d" : "2d"} onChange={v => setView3d(v === "3d")}
-                  options={[["2d", "2D"], ["3d", "3D"]]} />
-                {canvasMode !== "blank" ? (
-                  <>
-                    <Segmented label="Pitch" value={vertical ? "v" : "h"} onChange={v => setOrientation(v === "v")}
-                      options={[["h", "Horizontal"], ["v", "Vertical"]]} />
-                    <Segmented label="Show" value={focus} onChange={v => { if (v === "area" && !area) { startPicking(); return } undoPoint(); setFocus(v) }}
-                      options={[["board", "Whole board"], ["pitch", "Pitch"], ["half", "Half"], ["third", "Third"], ["area", "Area"]]} />
-                    {focus === "area" && (
-                      <button onClick={startPicking} className="self-start text-xs font-semibold" style={{ color: ACCENT_TEXT, background: "none", border: "none", cursor: "pointer", padding: 0 }}>Change the area</button>
-                    )}
-                    {(focus === "half" || focus === "third") && (
-                      <Segmented label="End" value={focusEnd} onChange={v => { undoPoint(); setFocusEnd(v) }}
-                        options={[["attack", "Attacking"], ["defend", "Own"]]} />
-                    )}
-                  </>
-                ) : (
-                  <p className="text-xs" style={{ color: TEXT_MUTED }}>A blank canvas always shows the whole board.</p>
-                )}
-                <Segmented label="Size" value={frameRatio} onChange={v => { undoPoint(); setFrameRatio(v) }}
-                  options={[["auto", "Fit"], ["16:9", "16:9"], ["4:5", "4:5"], ["1:1", "1:1"], ["9:16", "9:16"]]} />
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>What you see is what you export. 16:9 exports 1920×1080, 4:5 1080×1350, 1:1 1080×1080 and 9:16 1080×1920.</p>
-                <Segmented label="Your seal" value={sealSide} onChange={v => { undoPoint(); setSealSide(v) }}
-                  options={[["left", "Bottom left"], ["right", "Bottom right"]]} />
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>Your handle and badge sign every export. The team names and the legend move to the other side.</p>
-              </div>
-            )}
+            {/* Match: the title, who played, the score and the idea under the pitch. All of it sits round the pitch, in every export */}
+            {groupHead("match", "Match")}
+            {boardGroups.match && (() => {
+              const field = { background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }
+              const rows = points.length < MAX_POINTS && (points.length === 0 || points[points.length - 1].trim()) ? [...points, ""] : points
+              const setPoint = (i: number, v: string) => { undoPoint("points"); const next = [...rows]; next[i] = v.slice(0, POINT_MAX); setPoints(next.filter((q, j) => q || j === i).slice(0, MAX_POINTS)) }
+              const team = (t: "home" | "away") => {
+                const k = kitOf(t), home = t === "home"
+                return (
+                  <div className="flex items-center gap-1.5">
+                    <KitDisc id={`m-${t}`} size={18} pat={k.pat} c1={k.c1} c2={k.c2} />
+                    <input value={home ? homeName : awayName} maxLength={30} aria-label={home ? "Your team" : "Opponent"} placeholder={home ? "Your team" : "Opponent"}
+                      onChange={e => { undoPoint(`${t}Name`); (home ? setHomeName : setAwayName)(e.target.value) }}
+                      className="flex-1 min-w-0 rounded px-2 py-1.5 text-xs outline-none" style={field} />
+                    <input value={home ? homeScore : awayScore} maxLength={3} inputMode="numeric" aria-label={home ? "Your team's goals" : "Opponent's goals"} placeholder="–"
+                      onChange={e => { undoPoint(`${t}Score`); (home ? setHomeScore : setAwayScore)(e.target.value.replace(/[^0-9]/g, "")) }}
+                      className="w-10 rounded px-1 py-1.5 text-xs outline-none text-center font-bold" style={field} />
+                  </div>
+                )
+              }
+              return (
+                <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
+                  <label className="flex flex-col gap-1 text-xs" style={{ color: TEXT_MUTED }}>Title
+                    <input value={title} maxLength={80} placeholder={autoName.current} onChange={e => setTitle(e.target.value)}
+                      className="rounded px-2 py-1.5 text-sm font-semibold outline-none" style={field} />
+                  </label>
+                  <div className="flex flex-col gap-1.5">
+                    <p className="text-xs" style={{ color: TEXT_MUTED }}>Teams and score</p>
+                    {team("home")}
+                    {team("away")}
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <p className="text-xs" style={{ color: TEXT_MUTED }}>Notes under the pitch</p>
+                    {rows.map((v, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <b className="text-xs" style={{ fontFamily: "'JetBrains Mono',monospace", color: v ? ACCENT_TEXT : TEXT_MUTED, width: 18 }}>{String(i + 1).padStart(2, "0")}</b>
+                        <input value={v} maxLength={POINT_MAX} aria-label={`Note ${i + 1}`} placeholder={i === 0 ? "What should people see? One line." : "Add a note"}
+                          onChange={e => setPoint(i, e.target.value)} className="flex-1 min-w-0 rounded px-2 py-1.5 text-xs outline-none" style={field} />
+                      </div>
+                    ))}
+                  </div>
+                  <Segmented label={issueNo ? `Issue number · this board is ${issueLabel(issueNo)}` : nextIssue ? `Issue number · its first export becomes ${issueLabel(nextIssue)}` : "Issue number · given at its first export"} value={showEdition ? "on" : "off"} onChange={v => { undoPoint(); setShowEdition(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
+                  <Segmented label="Your seal, under the pitch" value={sealSide} onChange={v => { undoPoint(); setSealSide(v) }}
+                    options={[["left", "Left"], ["right", "Right"]]} />
+                </div>
+              )
+            })()}
 
-            <button data-tour="teams" aria-expanded={boardGroups.teams}
-              onClick={() => setBoardGroups(g => ({ ...g, teams: !g.teams }))}
-              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.teams ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Teams
-            </button>
+            {/* Teams: who's on the ball, each team's kit, formation and names, and how the names look on the pieces */}
+            {groupHead("teams", "Teams", "teams")}
             {boardGroups.teams && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <div>
-                  <Segmented label="Who has the ball?" value={ballSide} onChange={setBall}
-                    options={[["home", "Home"], ["away", "Away"], ["none", "Neither"]]} />
-                  <p className="text-xs mt-1.5" style={{ color: TEXT_MUTED }}>The team on the ball spreads out and the other drops into its block. Neither shows both lineups as written.</p>
+                <div title="The team on the ball spreads out and the other drops into its block. Neither shows both lineups as written.">
+                  <Segmented label="On the ball" value={ballSide} onChange={setBall}
+                    options={[["home", (homeName.trim() || "Home").slice(0, 14)], ["away", (awayName.trim() || "Away").slice(0, 14)], ["none", "Neither"]]} />
                 </div>
                 {teamBlock("home")}
                 {teamBlock("away")}
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input type="checkbox" checked={showPlayerLabels} onChange={e => { undoPoint(); setShowPlayerLabels(e.target.checked) }} className="accent-green-400" />
-                  <span style={{ color: TEXT_PRIMARY }}>Show names and numbers</span>
-                </label>
-                <Segmented label="Label size" value={labelSize} onChange={v => { undoPoint(); setLabelSize(v) }}
-                  options={[["standard", "Standard"], ["large", "Large"], ["xl", "Extra large"]]} />
-                <Segmented label="Names" value={nameStyle} onChange={v => { undoPoint(); setNameStyle(v) }}
-                  options={[["halo", "Outline"], ["chip", "Chip"]]} />
-                <Segmented label="Pieces" value={tokenStyle} onChange={v => { undoPoint(); setTokenStyle(v) }}
-                  options={[["classic", "Detailed"], ["minimal", "Minimal"]]} />
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>Kits are named by colour only. PitchStudio is not affiliated with any club, league or player.</p>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs" style={{ color: TEXT_MUTED }}>Names on the pieces</p>
+                    <button onClick={() => { undoPoint(); setShowPlayerLabels(v => !v) }} aria-pressed={showPlayerLabels}
+                      className="px-2 py-0.5 rounded text-xs font-semibold transition-colors"
+                      style={{ background: showPlayerLabels ? ACCENT_SOFT : SURFACE_2, color: showPlayerLabels ? ACCENT_TEXT : TEXT_MUTED, border: `1px solid ${showPlayerLabels ? ACCENT_SOLID : DS_BORDER}` }}>{showPlayerLabels ? "Shown" : "Hidden"}</button>
+                  </div>
+                  <div className="flex gap-2">
+                    <div style={{ flex: "0 0 104px" }}>
+                      <Segmented label="" value={labelSize} onChange={v => { undoPoint(); setLabelSize(v) }} options={[["standard", "S"], ["large", "M"], ["xl", "L"]]} />
+                    </div>
+                    <div className="flex-1">
+                      <Segmented label="" value={tokenStyle} onChange={v => { undoPoint(); setTokenStyle(v); setNameStyle(v === "minimal" ? "chip" : "halo") }}
+                        options={[["classic", "Detailed"], ["minimal", "Minimal"]]} />
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
-            <button aria-expanded={boardGroups.pitch}
-              onClick={() => setBoardGroups(g => ({ ...g, pitch: !g.pitch }))}
-              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.pitch ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Pitch
-            </button>
-            {boardGroups.pitch && (
-              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <Segmented label="Canvas" value={canvasMode} onChange={v => { undoPoint(); setCanvasMode(v) }}
-                  options={[["full", "Full pitch"], ["half", "Half pitch"], ["blank", "Blank"]]} />
-                {canvasMode !== "blank" && (
+            {/* Look: the pitch, the colour round it and what's drawn on the grass */}
+            {groupHead("look", "Look")}
+            {boardGroups.look && (() => {
+              const now = pitchStyle === "classic" ? (pitchColor === "white" ? "white" : "grass") : pitchStyle
+              const chip = (on: boolean): React.CSSProperties => ({ background: on ? ACCENT_SOFT : SURFACE_2, color: on ? ACCENT_TEXT : TEXT_PRIMARY, border: `1px solid ${on ? ACCENT_SOLID : DS_BORDER}` })
+              return (
+                <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
                   <div>
-                    <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Pitch look</p>
+                    <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>Pitch</p>
                     <div className="ps-looks" role="radiogroup" aria-label="Pitch look">
-                      {([["classic", "Grass"], ["paper", "Studio paper"], ["night", "Night"], ["cobalt", "Cobalt"]] as const).map(([v, name]) => (
-                        <button key={v} role="radio" aria-checked={pitchStyle === v} className={pitchStyle === v ? "on" : undefined}
-                          onClick={() => { undoPoint(); setPitchStyle(v); setBgColor(v === "classic" ? DEFAULT_BOARD_SETTINGS.bgColor : PITCH_LOOKS[v].bg) }}>
-                          <LookThumb look={v} green={pitchColor !== "white"} />
+                      {([["grass", "Grass"], ["white", "White"], ["paper", "Paper"], ["night", "Night"], ["cobalt", "Cobalt"]] as const).map(([v, name]) => (
+                        <button key={v} role="radio" aria-checked={now === v} className={now === v ? "on" : undefined}
+                          onClick={() => {
+                            undoPoint()
+                            if (v === "grass" || v === "white") { setPitchStyle("classic"); setPitchColor(v === "white" ? "white" : "green"); setBgColor(v === "white" ? "#ffffff" : NEW_BOARD_SETTINGS.bgColor) }
+                            else { setPitchStyle(v); setBgColor(PITCH_LOOKS[v].bg) }
+                          }}>
+                          <LookThumb look={v === "grass" || v === "white" ? "classic" : v} green={v !== "white"} />
                           <span>{name}</span>
                         </button>
                       ))}
                     </div>
-                    {pitchStyle === "paper" && <p className="text-xs mt-1.5" style={{ color: TEXT_MUTED }}>A warm page with thin lines. Turn on the editorial frame for the headline and score.</p>}
                   </div>
-                )}
-                {canvasMode !== "blank" && pitchStyle === "classic" && (
-                  <Segmented label="Pitch colour" value={pitchColor} onChange={v => { undoPoint(); setPitchColor(v) }}
-                    options={[["green", "Green"], ["white", "White lines"]]} />
-                )}
-                <ColorPicker label="Canvas colour" colors={BG_PRESETS} selected={bgColor} onSelect={c => { undoPoint("bgColor"); setBgColor(c) }} />
-                {canvasMode !== "blank" && (
+                  <ColorPicker label="Background" colors={BG_PRESETS} selected={bgColor} onSelect={c => { undoPoint("bgColor"); setBgColor(c) }} />
                   <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-xs" style={{ color: TEXT_MUTED }}>Pitch size</p>
-                      <button onClick={() => { undoPoint(); sizePitch(FIT_SCALE(vertical), true) }}
-                        className="text-xs px-2 py-0.5 rounded hover:bg-[var(--ps-hover)] transition-colors"
-                        style={{ color: TEXT_MUTED }}>Reset</button>
+                    <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>On the grass</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button onClick={() => { undoPoint(); setShow18Zones(v => !v) }} aria-pressed={show18Zones} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold" style={chip(show18Zones)}><Grid3x3 size={13} />18 zones</button>
+                      <button onClick={() => { undoPoint(); setShowLanes(v => !v) }} aria-pressed={showLanes} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold" style={chip(showLanes)}><Rows3 size={13} />Lanes</button>
+                      <button onClick={() => { undoPoint(); setPsMark(v => !v) }} aria-pressed={psMark} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold" style={chip(psMark)}>PS mark</button>
                     </div>
-                    {focus === "board" ? <>
-                    <input type="range" min={30} max={Math.floor(maxPitch() * 100)} value={Math.round(pitchScale * 100)} aria-label="Pitch size"
-                      onChange={e => { undoPoint("pitchScale"); sizePitch(+e.target.value / 100) }} className="w-full accent-green-400" />
-                    <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>{Math.round(pitchScale * 100)}% · or drag a corner of the pitch. Players and lines on it move with it</p>
-                    </> : <p className="text-xs" style={{ color: TEXT_MUTED }}>This view follows the pitch. <button onClick={() => { undoPoint(); setFocus("board") }} className="underline" style={{ color: TEXT_PRIMARY }}>Show the whole board</button> to make the pitch bigger or smaller.</p>}
-                    {focus === "board" && Math.hypot(pitchOffX - centreOff(vertical, pitchScale).x, pitchOffY - centreOff(vertical, pitchScale).y) > 1 && (
-                      <button onClick={() => { undoPoint(); sizePitch(pitchScale, true) }}
-                        className="mt-1.5 w-full py-1 rounded text-xs hover:bg-[var(--ps-hover)] transition-colors"
-                        style={{ color: TEXT_MUTED }}>Re-centre pitch</button>
-                    )}
                   </div>
-                )}
-                {canvasMode !== "blank" ? (
-                  <div className="flex flex-col gap-1.5">
+                  {(bgImages.length > 0 || !pitchVisible) && (
                     <button onClick={() => { undoPoint(); setPitchVisible(v => !v) }} aria-pressed={pitchVisible}
-                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                      style={{ background: pitchVisible ? ACCENT_SOFT : SURFACE_2, borderColor: pitchVisible ? ACCENT_SOLID : DS_BORDER, color: pitchVisible ? ACCENT_SOLID : TEXT_PRIMARY }}>
-                      <span className="flex items-center gap-2">{pitchVisible ? <Eye size={14} /> : <EyeOff size={14} />}Show pitch</span>
-                      <span className="px-1.5 py-0.5 rounded font-bold"
-                        style={{ background: pitchVisible ? ACCENT_SOLID : SURFACE_1, color: pitchVisible ? ACCENT_INK : TEXT_MUTED, fontSize: 12 }}>
-                        {pitchVisible ? "ON" : "OFF"}
-                      </span>
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold" style={chip(pitchVisible)}>
+                      <span className="flex items-center gap-2">{pitchVisible ? <Eye size={14} /> : <EyeOff size={14} />}Pitch over the photo</span>
+                      <span>{pitchVisible ? "On" : "Off"}</span>
                     </button>
-                    <p className="text-xs" style={{ color: TEXT_MUTED }}>Turn it off to see a photo behind the board. Zones and lanes stay.</p>
-                    <Segmented label="PS mark in the grass" value={psMark ? "on" : "off"} onChange={v => { undoPoint(); setPsMark(v === "on") }}
-                      options={[["off", "Off"], ["on", "On"]]} />
-                  </div>
-                ) : (
-                  <p className="text-xs" style={{ color: TEXT_MUTED }}>A blank canvas has no pitch. Pick Full or Half pitch to draw one.</p>
-                )}
-                <button onClick={() => { undoPoint(); setShow18Zones(v => !v) }}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                  style={{ background: show18Zones ? ACCENT_SOFT : SURFACE_2, borderColor: show18Zones ? ACCENT_SOLID : DS_BORDER, color: show18Zones ? ACCENT_SOLID : TEXT_PRIMARY }}>
-                  <span className="flex items-center gap-2"><Grid3x3 size={14} />18 zones</span>
-                  <span className="px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: show18Zones ? ACCENT_SOLID : SURFACE_1, color: show18Zones ? ACCENT_INK : TEXT_MUTED, fontSize: 12 }}>
-                    {show18Zones ? "ON" : "OFF"}
-                  </span>
-                </button>
-                <button onClick={() => { undoPoint(); setShowLanes(v => !v) }}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors"
-                  style={{ background: showLanes ? ACCENT_SOFT : SURFACE_2, borderColor: showLanes ? ACCENT_SOLID : DS_BORDER, color: showLanes ? ACCENT_SOLID : TEXT_PRIMARY }}>
-                  <span className="flex items-center gap-2"><Rows3 size={14} />Lanes</span>
-                  <span className="px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: showLanes ? ACCENT_SOLID : SURFACE_1, color: showLanes ? ACCENT_INK : TEXT_MUTED, fontSize: 12 }}>
-                    {showLanes ? "ON" : "OFF"}
-                  </span>
-                </button>
-                {customZones.length > 0 && (
-                  <button onClick={() => { snapshot(); setCustomZones([]); setSel(null) }}
-                    className="w-full py-1 rounded text-xs hover:bg-red-500/20 transition-colors"
-                    style={{ color: DS_ERROR }}>
-                    Clear all zones ({customZones.length})
-                  </button>
-                )}
-                {images.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase mb-2" style={{ color: TEXT_MUTED, letterSpacing: "0.07em" }}>Images ({images.length})</p>
-                    <div className="flex flex-col gap-1.5">
-                      {images.map(img => (
-                        <div key={img.id} className="flex items-center justify-between rounded px-2 py-1.5 text-xs"
-                          style={{ background: SURFACE_2, border: sel?.id === img.id ? `1px solid ${ACCENT_SOLID}` : "1px solid transparent" }}>
-                          <span style={{ color: TEXT_PRIMARY }} className="truncate">{img.layer === "background" ? "BG Image" : "Overlay"}</span>
-                          <button onClick={() => { snapshot(); setImages(i => i.filter(x => x.id !== img.id)) }}
-                            className="p-0.5 rounded hover:bg-red-500/20 ml-1 flex-shrink-0" style={{ color: DS_ERROR }}>
-                            <X size={11} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )
+            })()}
 
-            <button aria-expanded={boardGroups.editorial}
-              onClick={() => setBoardGroups(g => ({ ...g, editorial: !g.editorial }))}
-              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.editorial ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Editorial
-              {editorial && <span className="ml-auto px-1.5 py-0.5 rounded font-bold" style={{ background: PS_VOLT, color: "#0a0c0f", fontSize: 12, letterSpacing: "0.08em" }}>ON</span>}
-            </button>
-            {boardGroups.editorial && (
+            {/* Crop and size: the part of the pitch on show and the shape of the picture you export */}
+            {groupHead("crop", "Crop and size")}
+            {boardGroups.crop && (
               <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <Segmented label="Editorial frame" value={editorial ? "on" : "off"} onChange={v => { undoPoint(); setEditorial(v === "on") }}
-                  options={[["off", "Off"], ["on", "On"]]} />
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>A headline, score strip, legend, crop marks and an edition number around the board. It's in every export. The headline is the board's title.</p>
-                {editorial && (
-                  <>
-                    <label className="flex flex-col gap-1 text-xs" style={{ color: TEXT_MUTED }}>Kicker
-                      <input value={kicker} maxLength={40} placeholder="TACTICAL BREAKDOWN" onChange={e => { undoPoint("kicker"); setKicker(e.target.value) }}
-                        className="rounded px-2 py-1 text-xs outline-none" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                    </label>
-                    <div>
-                      <p className="text-xs mb-1" style={{ color: TEXT_MUTED }}>Score · {homeName.trim() || "Home"} v {awayName.trim() || "Away"}</p>
-                      <div className="flex gap-1.5">
-                        <input value={homeScore} maxLength={3} aria-label="Home score" placeholder="0" onChange={e => { undoPoint("homeScore"); setHomeScore(e.target.value.replace(/[^0-9]/g, "")) }}
-                          className="w-12 rounded px-2 py-1 text-xs outline-none text-center" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                        <input value={awayScore} maxLength={3} aria-label="Away score" placeholder="0" onChange={e => { undoPoint("awayScore"); setAwayScore(e.target.value.replace(/[^0-9]/g, "")) }}
-                          className="w-12 rounded px-2 py-1 text-xs outline-none text-center" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                        <input value={scoreNote} maxLength={12} aria-label="Score note" placeholder="FT" onChange={e => { undoPoint("scoreNote"); setScoreNote(e.target.value) }}
-                          className="flex-1 min-w-0 rounded px-2 py-1 text-xs outline-none" style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }} />
-                      </div>
-                      <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>Name the teams under Teams to show them in the strip.</p>
-                    </div>
-                    <Segmented label="Legend" value={showLegend ? "on" : "off"} onChange={v => { undoPoint(); setShowLegend(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
-                    <Segmented label="Crop marks" value={cropMarks ? "on" : "off"} onChange={v => { undoPoint(); setCropMarks(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
-                    <Segmented label={issueNo ? `Issue number · this board is ${issueLabel(issueNo)}` : nextIssue ? `Issue number · its first export becomes ${issueLabel(nextIssue)}` : "Issue number · given at its first export"} value={showEdition ? "on" : "off"} onChange={v => { undoPoint(); setShowEdition(v === "on") }} options={[["on", "On"], ["off", "Off"]]} />
-                  </>
+                {/* the top bar has these on a laptop; on a small screen they live here */}
+                <div className="md:hidden flex flex-col gap-3">
+                  <Segmented label="View" value={view3d ? "3d" : "2d"} onChange={v => setView3d(v === "3d")} options={[["2d", "2D"], ["3d", "3D"]]} />
+                  <Segmented label="Pitch" value={vertical ? "v" : "h"} onChange={v => setOrientation(v === "v")} options={[["h", "Flat"], ["v", "Upright"]]} />
+                </div>
+                <Segmented label="Show" value={focus === "board" ? "pitch" : focus} onChange={v => { if (v === "area" && !area) { startPicking(); return } undoPoint(); setFocus(v) }}
+                  options={[["pitch", "Pitch"], ["half", "Half"], ["third", "Third"], ["area", "Area"]]} />
+                {focus === "area" && (
+                  <button onClick={startPicking} className="self-start text-xs font-semibold" style={{ color: ACCENT_TEXT, background: "none", border: "none", cursor: "pointer", padding: 0 }}>Change the area</button>
                 )}
-              </div>
-            )}
-
-            <button aria-expanded={boardGroups.animation}
-              onClick={() => setBoardGroups(g => ({ ...g, animation: !g.animation }))}
-              className="w-full flex items-center gap-2 px-3 transition-colors ps-sec"
-              style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}
-              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = SURFACE_2}
-              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}>
-              {boardGroups.animation ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Animation
-              {stepList.length > 1 && <span className="ml-auto px-1.5 py-0.5 rounded font-bold" style={{ background: PS_VOLT, color: "#0a0c0f", fontSize: 12, letterSpacing: "0.08em" }}>{stepList.length} STEPS</span>}
-            </button>
-            {boardGroups.animation && (
-              <div className="p-3 flex flex-col gap-3" style={{ borderBottom: `1px solid ${DS_BORDER}` }}>
-                <Segmented label="Speed" value={animSpeed} onChange={v => { undoPoint(); setAnimSpeed(v) }}
-                  options={[["slow", "Slow"], ["normal", "Normal"], ["fast", "Fast"]]} />
-                <Segmented label="End card" value={endCard ? "on" : "off"} onChange={v => { undoPoint(); setEndCard(v === "on") }}
-                  options={[["on", "On"], ["off", "Off"]]} />
-                <p className="text-xs" style={{ color: TEXT_MUTED }}>Build a move with Steps under the board. + Step plays the runs and passes you've drawn, so the next step starts where they end. Numbered lines play in order. Play shows the move here; Export makes it a GIF or an MP4 video, with your seal and handle on the end card.</p>
+                {(focus === "half" || focus === "third") && (
+                  <Segmented label="End" value={focusEnd} onChange={v => { undoPoint(); setFocusEnd(v) }}
+                    options={[["attack", "Attacking"], ["defend", "Own"]]} />
+                )}
+                <div>
+                  <Segmented label="Size" value={frameRatio} onChange={v => { undoPoint(); setFrameRatio(v) }}
+                    options={[["auto", "Fit"], ["16:9", "16:9"], ["4:5", "4:5"], ["1:1", "1:1"], ["9:16", "9:16"]]} />
+                  {FRAME_SIZES[frameRatio] && <p className="text-xs mt-1.5" style={{ color: TEXT_MUTED }}>Exports {FRAME_SIZES[frameRatio]![0]} × {FRAME_SIZES[frameRatio]![1]}</p>}
+                </div>
               </div>
             )}
           </div>}
@@ -5898,34 +5647,18 @@ function TacticsBoard() {
           onPointerUp={onCanvasMouseUp}
         >
           <h1 className="sr-only">Tactics Board</h1>
-          {/* Empty board: one clear first move, with a faint finished board behind it to show what you're making */}
-          {players.length === 0 && arrows.length === 0 && texts.length === 0 && shapes.length === 0 && images.length === 0 && customZones.length === 0 && (
-            <div className="ps-start-wrap">
-              <svg className="ps-start-ghost" viewBox="0 0 1050 680" aria-hidden="true" preserveAspectRatio="xMidYMid meet" style={{ color: pitchStyle === "paper" || (pitchStyle === "classic" && pitchColor === "white") ? "#1d1b16" : "#ffffff" }}>
-                <g fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round">
-                  <path d="M451 340L645 127" /><path d="M622 118L661 109L652 147" /><path d="M420 204L546 190" strokeDasharray="14 12" /><path d="M661 571L840 489" strokeDasharray="14 12" />
-                </g>
-                <rect x="378" y="231" width="210" height="218" rx="16" fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeDasharray="12 10" strokeWidth="3" />
-                {[[52, 340], [252, 95], [221, 252], [221, 428], [252, 585], [420, 204], [451, 340], [420, 476], [661, 109], [714, 340], [661, 571]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="20" fill="currentColor" />)}
-              </svg>
-              <div className="ps-start" role="region" aria-label="Start your board">
-                <p className="ps-start-k">Your studio · new board</p>
-                <p className="ps-start-h">START WITH YOUR XI.</p>
-                <p className="ps-start-b">Paste the club's line-up post. All 11 land on the pitch, with the shape, names and numbers. Both teams if the post has both.</p>
-                <button className="ps-start-go" onClick={() => setPasteFor("home")}><UserPlus size={18} /> Drop the XI</button>
-                <div className="ps-start-alt">
-                  {([
-                    { label: "Call the roll", action: () => { addTeam("home"); setTimeout(() => namingRef.current?.(), 80) } },
-                    { label: "Start from a drop", action: () => setShowTemplates(true) },
-                    { label: "Add formation", action: () => addTeam("home") },
-                    { label: "Place a player", action: () => setTool("homePlayer") },
-                    { label: "Draw a zone", action: () => setTool("zone") },
-                  ] as { label: string; action: () => void }[]).map(({ label, action }) => (
-                    <button key={label} onClick={action}>{label}</button>
-                  ))}
-                </div>
-                <p className="ps-start-tip">Press <kbd>⌘V</kbd> any time to drop a line-up. The faint board behind this is what a finished one looks like.</p>
+          {/* Empty board: one small card, right in the middle of the pitch, with the first move on it */}
+          {boardEmpty && startBox && (
+            <div className="ps-start" role="region" aria-label="Start your board" onPointerDown={e => e.stopPropagation()}
+              style={{ left: startBox.x + startBox.w / 2, top: startBox.y + startBox.h / 2, transform: `translate(-50%, -50%) scale(${Math.min(1, (startBox.w - 24) / 300, (startBox.h - 24) / 196)})` }}>
+              <p className="ps-start-h">YOUR XI.</p>
+              <button className="ps-start-go" onClick={() => setPasteFor("home")}><UserPlus size={17} /> Drop the XI</button>
+              <div className="ps-start-alt">
+                {lastXI && <button onClick={applyLastXI} title={`${lastXI.teamName || "Your team"} · ${lastXI.formation}, from your last saved board`}>Same XI</button>}
+                <button onClick={() => { addTeam("home"); setTimeout(() => namingRef.current?.(), 80) }} title="Put your team on in 4-3-3 and type the names one by one">Call the roll</button>
+                <button onClick={() => setShowTemplates(true)} title="Start from a ready-made board">Drops</button>
               </div>
+              <p className="ps-start-tip">or press <kbd>{isMac ? "⌘V" : "Ctrl V"}</kbd> with a line-up copied</p>
             </div>
           )}
 
@@ -5988,12 +5721,7 @@ function TacticsBoard() {
                   viewBox={`${frame.x} ${frame.y} ${frame.w} ${frame.h}`}
                   width={dispW}
                   style={{ display: "block", userSelect: "none", aspectRatio: `${frame.w}/${frame.h}`, touchAction: "none" }}
-                  onPointerMove={e => {
-                    onSVGMouseMove(e)
-                    // the pitch's handles show while the pointer is anywhere over the pitch, players and lines on it included
-                    if (!dragRef.current) { const { x, y } = svgXY(e), r = pitchRect(geoRef.current, 0, 0, PW, PH), m = 34; const inside = x > r.x - m && x < r.x + r.w + m && y > r.y - m - 30 && y < r.y + r.h + m; if (inside !== hoveredPitch) setHoveredPitch(inside) }
-                  }}
-                  onPointerLeave={() => { if (!dragRef.current) setHoveredPitch(false) }}
+                  onPointerMove={onSVGMouseMove}
                   onPointerUp={onSVGMouseUp}
                   onPointerDown={onSVGMouseDown}
                   onClick={onSVGClick as unknown as React.MouseEventHandler<SVGSVGElement>}
@@ -6011,10 +5739,10 @@ function TacticsBoard() {
                   <rect x={Math.min(0, frame.x)} y={Math.min(0, frame.y)}
                     width={Math.max(CW, frame.x + frame.w) - Math.min(0, frame.x)} height={Math.max(CH, frame.y + frame.h) - Math.min(0, frame.y)} fill={bgColor} />
 
-                  {/* 2. Background images (full-canvas fill) */}
+                  {/* 2. Background images: a photo behind the pitch fills the canvas and the frame, wherever the frame reaches */}
                   {bgImages.map(img => (
                     <image key={img.id} href={img.src}
-                      x={0} y={0} width={CW} height={CH}
+                      x={Math.min(0, frame.x)} y={Math.min(0, frame.y)} width={Math.max(CW, frame.x + frame.w) - Math.min(0, frame.x)} height={Math.max(CH, frame.y + frame.h) - Math.min(0, frame.y)}
                       opacity={img.opacity} preserveAspectRatio="xMidYMid slice"
                       // A photo behind the pitch fills the canvas, so pressing on it starts a box-select; a plain click selects it
                       onClick={e => {
@@ -6100,50 +5828,6 @@ function TacticsBoard() {
                       </g>
                     </g>
                   )}
-
-                  {/* Pitch handles — only on hover so they don't show in screenshots */}
-                  {canvasMode !== "blank" && tool === "select" && hoveredPitch && !presenting && focus === "board" && (() => {
-                    const pb = pitchRect(geo, 0, 0, PW, PH)
-                    const ox = pb.x
-                    const oy = pb.y
-                    const pR = ox + pb.w
-                    const pB = oy + pb.h
-                    const hS = 13
-                    const midX = (ox + pR) / 2
-                    const corners = [
-                      { id: "pitch-tl", x: ox, y: oy,  cursor: "nwse-resize" },
-                      { id: "pitch-tr", x: pR, y: oy,  cursor: "nesw-resize" },
-                      { id: "pitch-bl", x: ox, y: pB,  cursor: "nesw-resize" },
-                      { id: "pitch-br", x: pR, y: pB,  cursor: "nwse-resize" },
-                    ]
-                    return (
-                      <>
-                        <rect x={ox} y={oy} width={pb.w} height={pb.h} fill="none" stroke="#fbbf24" strokeWidth={2} strokeDasharray="10 8" opacity={0.75} pointerEvents="none" />
-                        {corners.map(c => (
-                          <g key={c.id} style={{ cursor: c.cursor }}
-                            onPointerDown={e => { e.stopPropagation(); setHeldFrame(frame); pitchDragRef.current = pitchSnap(); dragRef.current = { kind: "resizePitch", id: c.id, ox: 0, oy: 0 } }}>
-                            <rect x={c.x - hS - 8} y={c.y - hS - 8} width={hS * 2 + 16} height={hS * 2 + 16} fill="transparent" />
-                            <rect x={c.x - hS} y={c.y - hS} width={hS * 2} height={hS * 2} rx={5}
-                              fill="#fbbf24" stroke="#0d1117" strokeWidth={2.5} />
-                          </g>
-                        ))}
-                        {/* Move pitch grip — top-centre bar, drag to reposition pitch */}
-                        <g style={{ cursor: "grab" }}
-                          onPointerDown={e => {
-                            e.stopPropagation()
-                            const { x: mx, y: my } = svgXY(e)
-                            setHeldFrame(frame); pitchDragRef.current = pitchSnap()
-                            dragRef.current = { kind: "movePitch", id: "pitch", ox: mx, oy: my }
-                          }}>
-                          <rect x={midX - 30} y={oy - 20} width={60} height={15} rx={7}
-                            fill={ACCENT_SOLID} stroke="#ffffff" strokeWidth={1.5} opacity={0.92} />
-                          {[-12, -4, 4, 12].map(dx => (
-                            <circle key={dx} cx={midX + dx} cy={oy - 12} r={2} fill="#ffffff" opacity={0.65} />
-                          ))}
-                        </g>
-                      </>
-                    )
-                  })()}
 
                   <defs>
                     <clipPath id="half-pitch-clip">
@@ -6487,74 +6171,47 @@ function TacticsBoard() {
                       fill="rgba(215,255,60,0.1)" stroke={ACCENT_SOLID} strokeWidth={1.5} strokeDasharray="5,3" style={{ pointerEvents: "none" }} />
                   )}
 
-                  {/* The step on screen, "2/3" with its note, in the top corner (the editorial frame puts it in its slate) */}
-                  {stepList.length > 1 && !editorial && (
-                    <StepTag x={frame.x + 12 * sealK} y={frame.y + 8 * sealK} k={sealK * 0.85}
-                      n={(view ? view.step : stepIdx) + 1} of={stepList.length} note={(view ? view.note : stepList[stepIdx]?.note ?? "").trim()} fade={view ? view.noteFade : 1} />
+                  {/* The edge of the picture you export, on screen only, when it has a set shape (16:9, 4:5, 1:1, 9:16) */}
+                  {frameRatio !== "auto" && !presenting && !play && !making && (
+                    <rect data-noexport="" x={frame.x} y={frame.y} width={frame.w} height={frame.h} fill="none" stroke={inkOn(bgColor)} strokeOpacity={0.28}
+                      strokeWidth={1.5} strokeDasharray="8 6" vectorEffect="non-scaling-stroke" pointerEvents="none" />
                   )}
-
-                  {/* Team legend: the kit and name of each named team, in the bottom corner the seal doesn't use */}
-                  {!editorial && (homeName.trim() !== "" || awayName.trim() !== "") && (
-                    <g style={{ pointerEvents: "none" }} transform={`translate(${sealSide === "left" ? frame.x + frame.w : frame.x},${frame.y + frame.h}) scale(${sealK})`}>
-                      {(["home", "away"] as const).filter(team => (team === "home" ? homeName : awayName).trim() !== "").map((team, i, arr) => {
-                        const k = kitOf(team)
-                        const toRight = sealSide === "left"
-                        return (
-                          <g key={team} transform={`translate(${toRight ? -30 : 30},${-26 - (arr.length - 1 - i) * 28})`}>
-                            <KitFill cid={`kl-${team}`} r={10} pat={k.pat} c1={k.c1} c2={k.c2} />
-                            <circle r={10} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={1.5} />
-                            <text x={toRight ? -19 : 19} y={1} textAnchor={toRight ? "end" : "start"} dominantBaseline="central" fill="#ffffff" fontSize={17} fontWeight={700}
-                              stroke="rgba(0,0,0,0.85)" strokeWidth={3.5} paintOrder="stroke" strokeLinejoin="round"
-                              style={{ fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                              {(team === "home" ? homeName : awayName).trim()}
-                            </text>
-                          </g>
-                        )
-                      })}
-                    </g>
-                  )}
-
-                  {/* 12. Editorial frame */}
-                  {editorial && (() => {
+                  {/* The part of the pitch on show, for the start card to sit in (nothing is drawn) */}
+                  <rect ref={partBoxRef} data-noexport="" x={partRect.x} y={partRect.y} width={partRect.w} height={partRect.h} fill="none" stroke="none" pointerEvents="none" />
+                  {/* 12. The match line over the pitch: the step and the issue number, the title, the teams and the score */}
+                  {focus !== "pitch" && <PartBand frame={frame} part={partRect} k={sealK} color={bgColor} />}
+                  {(() => {
                     const hk = kitOf("home"), ak = kitOf("away")
-                    const kinds = new Map<string, LegendItem>()
-                    for (const a of legendArrows) {
-                      const kd: LineKind = a.kind ?? (a.dash === "dashed" ? "run" : "pass")
-                      if (!kinds.has(kd)) kinds.set(kd, { kind: kd, color: a.color, label: LINE_KINDS.find(([v]) => v === kd)?.[1] ?? kd })
-                    }
-                    const legend: LegendItem[] = [...kinds.values()]
-                    if (legendGhosts) legend.push({ kind: "ghost", color: "#9ca3af", label: "Was / will be" })
                     return (
-                      <EditorialFrame frame={frame} k={sealK} ink={inkOn(bgColor)} title={edBoard} kicker={kicker.trim()}
-                        strip={edStrip ? { home: { name: homeName, score: homeScore, pat: hk.pat, c1: hk.c1, c2: hk.c2 }, away: { name: awayName, score: awayScore, pat: ak.pat, c1: ak.c1, c2: ak.c2 } } : null}
-                        note={scoreNote.trim()} caption={[]} legend={showLegend ? legend : []} crop={cropMarks} edition={showEdition ? edition : null} legendRight={sealSide === "left"}
-                        step={stepList.length > 1 ? { n: (view ? view.step : stepIdx) + 1, of: stepList.length, note: (view ? view.note : stepList[stepIdx]?.note ?? "").trim(), fade: view ? view.noteFade : 1 } : null}
-                        band={canvasMode !== "blank" && (focus === "half" || focus === "third") ? { color: bgColor, top: Math.min(frame.y + (edStrip && frame.w < 1100 ? 196 : 112) * sealK, partRect.y - 2), bottom: Math.max(frame.y + frame.h - (pointsRoom ? 78 + pointsRoom : 60) * sealK, partRect.y + partRect.h + 2) } : null} />
+                      <MatchHead part={partRect} k={sealK} ink={inkOn(bgColor)} rows={head.top} title={edBoard} narrow={narrowHead}
+                        strip={edStrip ? { home: { name: homeName.trim() || "Home", score: homeScore, pat: hk.pat, c1: hk.c1, c2: hk.c2 }, away: { name: awayName.trim() || "Away", score: awayScore, pat: ak.pat, c1: ak.c1, c2: ak.c2 } } : null}
+                        edition={showEdition ? edition : null}
+                        step={stepList.length > 1 ? { n: (view ? view.step : stepIdx) + 1, of: stepList.length, note: (view ? view.note : stepList[stepIdx]?.note ?? "").trim(), fade: view ? view.noteFade : 1 } : null} />
                     )
                   })()}
 
                   {/* 12b. The idea under the pitch: the points, or the boxes to write them in */}
-                  {notesEditing && !presenting && !play ? (
-                    <NotesEditor points={points} x={frame.x + 36 * sealK} bottom={frame.y + frame.h - 56 * sealK} under={pitchEnd} w={frame.w} k={sealK}
+                  {writingNotes ? (
+                    <NotesEditor points={points} x={notesX} bottom={frame.y + frame.h} under={pitchEnd} w={notesW + 72 * sealK} k={sealK}
                       onChange={p => { undoPoint("points"); setPoints(p) }} onDone={endNotes} />
                   ) : shownPoints.length ? (
-                    <NotesBlock points={shownPoints} x={frame.x + 36 * sealK} bottom={frame.y + frame.h - 56 * sealK} under={pitchEnd} w={frame.w} k={sealK} ink={inkOn(bgColor)} wide={wideNotes}
+                    <NotesBlock points={shownPoints} x={notesX} bottom={frame.y + frame.h} under={pitchEnd} w={notesW + 72 * sealK} k={sealK} ink={inkOn(bgColor)} wide={wideNotes}
                       onEdit={!presenting && !play && !making ? () => setNotesEditing(true) : undefined} />
                   ) : !presenting && !play && !making && workspaceMode !== "brainstorm" ? (
                     <g data-noexport="" role="button" aria-label="Write the idea under the pitch" style={{ cursor: "pointer" }} onClick={() => setNotesEditing(true)}
-                      transform={`translate(${frame.x + frame.w / 2},${frame.y + frame.h - 30 * sealK}) scale(${sealK})`}>
+                      transform={`translate(${sealSide === "right" ? partRect.x + 82 * sealK : partRect.x + partRect.w - 82 * sealK},${pitchEnd + 35 * sealK}) scale(${sealK})`}>
                       <rect x={-82} y={-17} width={164} height={34} rx={17} fill="rgba(14,15,18,.72)" stroke={PS_VOLT} strokeOpacity={0.55} strokeDasharray="4 3" />
                       <text x={0} y={5} textAnchor="middle" fill="#f4f4f6" fontSize={14} fontWeight={600} style={{ fontFamily: "'Inter',sans-serif" }}>+ Write the idea</text>
                     </g>
                   ) : null}
 
-                  {/* 13. Creator seal — always last, always visible: your crest or logo, your handle (once you've chosen one) and PITCHSTUDIO (if you keep it on) */}
-                  <g style={{ pointerEvents: "none" }} transform={`translate(${sealSide === "left" ? frame.x + (editorial && cropMarks ? 10 * sealK : 0) : frame.x + frame.w - (editorial && cropMarks ? 10 * sealK : 0)},${frame.y + frame.h - (editorial && cropMarks ? 10 * sealK : 0)}) scale(${sealK})`}>
+                  {/* 13. Creator seal — always last, always visible, just under the pitch: your crest or logo, your handle (once you've chosen one) and PITCHSTUDIO (if you keep it on) */}
+                  <g style={{ pointerEvents: "none" }} transform={`translate(${sealSide === "left" ? partRect.x - 14 * sealK : partRect.x + partRect.w + 14 * sealK},${pitchEnd + 60 * sealK}) scale(${sealK})`}>
                     <CreatorSeal side={sealSide} brand={creatorBrand} handle={creatorHandle} logo={creatorLogo} pill={inkOn(bgColor) === "#000000" ? "#1d1b16" : "rgba(0,0,0,0.62)"} />
                   </g>
                   {/* 14. The end card, at the end of a move */}
                   {view && view.end !== null && (
-                    <EndCard frame={frame} k={sealK} t={view.end} handle={creatorHandle} brand={creatorBrand} logo={creatorLogo} bg={bgColor} ink={inkOn(bgColor)} edition={editorial && showEdition ? edition : null} />
+                    <EndCard frame={frame} k={sealK} t={view.end} handle={creatorHandle} brand={creatorBrand} logo={creatorLogo} bg={bgColor} ink={inkOn(bgColor)} edition={showEdition ? edition : null} />
                   )}
                   </>)
                   })()}
@@ -6566,14 +6223,12 @@ function TacticsBoard() {
           {/* ── Zoom controls: above the tool bar, so a narrow screen never puts one on top of the other (on a phone, top left) ── */}
           <div className="absolute bottom-[84px] left-4 max-[600px]:bottom-auto max-[600px]:top-3 max-[600px]:left-3 flex items-center gap-1 px-2 py-1.5 st-glass"
             style={{ zIndex: 10, borderRadius: 12, display: presenting ? "none" : undefined }} onPointerDown={e => e.stopPropagation()}>
-            <button onClick={() => applyZoom(0.87)} aria-label="Zoom out" title="Zoom out" className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Minus size={13} /></button>
-            <span className="text-xs font-mono w-12 text-center" style={{ color: TEXT_PRIMARY }}>
-              {Math.round(zoom * 100)}%
-            </span>
-            <button onClick={() => applyZoom(1.15)} aria-label="Zoom in" title="Zoom in" className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Plus size={13} /></button>
-            <div className="w-px h-4 mx-1" style={{ background: DS_BORDER_STRONG }} />
-            <button onClick={fitToView} className="px-1.5 py-0.5 rounded text-xs hover:bg-[var(--ps-hover)] transition-colors"
-              style={{ color: TEXT_MUTED }}>Fit</button>
+            <button onClick={() => stepZoom(-1)} aria-label="Zoom out" title="Zoom out (−)" className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Minus size={13} /></button>
+            <button onClick={fitToView} title="Back to 100%: the board fills the space (0)" aria-label={`Zoom ${Math.round((zoom / fitZoom()) * 100)}%. Back to 100%`}
+              className="text-xs font-mono w-12 text-center rounded py-0.5 hover:bg-[var(--ps-hover)] transition-colors" style={{ color: TEXT_PRIMARY }}>
+              {Math.round((zoom / fitZoom()) * 100)}%
+            </button>
+            <button onClick={() => stepZoom(1)} aria-label="Zoom in" title="Zoom in (+)" className="p-1 rounded hover:bg-[var(--ps-hover)] transition-colors"><Plus size={13} /></button>
           </div>
           {/* ── Steps: build a move one step at a time, and play it ── */}
           {workspaceMode !== "brainstorm" && (
@@ -6585,6 +6240,11 @@ function TacticsBoard() {
                     className="flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold transition-colors"
                     style={{ background: play ? PS_VOLT : ACCENT_SOLID, color: play ? "#0a0c0f" : ACCENT_INK }}>
                     {play ? <Square size={10} fill="currentColor" /> : <Play size={11} fill="currentColor" />} {play ? "Stop" : "Play"}
+                  </button>
+                  <button onClick={() => { undoPoint(); setAnimSpeed(v => (v === "slow" ? "normal" : v === "normal" ? "fast" : "slow")) }} disabled={!!play}
+                    title="How fast the move plays (tap to change)" aria-label={`Speed: ${animSpeed}. Tap to change`}
+                    className="px-2 py-1 rounded text-xs font-semibold transition-colors hover:brightness-110" style={{ background: SURFACE_2, color: TEXT_MUTED, opacity: play ? 0.5 : 1 }}>
+                    {animSpeed === "slow" ? "Slow" : animSpeed === "fast" ? "Fast" : "Normal"}
                   </button>
                   <div className="w-px h-4 mx-1" style={{ background: DS_BORDER_STRONG }} />
                 </>
@@ -6621,6 +6281,13 @@ function TacticsBoard() {
           )}
           {dock === "bottom" && !presenting && (
             <div className="st-float" style={{ bottom: 16, zIndex: 32 }}><Dock groups={dockGroups} /></div>
+          )}
+          {cleared > 0 && !presenting && (
+            <div className="st-float st-glass" role="status" style={{ bottom: 130, zIndex: 33, display: "flex", alignItems: "center", gap: 10, padding: "6px 8px 6px 12px", borderRadius: 12, fontSize: 12.5, color: TEXT_PRIMARY }}
+              onPointerDown={e => e.stopPropagation()}>
+              <Trash2 size={14} style={{ color: "#f87171" }} /><span className="font-semibold">Pitch cleared</span>
+              <button onClick={() => { setCleared(0); undo() }} className="px-2.5 py-1 rounded font-semibold hover:bg-[var(--ps-hover)] transition-colors" style={{ color: ACCENT_TEXT }}>Undo</button>
+            </div>
           )}
           {picking && <AreaPicker onPick={pickArea} onPreset={a => { setPicking(false); undoPoint(); setArea(a); setFocus("area") }} onCancel={() => setPicking(false)} />}
           {naming && !presenting && (
@@ -6786,7 +6453,7 @@ function TacticsBoard() {
             {([
               { header: "TOOLS", rows: [["Select","V"],["Pan","H"],["Home player","1"],["Away player","2"],["✕ marker","X"],["Ball","B"],["Arrow","A"],["Text","T"],["Shapes","S"],["Zone","Z"],["Upload image","I"]] },
               { header: "EDIT", rows: [["Undo","Ctrl+Z"],["Redo","Ctrl+Shift+Z"],["Duplicate","Ctrl+D"],["Copy","Ctrl+C"],["Paste","Ctrl+V"],["Delete","Del"]] },
-              { header: "VIEW", rows: [["Zoom in","+"],["Zoom out","−"],["Fit to view","0"],["Deselect / cancel","Esc"]] },
+              { header: "VIEW", rows: [["Zoom in (up to 200%)","+"],["Zoom out (down to 80%)","−"],["Back to 100%","0"],["Deselect / cancel","Esc"]] },
               { header: "SELECTION", rows: [["Add to selection","Shift+click"],["Box-select","Drag on empty board"],["Select all","Ctrl+A"],["Nudge","Arrow keys"],["Nudge further","Shift+Arrow keys"],["More actions","Right-click"],["Pan canvas","Alt+drag"]] },
               { header: "STEPS", rows: [["Play the move / stop","P"],["Previous step","["],["Next step","]"]] },
             ] as { header: string; rows: [string, string][] }[]).map(group => (
@@ -6811,28 +6478,6 @@ function TacticsBoard() {
         <LeaveConfirmModal key={leaveAsk} reason={leaveAsk} onAnswer={answerLeave} />
       )}
 
-      {/* ── Clear All confirmation ── */}
-      {showClearConfirm && (
-        <ClearConfirmModal
-          onCancel={() => setShowClearConfirm(false)}
-          onConfirm={() => {
-            snapshot()
-            boardEpochRef.current += 1 // anything still saving belongs to the previous board
-            setPlayers([]); setArrows([]); setTexts([])
-            setShapes([]); setImages([]); setCustomZones([])
-            setSteps([]); setStepIdx(0)
-            setNarrative("")
-            setSel(null)
-            bindBoard(null)
-            loadedUpdatedAtRef.current = null
-            conflictRef.current = false
-            unsureRef.current = []
-            lastSavedRef.current = ""
-            setSaveStatus("idle"); setSaveError(""); setDraftNotice(false)
-            setShowClearConfirm(false)
-          }}
-        />
-      )}
     </div>
   )
 }
@@ -7269,7 +6914,7 @@ function NameLabel({ text, x = 0, y, size, halo, pad, chip, bold = false }: { te
 function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: [T, string][]; onChange: (v: T) => void }) {
   return (
     <div>
-      <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>{label}</p>
+      {label && <p className="text-xs mb-1.5" style={{ color: TEXT_MUTED }}>{label}</p>}
       <div className="flex flex-wrap" style={{ gap: 2, padding: 2, borderRadius: 9, background: SURFACE_2 }}>
         {options.map(([v, text]) => (
           <button key={v} onClick={() => onChange(v)} aria-pressed={value === v}
@@ -7628,38 +7273,6 @@ function LeaveConfirmModal({ reason, onAnswer }: { reason: LeaveReason; onAnswer
 }
 
 /* ────────────────────────── Clear Confirm Modal ────────────── */
-function ClearConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      style={{ background: "rgba(0,0,0,0.7)" }}
-      onClick={onCancel}>
-      <div className="rounded-xl border flex flex-col gap-5 p-6 w-full"
-        style={{ background: SURFACE_1, borderColor: DS_BORDER, maxWidth: 360 }}
-        onClick={e => e.stopPropagation()}>
-        <div>
-          <p style={{ color: TEXT_PRIMARY, fontSize: 15, fontWeight: 600, margin: 0, fontFamily: "'Inter', sans-serif" }}>
-            Clear the board?
-          </p>
-          <p style={{ color: TEXT_MUTED, fontSize: 13, margin: "6px 0 0", fontFamily: "'Inter', sans-serif" }}>
-            You start a fresh board. What you've saved stays in My Boards, and Undo brings this back.
-          </p>
-        </div>
-        <div className="flex gap-3 justify-end">
-          <button onClick={onCancel}
-            className="px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:brightness-110"
-            style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
-            Cancel
-          </button>
-          <button onClick={onConfirm}
-            className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:brightness-110"
-            style={{ background: DS_ERROR, color: "#ffffff" }}>
-            Clear board
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /** The Tactics Board: its own download, loaded only when someone opens /board (the page list lives in Root.tsx) */
 export default TacticsBoard
