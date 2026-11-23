@@ -1792,8 +1792,7 @@ const safeFileName = (t: string) => Array.from(t.trim() || "PitchStudio board").
 /* ─────────────────────────── Template Modal ────────────────── */
 /* ─────────────────────────── The drop library ───────────────── */
 // Numbered, ready-made boards: a real situation, drawn once, to open and make your own. Each one opens in the editorial frame.
-type DropCat = "Build-up" | "Pressing" | "Defence" | "Attack" | "Transition" | "Set piece"
-const DROP_CATS: DropCat[] = ["Build-up", "Pressing", "Defence", "Attack", "Transition", "Set piece"]
+type DropCat = "Goal" | "Build-up" | "Pressing"
 type Pt = [number, number] // a spot on the pitch: x along it (home attacks towards 1050), y across it (0 = home's left touchline), 10 units to the metre
 interface DropApi {
   home: (f: string, dx?: number) => Record<number, Player>
@@ -1814,7 +1813,7 @@ interface DropApi {
   note: (text: string) => void // the note for the step being drawn
   next: (note?: string) => void // starts the next step: the runs and passes drawn so far play out, then draw what happens next
 }
-interface Drop { no: number; name: string; cat: DropCat; blurb: string; style: "night" | "paper"; make: (d: DropApi) => void; view?: Partial<BoardSettings>; crop?: [number, number, number, number] } // view: the part of the pitch it opens on; crop: the part shown on its card (pitch coordinates)
+interface Drop { no: number; name: string; cat: DropCat; blurb: string; note: string; style: "grass" | "paper" | "cobalt"; make: (d: DropApi) => void; view?: Partial<BoardSettings>; crop?: [number, number, number, number] } // view: the part of the pitch it opens on; crop: the part shown on its card (pitch coordinates)
 /** Draws a drop on a fresh board (new ids every time) */
 function buildDrop(drop: Drop): CanvasState {
   const g = pitchGeo(drop.view?.vertical === true, 1, 0, 0)
@@ -1885,8 +1884,8 @@ function buildDrop(drop: Drop): CanvasState {
   }
   drop.make(api)
   const settings = settingsFrom({
-    pitchStyle: drop.style, bgColor: PITCH_LOOKS[drop.style].bg, editorial: true,
-    kicker: `Drop ${String(drop.no).padStart(2, "0")} · ${drop.cat}`, caption: drop.blurb, ...drop.view,
+    pitchStyle: drop.style === "grass" ? "classic" : drop.style, pitchColor: "green", bgColor: drop.style === "grass" ? NEW_BOARD_SETTINGS.bgColor : PITCH_LOOKS[drop.style].bg,
+    points: [drop.note], ...drop.view,
   })
   const all = frames.length ? [...frames, snap()] : null // a move opens on its first step
   const first = all ? all[0] : snap()
@@ -1895,168 +1894,12 @@ function buildDrop(drop: Drop): CanvasState {
     customZones: first.customZones, settings, ...(all ? { steps: all, step: 0 } : {}),
   }
 }
+/** The three examples on the start card: how a goal happened, how a team builds up, how it presses. One on each look. */
 const DROPS: Drop[] = [
   {
-    no: 1, name: "Full-backs step inside", cat: "Build-up", style: "night",
-    blurb: "Both full-backs tuck into midfield, so three hold the middle and five attack the last line: a 2-3-5 on the ball.",
-    make: d => {
-      const h = d.home("4-3-3")
-      d.mv(h[5], 255, 255); d.mv(h[4], 255, 425); d.mv(h[3], 440, 225); d.mv(h[8], 440, 340); d.mv(h[2], 440, 455)
-      d.mv(h[11], 790, 95); d.mv(h[6], 700, 235); d.mv(h[9], 840, 340); d.mv(h[7], 700, 445); d.mv(h[10], 790, 585)
-      d.ghost(h[3], 270, 105); d.ghost(h[2], 270, 575)
-      d.pass(h[1], h[5], { step: 1 }); d.pass(h[5], h[3], { step: 2, bend: 24 }); d.pass(h[3], h[6], { step: 3 })
-      d.link([h[3], h[8], h[2]])
-      d.label(300, 20, "Full-backs step inside: three in midfield", 420)
-    },
-  },
-  {
-    no: 2, name: "The 3-2 box", cat: "Build-up", style: "night",
-    blurb: "Three at the back, two pivots and two tens: a box in midfield that always offers a pass between the lines.",
-    make: d => {
-      const h = d.home("3-2-4-1")
-      d.mv(h[5], 255, 150); d.mv(h[3], 255, 530); d.mv(h[6], 410, 270); d.mv(h[8], 410, 410)
-      d.pass(h[1], h[4], { step: 1 }); d.pass(h[4], h[6], { step: 2 }); d.pass(h[6], h[10], { step: 3, bend: -30 }); d.pass(h[10], h[9], { step: 4 })
-      d.link([h[5], h[4], h[3]]); d.link([h[6], h[8], h[7], h[10]], true)
-      d.label(200, 40, "Back three", 200); d.label(330, 610, "The box: two pivots, two tens", 360)
-    },
-  },
-  {
-    no: 3, name: "Goalkeeper as the extra man", cat: "Build-up", style: "paper",
-    blurb: "Against two strikers, the keeper and two centre-backs make it three against two. Play round the press.",
-    make: d => {
-      const h = d.home("4-3-3"); d.away("4-4-2", 60)
-      d.mv(h[5], 190, 175); d.mv(h[4], 190, 505); d.mv(h[3], 320, 62); d.mv(h[2], 320, 618); d.mv(h[8], 440, 340)
-      d.pass(h[1], h[5], { step: 1, bend: 18 }); d.pass(h[5], h[3], { step: 2, bend: 20 }); d.pass(h[3], h[6], { step: 3 })
-      d.link([h[1], h[5], h[4]], true)
-      d.label(30, 560, "Keeper + 2 centre-backs\\nv 2 strikers: 3 v 2", 240)
-    },
-  },
-  {
-    no: 4, name: "High press trap", cat: "Pressing", style: "night",
-    blurb: "Let them play to the full-back, then close the pass back and squeeze the touchline.",
-    make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-2-3-1")
-      d.only(a, [1, 5, 4, 3, 2, 6, 8])
-      d.mv(h[1], 470, 340); d.mv(h[3], 560, 95); d.mv(h[5], 575, 245); d.mv(h[4], 575, 435); d.mv(h[2], 560, 585)
-      d.mv(h[6], 690, 230); d.mv(h[8], 690, 340); d.mv(h[7], 705, 450)
-      d.mv(h[11], 870, 160); d.mv(h[9], 890, 345); d.mv(h[10], 880, 520)
-      d.mv(a[1], 975, 340); d.mv(a[5], 860, 250); d.mv(a[4], 860, 430); d.mv(a[2], 840, 85); d.mv(a[3], 795, 590); d.mv(a[6], 745, 300); d.mv(a[8], 745, 405)
-      d.ball(768, 612)
-      d.pass(a[4], a[3], { bend: 40 })
-      d.run(h[10], [800, 600], { step: 1, bend: -10 }); d.run(h[9], [840, 415], { step: 2 }); d.run(h[7], [750, 500], { step: 3, bend: -20 })
-      d.zone(790, 490, 260, 190, "Trap")
-      d.label(450, 30, "Trigger: the pass to the full-back", 380)
-    },
-  },
-  {
-    no: 5, name: "Mid-block 4-4-2", cat: "Defence", style: "night",
-    blurb: "Two banks of four, close together, strikers set to send them wide. Nothing through the middle.",
-    make: d => {
-      const h = d.home("4-4-2"), a = d.away("4-3-3")
-      d.only(a, [2, 8, 6, 9, 5])
-      d.mv(h[3], 330, 150); d.mv(h[5], 330, 270); d.mv(h[4], 330, 410); d.mv(h[2], 330, 530)
-      d.mv(h[11], 475, 170); d.mv(h[8], 475, 285); d.mv(h[6], 475, 395); d.mv(h[7], 475, 510)
-      d.mv(h[9], 620, 270); d.mv(h[10], 620, 410)
-      d.mv(a[2], 720, 70); d.mv(a[8], 760, 250); d.mv(a[6], 760, 440); d.mv(a[9], 880, 340); d.mv(a[5], 860, 190)
-      d.ball(690, 70)
-      d.link([h[3], h[5], h[4], h[2]]); d.link([h[11], h[8], h[6], h[7]]); d.link([h[9], h[10]])
-      d.gap(h[5], h[8]); d.gap(h[8], h[9])
-      d.zone(540, 0, 220, 150, "Send them wide")
-      d.label(470, 610, "Two compact banks of four", 330)
-    },
-  },
-  {
-    no: 6, name: "Low block 5-4-1", cat: "Defence", style: "paper",
-    blurb: "Five across the box, four in front of them, one up top. Hold the line, and protect the edge of the area.",
-    make: d => {
-      const h = d.home("5-4-1")
-      d.mv(h[3], 235, 90); d.mv(h[5], 190, 215); d.mv(h[4], 180, 340); d.mv(h[6], 190, 465); d.mv(h[2], 235, 590)
-      d.mv(h[11], 360, 150); d.mv(h[8], 340, 275); d.mv(h[7], 340, 405); d.mv(h[10], 360, 530)
-      d.mv(h[9], 520, 340)
-      d.link([h[3], h[5], h[4], h[6], h[2]]); d.link([h[11], h[8], h[7], h[10]])
-      d.zone(165, 138, 125, 404)
-      d.label(30, 20, "5 + 4 + 1: the box stays closed", 330)
-    },
-  },
-  {
-    no: 7, name: "Overlap on the wing", cat: "Attack", style: "night",
-    blurb: "The winger cuts inside, the full-back runs past on the outside: two against one on the touchline.",
-    make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-4-2")
-      d.only(a, [3, 5, 4, 8, 6, 11])
-      d.mv(h[10], 720, 505); d.mv(h[2], 600, 600); d.mv(h[7], 610, 410); d.mv(h[9], 850, 350)
-      d.mv(a[11], 700, 580); d.mv(a[3], 850, 545); d.mv(a[5], 920, 430); d.mv(a[4], 920, 260); d.mv(a[8], 780, 330); d.mv(a[6], 780, 430)
-      d.dribble(h[10], [800, 500], { step: 1 }); d.run(h[2], [920, 630], { step: 2, bend: -14 }); d.pass(h[10], [920, 630], { step: 3, bend: -30 })
-      d.ghost(h[2], 920, 630, true)
-      d.label(380, 20, "The winger drives in, the full-back goes round", 440)
-      d.ball(740, 522)
-      d.note("The winger drives in")
-      d.next("Overlap: cross it in")
-      d.mv(a[3], 880, 570); d.mv(a[5], 965, 400)
-      d.run(h[9], [990, 300], { step: 1, bend: 12 }); d.pass(h[2], h[9], { step: 2, bend: -60 })
-      d.next("Finish at the near post")
-      d.mv(a[4], 950, 240)
-      d.shot(h[9], [1050, 318])
-      d.next()
-    },
-  },
-  {
-    no: 8, name: "Underlap into the half-space", cat: "Attack", style: "night",
-    blurb: "The full-back runs inside the winger, between centre-back and full-back. The half-space is where defences break.",
-    make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-4-2")
-      d.only(a, [3, 2, 5, 4, 8, 6])
-      d.mv(h[11], 770, 60); d.mv(h[3], 640, 215); d.mv(h[6], 590, 340); d.mv(h[9], 870, 345)
-      d.mv(a[2], 850, 85); d.mv(a[5], 830, 275); d.mv(a[4], 830, 400); d.mv(a[3], 810, 540); d.mv(a[8], 720, 280); d.mv(a[6], 720, 410)
-      d.zone(740, 140, 310, 120, "Half-space")
-      d.run(h[3], [900, 200], { step: 1, bend: 12 }); d.pass(h[6], [900, 200], { step: 2, bend: 22 })
-      d.ghost(h[3], 900, 200, true)
-      d.label(380, 590, "Run between centre-back and full-back", 420)
-    },
-  },
-  {
-    no: 9, name: "Half-space overload", cat: "Attack", style: "paper",
-    blurb: "Three players in a triangle on one side. Keep the distances short and the passes quick.",
-    make: d => {
-      const h = d.home("4-3-3")
-      d.mv(h[11], 740, 80); d.mv(h[3], 600, 175); d.mv(h[6], 700, 230); d.mv(h[8], 640, 340); d.mv(h[9], 840, 300)
-      d.link([h[11], h[6], h[3]], true); d.gap(h[6], h[3])
-      d.pass(h[3], h[6], { step: 1 }); d.pass(h[6], h[11], { step: 2, bend: 14 }); d.pass(h[11], h[9], { step: 3, bend: 24 })
-      d.label(380, 590, "Triangle: short passes, short distances", 420)
-    },
-  },
-  {
-    no: 10, name: "Switch of play", cat: "Attack", style: "night",
-    blurb: "Draw them to one side, then change the point of attack. The far winger has the whole flank.",
-    make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-4-2")
-      d.only(a, [3, 5, 4, 2, 8, 6])
-      d.mv(h[3], 560, 90); d.mv(h[11], 700, 85); d.mv(h[6], 640, 195); d.mv(h[8], 600, 330); d.mv(h[7], 560, 460); d.mv(h[5], 430, 250); d.mv(h[4], 430, 430); d.mv(h[2], 500, 590)
-      d.mv(h[10], 780, 610); d.mv(h[9], 840, 380)
-      d.mv(a[8], 740, 150); d.mv(a[6], 740, 260); d.mv(a[3], 880, 560); d.mv(a[5], 900, 190); d.mv(a[4], 900, 300); d.mv(a[2], 860, 90)
-      d.pass(h[11], h[6], { step: 1 }); d.pass(h[6], h[8], { step: 2 }); d.pass(h[8], h[10], { step: 3, bend: -40 }); d.dribble(h[10], [930, 600], { step: 4 })
-      d.label(360, 20, "Overload on the left, then switch right", 420)
-      d.ball(718, 104)
-      d.note("Draw them to the left")
-      d.next("Switch: one v one on the right")
-    },
-  },
-  {
-    no: 11, name: "False nine drop", cat: "Attack", style: "night",
-    blurb: "The striker drops deep. The centre-back must follow or leave a gap, and the wingers run in behind.",
-    make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-4-2")
-      d.only(a, [5, 4, 3, 2, 8, 6])
-      d.mv(h[9], 700, 340); d.mv(h[11], 740, 95); d.mv(h[10], 740, 585); d.mv(h[6], 520, 230); d.mv(h[7], 520, 450); d.mv(h[8], 470, 340)
-      d.mv(a[5], 780, 285); d.mv(a[4], 780, 395); d.mv(a[3], 820, 180); d.mv(a[2], 820, 500); d.mv(a[8], 620, 285); d.mv(a[6], 620, 395)
-      d.ghost(h[9], 890, 340, false)
-      d.pass(h[8], h[9], { step: 1 }); d.run(h[11], [920, 230], { step: 2, bend: -14 }); d.run(h[10], [920, 450], { step: 2, bend: 14 }); d.pass(h[9], [920, 230], { step: 3, bend: 28 })
-      d.label(380, 590, "Striker drops: who follows?", 360)
-    },
-  },
-  {
-    no: 12, name: "Counter-attack 3 v 2", cat: "Transition", style: "night",
-    blurb: "Win it, go forward at once. Three runners against two defenders, and the middle man decides.",
+    no: 1, name: "How the goal happened", cat: "Goal", style: "grass",
+    blurb: "Win it, run three against two, finish across the keeper. A move in steps: open it and press Play.",
+    note: "Won high, three ran at two, the middle man chose right",
     make: d => {
       const h = d.home("4-3-3"), a = d.away("4-4-2")
       d.only(h, [8, 11, 9, 10, 5, 4]); d.only(a, [5, 4])
@@ -2075,96 +1918,36 @@ const DROPS: Drop[] = [
     },
   },
   {
-    no: 13, name: "Rest defence 3-2", cat: "Transition", style: "paper",
-    blurb: "While five attack, five stay back in a 3-2 shape, ready for the moment the ball is lost.",
+    no: 2, name: "Build-up shape: 2-3-5", cat: "Build-up", style: "paper",
+    blurb: "Both full-backs tuck into midfield, so three hold the middle and five attack the last line.",
+    note: "Full-backs step inside: three in midfield, five up top",
     make: d => {
       const h = d.home("4-3-3")
-      d.mv(h[1], 100, 340); d.mv(h[5], 430, 190); d.mv(h[4], 430, 340); d.mv(h[2], 430, 490); d.mv(h[8], 540, 270); d.mv(h[3], 540, 410)
-      d.mv(h[6], 760, 150); d.mv(h[7], 780, 530); d.mv(h[11], 840, 90); d.mv(h[10], 840, 590); d.mv(h[9], 900, 340)
-      d.link([h[5], h[4], h[2]]); d.link([h[8], h[3]]); d.zone(380, 120, 220, 440, "Rest defence")
-      d.label(250, 20, "3 + 2 stay back; 5 attack", 340)
+      d.mv(h[5], 255, 255); d.mv(h[4], 255, 425); d.mv(h[3], 440, 225); d.mv(h[8], 440, 340); d.mv(h[2], 440, 455)
+      d.mv(h[11], 790, 95); d.mv(h[6], 700, 235); d.mv(h[9], 840, 340); d.mv(h[7], 700, 445); d.mv(h[10], 790, 585)
+      d.ghost(h[3], 270, 105); d.ghost(h[2], 270, 575)
+      d.pass(h[1], h[5], { step: 1 }); d.pass(h[5], h[3], { step: 2, bend: 24 }); d.pass(h[3], h[6], { step: 3 })
+      d.link([h[3], h[8], h[2]])
+      d.label(300, 20, "Full-backs step inside: three in midfield", 420)
     },
   },
   {
-    no: 14, name: "Gegenpress trigger", cat: "Pressing", style: "night",
-    blurb: "The ball is lost. Everyone near it closes at once, and the passes out are cut before they start.",
+    no: 3, name: "The press trap", cat: "Pressing", style: "cobalt",
+    blurb: "Let them play to the full-back, then close the pass back and squeeze the touchline.",
+    note: "Trigger: the pass to the full-back. Then squeeze the line",
     make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-3-3")
-      d.only(h, [8, 6, 7, 9, 11, 10, 5, 4]); d.only(a, [8, 6, 7, 5, 4])
-      d.mv(h[8], 580, 340); d.mv(h[6], 600, 215); d.mv(h[7], 610, 465); d.mv(h[9], 810, 290); d.mv(h[11], 690, 90); d.mv(h[10], 690, 590)
-      d.mv(h[5], 440, 260); d.mv(h[4], 440, 420)
-      d.mv(a[8], 710, 340); d.mv(a[6], 790, 235); d.mv(a[7], 790, 445); d.mv(a[5], 880, 300); d.mv(a[4], 880, 380)
-      d.ball(690, 340)
-      d.run(h[8], [655, 340], { step: 1 }); d.run(h[6], [665, 285], { step: 1 }); d.run(h[7], [670, 395], { step: 1 }); d.run(h[9], [760, 305], { step: 2 })
-      d.zone(620, 230, 160, 220)
-      d.label(250, 590, "Everyone near the ball closes in five seconds", 420)
+      const h = d.home("4-3-3"), a = d.away("4-2-3-1")
+      d.only(a, [1, 5, 4, 3, 2, 6, 8])
+      d.mv(h[1], 470, 340); d.mv(h[3], 560, 95); d.mv(h[5], 575, 245); d.mv(h[4], 575, 435); d.mv(h[2], 560, 585)
+      d.mv(h[6], 690, 230); d.mv(h[8], 690, 340); d.mv(h[7], 705, 450)
+      d.mv(h[11], 870, 160); d.mv(h[9], 890, 345); d.mv(h[10], 880, 520)
+      d.mv(a[1], 975, 340); d.mv(a[5], 860, 250); d.mv(a[4], 860, 430); d.mv(a[2], 840, 85); d.mv(a[3], 795, 590); d.mv(a[6], 745, 300); d.mv(a[8], 745, 405)
+      d.ball(768, 612)
+      d.pass(a[4], a[3], { bend: 40 })
+      d.run(h[10], [800, 600], { step: 1, bend: -10 }); d.run(h[9], [840, 415], { step: 2 }); d.run(h[7], [750, 500], { step: 3, bend: -20 })
+      d.zone(790, 490, 260, 190, "Trap")
+      d.label(450, 30, "Trigger: the pass to the full-back", 380)
     },
-  },
-  {
-    no: 15, name: "Zone 14", cat: "Attack", style: "night",
-    blurb: "The pocket in front of the box, between the lines. Find the player there and the defence has to choose.",
-    make: d => {
-      const h = d.home("4-2-3-1"), a = d.away("4-4-2")
-      d.only(a, [5, 4, 3, 2, 11, 8, 6, 7])
-      d.mv(h[10], 830, 340); d.mv(h[11], 760, 90); d.mv(h[7], 760, 590); d.mv(h[9], 940, 340); d.mv(h[6], 580, 270); d.mv(h[8], 580, 410)
-      d.mv(a[5], 920, 280); d.mv(a[4], 920, 400); d.mv(a[3], 900, 150); d.mv(a[2], 900, 530)
-      d.mv(a[8], 750, 205); d.mv(a[6], 750, 475); d.mv(a[11], 810, 160); d.mv(a[7], 810, 520)
-      d.zone(780, 250, 120, 180, "Zone 14")
-      d.pass(h[6], h[10], { step: 1, bend: 20 }); d.pass(h[10], h[9], { step: 2 }); d.run(h[11], [960, 210], { step: 2 })
-      d.label(400, 20, "Between the lines, in front of the box", 400)
-    },
-  },
-  {
-    no: 16, name: "Corner: near-post flick", cat: "Set piece", style: "paper",
-    blurb: "A fast ball to the near post, a flick on, and runners attacking the space at the back.",
-    make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-4-2")
-      d.only(h, [3, 9, 5, 4, 6, 8]); d.only(a, [1, 3, 2, 5, 4, 8, 6])
-      d.mv(h[3], 1040, 12); d.mv(h[9], 985, 282); d.mv(h[5], 930, 340); d.mv(h[4], 900, 440); d.mv(h[6], 890, 190); d.mv(h[8], 860, 350)
-      d.mv(a[1], 1040, 340); d.mv(a[3], 1040, 255); d.mv(a[2], 1040, 425); d.mv(a[5], 990, 340); d.mv(a[4], 990, 400); d.mv(a[8], 950, 225); d.mv(a[6], 935, 490)
-      d.ball(1050, 0)
-      d.pass(h[3], h[9], { step: 1, bend: 20 }); d.pass(h[9], [965, 455], { step: 2, bend: -18 }); d.run(h[4], [985, 440], { step: 2, bend: 8 })
-      d.label(760, 40, "Near-post flick, then attack the back post", 320)
-      d.small(0.7)
-      d.note("Near-post ball, flick it on")
-      d.next("Back post: finish")
-      d.shot(h[4], [1050, 374])
-      d.next()
-    },
-    view: { vertical: true, focus: "third", focusEnd: "attack" }, crop: [736, 0, 314, 480],
-  },
-  {
-    no: 17, name: "Free kick: wall and decoy", cat: "Set piece", style: "night",
-    blurb: "One runs over the ball, another runs past it. The wall has to decide, and the real shot goes the other way.",
-    make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-4-2")
-      d.only(h, [10, 8, 7, 9, 6]); d.only(a, [1, 5, 4, 8, 6, 7])
-      d.mv(h[10], 805, 322); d.mv(h[8], 790, 400); d.mv(h[7], 800, 262); d.mv(h[9], 975, 245); d.mv(h[6], 960, 435)
-      d.mv(a[1], 1040, 340); d.mv(a[5], 995, 290); d.mv(a[4], 995, 395)
-      d.mv(a[8], 926, 282); d.mv(a[6], 926, 334); d.mv(a[7], 926, 386)
-      d.ball(840, 334)
-      d.run(h[8], [850, 355], { step: 1, bend: 10 }); d.shot(h[10], [1050, 405], { step: 2, bend: -70 })
-      d.link([a[8], a[6], a[7]])
-      d.label(740, 40, "A wall of three, nine metres back", 320)
-      d.small(0.7)
-    },
-    view: { vertical: true, focus: "third", focusEnd: "attack" }, crop: [736, 100, 314, 480],
-  },
-  {
-    no: 18, name: "Throw-in triangle", cat: "Set piece", style: "paper",
-    blurb: "Never throw it down the line. Make a triangle: one short, one in behind, and the thrower back in the game.",
-    make: d => {
-      const h = d.home("4-3-3"), a = d.away("4-4-2")
-      d.only(h, [3, 6, 11, 8, 5]); d.only(a, [2, 11, 8, 5])
-      d.mv(h[3], 600, 18); d.mv(h[6], 640, 125); d.mv(h[11], 770, 65); d.mv(h[8], 530, 190); d.mv(h[5], 470, 330)
-      d.mv(a[2], 705, 130); d.mv(a[11], 610, 225); d.mv(a[8], 700, 270); d.mv(a[5], 770, 350)
-      d.ball(600, 0)
-      d.pass(h[3], h[6], { step: 1, bend: -16 }); d.pass(h[6], h[11], { step: 2, bend: -10 }); d.run(h[3], [700, 45], { step: 3, bend: 14 })
-      d.link([h[3], h[6], h[11]], true)
-      d.label(880, 40, "Short, in behind, thrower supports", 320)
-      d.small(0.8)
-    },
-    view: { vertical: true, focus: "half", focusEnd: "attack" }, crop: [440, 0, 314, 480],
   },
 ]
 const dropCache = new Map<number, CanvasState>()
@@ -2199,142 +1982,35 @@ export function DropThumb({ data, crop }: { data: CanvasState; crop?: [number, n
   )
 }
 
-function TemplateModal({
-  templates, onClose, onLoad, onSave, onDelete,
-}: {
-  templates: Template[]
-  onClose: () => void
-  onLoad: (t: Template) => void
-  onSave: (name: string) => void
-  onDelete: (id: string) => void
-}) {
-  const [tab, setTab] = useState<"drops" | "my">("drops")
-  const [cat, setCat] = useState<DropCat | "All">("All")
-  const [newName, setNewName] = useState("")
-  const mine = templates // every template saved in this browser (ones once marked "published" included)
-
+function ExamplesModal({ onClose, onPick }: { onClose: () => void; onPick: (d: CanvasState) => void }) {
+  const look = { grass: "Grass", paper: "Paper", cobalt: "Cobalt" } as const
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.7)" }}
-      onClick={onClose}>
-      <div className="relative w-full max-h-[80vh] flex flex-col rounded-lg border overflow-hidden"
-        style={{ background: SURFACE_1, borderColor: DS_BORDER_STRONG, maxWidth: 760 }}
-        onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: DS_BORDER_STRONG }}>
-          <div className="flex items-center gap-2">
-            <BookOpen size={16} style={{ color: ACCENT_SOLID }} />
-            <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
-              TEMPLATES
-            </span>
-          </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--ps-hover)]"><X size={16} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: SCRIM }} onClick={onClose}>
+      <div role="dialog" aria-label="Examples" className="w-full rounded-xl border overflow-hidden" style={{ background: SURFACE_BASE, borderColor: DS_BORDER_STRONG, maxWidth: 860 }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ borderColor: DS_BORDER, background: SURFACE_1 }}>
+          <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.08em", fontSize: 16 }}>EXAMPLES</span>
+          <span className="flex-1 text-xs" style={{ color: TEXT_MUTED }}>Open one and make it yours. It starts a new board.</span>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded hover:bg-[var(--ps-hover)]"><X size={16} /></button>
         </div>
-
-        {/* Tabs */}
-        <div className="flex border-b" style={{ borderColor: DS_BORDER_STRONG }}>
-          {(["drops", "my"] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className="px-5 py-2.5 text-xs font-semibold uppercase transition-colors"
-              style={{
-                letterSpacing: "0.08em",
-                borderBottom: tab === t ? `2px solid ${ACCENT_SOLID}` : "2px solid transparent",
-                color: tab === t ? ACCENT_SOLID : TEXT_MUTED,
-              }}>
-              {t === "drops" ? `Drops (${DROPS.length})` : `My Templates (${mine.length})`}
-            </button>
-          ))}
+        <div className="grid gap-3 p-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
+          {DROPS.map(x => {
+            const d = dropPreview(x), steps = d.steps?.length ?? 0
+            return (
+              <button key={x.no} onClick={() => onPick(buildDrop(x))} className="ps-ex rounded-lg border overflow-hidden flex flex-col text-left" style={{ borderColor: DS_BORDER_STRONG, background: SURFACE_1, padding: 0, cursor: "pointer" }}>
+                <DropThumb data={d} crop={x.crop} />
+                <span className="p-3 flex flex-col gap-1.5">
+                  <span className="flex items-center gap-2 text-xs font-semibold" style={{ color: ACCENT_TEXT, letterSpacing: "0.1em", fontFamily: "'Barlow Condensed', sans-serif" }}>
+                    {x.cat.toUpperCase()} · {look[x.style].toUpperCase()}
+                    {steps > 1 && <span className="ml-auto flex items-center gap-1"><Play size={9} fill="currentColor" /> {steps} STEPS</span>}
+                  </span>
+                  <span className="font-semibold leading-tight" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.03em", fontSize: 18, color: TEXT_PRIMARY }}>{x.name}</span>
+                  <span className="text-xs" style={{ color: TEXT_MUTED }}>{x.blurb}</span>
+                </span>
+              </button>
+            )
+          })}
         </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
-          {tab === "drops" && (
-            <>
-              <p className="text-xs mb-3" style={{ color: TEXT_MUTED }}>Numbered boards, each a real situation with its title and notes. Open one and make it your own: it starts a new board, so nothing you've saved changes.</p>
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                {(["All", ...DROP_CATS] as const).map(c => (
-                  <button key={c} onClick={() => setCat(c)} aria-pressed={cat === c}
-                    className="px-2.5 py-1 rounded-full text-xs font-semibold transition-colors"
-                    style={{ background: cat === c ? PS_VOLT : SURFACE_2, color: cat === c ? "#0a0c0f" : TEXT_MUTED }}>
-                    {c}
-                  </button>
-                ))}
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                {DROPS.filter(x => cat === "All" || x.cat === cat).map(x => (
-                  <div key={x.no} className="rounded-lg border overflow-hidden flex flex-col" style={{ borderColor: DS_BORDER_STRONG, background: SURFACE_2 }}>
-                    <DropThumb data={dropPreview(x)} crop={x.crop} />
-                    <div className="p-2.5 flex flex-col gap-1.5 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold" style={{ color: PS_VOLT, letterSpacing: "0.12em", fontFamily: "'Barlow Condensed', sans-serif" }}>
-                          DROP {String(x.no).padStart(2, "0")} · {x.cat.toUpperCase()}
-                        </span>
-                        {(dropPreview(x).steps?.length ?? 0) > 1 && (
-                          <span className="ml-auto flex items-center gap-1 px-1.5 rounded text-xs font-semibold" title="This drop is a move: open it and press Play"
-                            style={{ background: "rgba(215,255,60,0.14)", color: PS_VOLT, letterSpacing: "0.08em", fontFamily: "'Barlow Condensed', sans-serif" }}>
-                            <Play size={9} fill="currentColor" /> {dropPreview(x).steps!.length} STEPS
-                          </span>
-                        )}
-                      </div>
-                      <span className="font-semibold leading-tight" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.03em", fontSize: 16 }}>{x.name}</span>
-                      <p className="text-xs flex-1" style={{ color: TEXT_MUTED }}>{x.blurb}</p>
-                      <button onClick={() => onLoad({ id: `drop-${x.no}`, name: x.name, data: buildDrop(x), published: false, createdAt: Date.now() })}
-                        className="py-1 rounded text-xs font-semibold transition-colors hover:brightness-125" style={{ background: SURFACE_1, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
-                        Use drop
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-          {tab === "my" && (
-            <>
-              {/* Save new template */}
-              <div className="flex gap-2 mb-4">
-                <input value={newName} onChange={e => setNewName(e.target.value)}
-                  placeholder="Template name..."
-                  className="flex-1 rounded px-3 py-1.5 text-sm outline-none"
-                  style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER_STRONG}` }}
-                  onKeyDown={e => { if (e.key === "Enter" && newName.trim()) { onSave(newName.trim()); setNewName("") } }}
-                />
-                <button onClick={() => { if (newName.trim()) { onSave(newName.trim()); setNewName("") } }}
-                  className="px-3 py-1.5 rounded text-sm font-medium transition-colors"
-                  style={{ background: ACCENT_GRADIENT, color: ACCENT_INK }}>
-                  Save Current
-                </button>
-              </div>
-
-              {mine.length === 0 && (
-                <p className="text-center py-6 text-sm" style={{ color: TEXT_MUTED }}>No saved templates. Save your current layout above.</p>
-              )}
-              <div className="grid grid-cols-2 gap-3">
-                {mine.map(t => (
-                  <div key={t.id} className="rounded-lg border p-3 flex flex-col gap-2"
-                    style={{ borderColor: DS_BORDER_STRONG, background: SURFACE_2 }}>
-                    <span className="font-semibold text-sm truncate" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>
-                      {t.name}
-                    </span>
-                    <p className="text-xs" style={{ color: TEXT_MUTED }}>
-                      {t.data.players.length} players · {t.data.arrows.length} arrows
-                    </p>
-                    <div className="flex gap-1.5 mt-1">
-                      <button onClick={() => onLoad(t)}
-                        className="flex-1 py-1 rounded text-xs font-semibold transition-colors hover:brightness-125"
-                        style={{ background: SURFACE_1, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}` }}>
-                        Load
-                      </button>
-                      <button onClick={() => onDelete(t.id)}
-                        className="p-1 rounded transition-colors hover:bg-red-500/20"
-                        style={{ color: "#f85149" }}>
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        <style>{`.ps-ex { transition: transform .15s, border-color .15s; } .ps-ex:hover { transform: translateY(-2px); border-color: ${ACCENT_SOLID} !important; } .ps-ex:focus-visible { outline: 2px solid ${ACCENT_SOLID}; outline-offset: 2px; }`}</style>
       </div>
     </div>
   )
@@ -4643,21 +4319,13 @@ function TacticsBoard() {
     customZones, settings: collectBoard().settings,
     ...(stepList.length > 1 ? { steps: stepList, step: stepIdx } : {}),
   })
-  const saveTemplate = (name: string) => {
-    const t: Template = { id: uid(), name, data: getCanvasState(), published: false, createdAt: Date.now() }
-    saveTemplates([...templates, t])
-  }
-  const loadTemplate = async (t: Template) => {
+  /** An example starts a new board, so it can never overwrite a board you've already saved */
+  const loadExample = async (d: CanvasState) => {
     if (!(await confirmLeave())) return
-    const d = t.data
-    // Older templates only stored the background and pitch visibility: keep today's look for everything else
-    const current = collectBoard().settings
-    const settings = d.settings ?? { ...current, bgColor: d.bgColor ?? current.bgColor, showPitch: d.showPitch ?? current.showPitch }
-    // A template starts a new board, so it can never overwrite a board you've already saved
-    openBoard({ ...d, settings }, d.title ?? null, null, null, null)
+    try { sessionStorage.removeItem("ps-new-folder") } catch { /* fine */ }
+    openBoard(d, d.title ?? null, null, null, null)
     setShowTemplates(false)
   }
-  const deleteTemplate = (id: string) => saveTemplates(templates.filter(t => t.id !== id))
   /** Opens the Library. Templates kept in this browser (from before the Library) move into your account first, as boards in a folder called Templates. */
   const openLibrary = async () => {
     if (!authUser) { navigateBoard("/signin"); return }
@@ -6435,13 +6103,8 @@ function TacticsBoard() {
         </div>
       </div>
 
-      {/* ── Template modal ── */}
-      {showTemplates && (
-        <TemplateModal
-          templates={templates} onClose={() => setShowTemplates(false)}
-          onLoad={loadTemplate} onSave={saveTemplate}
-          onDelete={deleteTemplate} />
-      )}
+      {/* ── The three examples ── */}
+      {showTemplates && <ExamplesModal onClose={() => setShowTemplates(false)} onPick={loadExample} />}
 
       {/* ── First-visit tour ── */}
       {showTour && <Tour onDone={() => setShowTour(false)} />}
