@@ -26,6 +26,7 @@ import {
 import { NotesBlock, NotesEditor, notesLayout, editorRoom, cleanPoints, pointsFrom, MAX_POINTS, POINT_MAX } from "./board/Notes"
 import { STAGE_CSS, Dock, ViewControls, PresentBar, AreaPicker, AreaMap, readDock, readPanelSide, savePanelSide, type DockPlace, type DockItem, type PanelSide } from "./board/Stage"
 import { NameRun, TeamSheet, NAMES_CSS, splitNumber, type NameRunPlayer } from "./board/Names"
+import { Library } from "./board/Library"
 import { shrinkForBoard, imageProblem } from "./lib/images"
 import { Mark } from "./brand/Mark"
 import { CreatorSeal, SealDisc } from "./brand/Signature"
@@ -2621,6 +2622,10 @@ function TacticsBoard() {
     if (!authUser) { if (!auto) navigateBoard("/signin"); return Promise.resolve(false) }
     if (renderEpoch !== boardEpochRef.current) return Promise.resolve(false) // left over from a board that's no longer open
     setShowSaveMenu(false)
+    if (!currentBoardIdRef.current && !players.length && !arrows.length && !texts.length && !shapes.length && !images.length && !customZones.length) {
+      if (!auto) setExportNote("Put something on the pitch first: an empty board isn't saved")
+      return Promise.resolve(false) // empty boards never pile up in your Library
+    }
     if (forceNew && copyRef.current) return copyRef.current // a copy is already on its way
     const running = savePromiseRef.current
     if (running && !forceNew) return running // one save at a time
@@ -2694,13 +2699,17 @@ function TacticsBoard() {
       else if (!res.data?.length) conflict = true
       else newUpdatedAt = res.data[0].updated_at ?? null
     } else {
+      // A board started from a folder in the Library goes into that folder (if the folder's still there)
+      let folder: string | null = null
+      try { folder = forceNew ? null : sessionStorage.getItem("ps-new-folder") } catch { /* no storage */ }
+      if (folder) { const f = await (supabase as any).from("board_folders").select("id").eq("id", folder).maybeSingle(); if (!f?.data) folder = null }
       const res = await withTimeout<any>(signal => (supabase as any).from("boards")
-        .insert({ user_id: uid, ...row })
+        .insert({ user_id: uid, ...row, ...(folder ? { folder_id: folder } : {}) })
         .select("id, updated_at")
         .abortSignal(signal)
         .single(), ms)
       if (!res || res.error) { failed = true; console.error("Save board error:", res ? res.error.message : "no answer") }
-      else { newId = res.data?.id ?? null; newUpdatedAt = res.data?.updated_at ?? null }
+      else { newId = res.data?.id ?? null; newUpdatedAt = res.data?.updated_at ?? null; try { sessionStorage.removeItem("ps-new-folder") } catch { /* fine */ } }
     }
     // Another board was opened (or the board was cleared) while this save ran: the save itself is done,
     // but it must not touch the board that's open now.
@@ -4649,6 +4658,27 @@ function TacticsBoard() {
     setShowTemplates(false)
   }
   const deleteTemplate = (id: string) => saveTemplates(templates.filter(t => t.id !== id))
+  /** Opens the Library. Templates kept in this browser (from before the Library) move into your account first, as boards in a folder called Templates. */
+  const openLibrary = async () => {
+    if (!authUser) { navigateBoard("/signin"); return }
+    const old = templates
+    if (old.length) {
+      const f = await (supabase as any).from("board_folders").insert({ user_id: authUser.id, name: "Templates" }).select("id").single()
+      if (!f.error && f.data?.id) {
+        const rows = old.map(t => ({ user_id: authUser.id, title: (t.name || "Template").slice(0, 80), canvas_data: normalizeBoardData(t.data), narrative: "", folder_id: f.data.id }))
+        const r = await (supabase as any).from("boards").insert(rows)
+        if (!r.error) saveTemplates([])
+      }
+    }
+    setShowMyBoards(true)
+  }
+  /** A new board from the Library: inside a folder, it's saved into that folder */
+  const newBoardFrom = async (folder: string | null) => {
+    if (!(await confirmLeave())) return
+    try { if (folder) sessionStorage.setItem("ps-new-folder", folder); else sessionStorage.removeItem("ps-new-folder") } catch { /* fine */ }
+    setShowMyBoards(false)
+    navigateBoard("/board")
+  }
 
   drawingRef.current = !!arrowDraft || !!polyDraft
   /* ── Selected element refs ── */
@@ -4851,24 +4881,18 @@ function TacticsBoard() {
         <div className="flex flex-1 justify-end items-center gap-1.5 min-w-0">
           {/* New board: a fresh board, one press away */}
           {authUser && (
-            <button onClick={async () => { if (await confirmLeave()) navigateBoard("/board") }} title="New board" aria-label="New board"
+            <button onClick={() => newBoardFrom(null)} title="New board" aria-label="New board"
               className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors hover:brightness-110"
               style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
               <Plus size={13} /> <span className="whitespace-nowrap">New</span>
             </button>
           )}
-          {/* Templates */}
-          <button onClick={() => setShowTemplates(true)} title="Templates"
-            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
-            style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
-            <BookOpen size={13} /> <span className="hidden min-[1600px]:inline whitespace-nowrap">Templates</span>
-          </button>
-          {/* My Boards */}
+          {/* The Library: every board you've saved, in your folders */}
           {authUser && (
-            <button onClick={() => setShowMyBoards(true)} title="My Boards"
+            <button onClick={openLibrary} title="Library: all your boards and folders"
               className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-colors"
               style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>
-              <FolderOpen size={13} /> <span className="hidden min-[1440px]:inline whitespace-nowrap">My Boards</span>
+              <FolderOpen size={13} /> <span className="hidden min-[1280px]:inline whitespace-nowrap">Library</span>
             </button>
           )}
           {/* Undo/Redo */}
@@ -4974,12 +4998,11 @@ function TacticsBoard() {
                   </p>
                 )}
                 {([
-                  { label: "Templates", icon: <BookOpen size={13} />, run: () => setShowTemplates(true), narrow: true },
-                  ...(authUser ? [{ label: "My Boards", icon: <FolderOpen size={13} />, run: () => setShowMyBoards(true), narrow: true }] : []),
+                  ...(authUser ? [{ label: "Library", icon: <FolderOpen size={13} />, run: openLibrary, narrow: true }] : []),
                   { label: "Undo", icon: <RotateCcw size={13} />, run: undo, narrow: true },
                   { label: "Redo", icon: <RotateCw size={13} />, run: redo, narrow: true },
                   ...(authUser ? [
-                    { label: "New board", icon: <Plus size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/board") } },
+                    { label: "New board", icon: <Plus size={13} />, run: () => newBoardFrom(null) },
                     { label: "Dump & Arrange", icon: <Pencil size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/braindump", { state: { resume: true } }) } },
                     { label: "Creator profile", icon: <Settings size={13} />, run: async () => { if (await confirmLeave()) navigateBoard("/profile") } },
                   ] : []),
@@ -6423,25 +6446,26 @@ function TacticsBoard() {
       {/* ── First-visit tour ── */}
       {showTour && <Tour onDone={() => setShowTour(false)} />}
 
-      {/* ── My Boards modal ── */}
+      {/* ── The Library ── */}
       {showMyBoards && authUser && (
-        <MyBoardsModal
-          userId={authUser.id}
-          currentBoardId={currentBoardId}
+        <Library userId={authUser.id} currentId={currentBoardId} cols={BOARD_CARD_COLS} cardOf={boardCardOf} Thumb={DropThumb} ago={hubRelTime}
+          settle={id => (id ? waitForBoardSave(id) : waitForSaves(5000))}
           onClose={() => setShowMyBoards(false)}
-          onLoad={async (canvasData, boardTitle, boardId, boardNarrative, boardUpdatedAt) => {
-            const ok = await confirmLeave()
-            // The board that's already open: keep what's on screen (it's newer than what the list fetched)
+          onNew={newBoardFrom}
+          onOpen={async boardId => {
+            // The board that's already open: keep what's on screen (it's newer than anything fetched)
             if (boardId === currentBoardIdRef.current) { setShowMyBoards(false); return }
-            if (!ok) return
-            openBoard(canvasData, boardTitle, boardId, boardNarrative, boardUpdatedAt)
+            await waitForBoardSave(boardId) // a save to this board that's still on its way lands first
+            const { data } = await supabase.from("boards").select("canvas_data, title, narrative, updated_at").eq("id", boardId).single()
+            if (!data || !(await confirmLeave())) return
+            openBoard((data as any).canvas_data, (data as any).title, boardId, (data as any).narrative ?? null, (data as any).updated_at ?? null)
             setShowMyBoards(false)
           }}
-          onBoardDeleted={(id) => {
+          onDeleted={id => {
             // The open board was deleted: what's on screen stays, and only changes you make from now on count as unsaved
             if (id === currentBoardIdRef.current) { bindBoard(null); loadedUpdatedAtRef.current = null; conflictRef.current = false; unsureRef.current = [] }
           }}
-          onBoardRenamed={(id, t) => { if (id === currentBoardIdRef.current) setTitle(t) }}
+          onRenamed={(id, t) => { if (id === currentBoardIdRef.current) setTitle(t) }}
         />
       )}
 
@@ -6540,193 +6564,6 @@ export const boardCardOf = (r: any): BoardCardRow => {
     id: r.id, title: listName("Board", r.title, r.updated_at), updated_at: r.updated_at,
     thumb: { players: list(r.players), arrows: list(r.arrows), shapes: list(r.shapes), customZones: list(r.zones), texts: [], images: [], settings, title: "", bgColor: settings.bgColor, showPitch: true },
   }
-}
-
-/** Every board you've saved, as cards with a picture: click one to open it; ⋯ renames, duplicates or deletes it */
-function BoardGrid({ userId, currentId = null, onOpen, onDeleted, onRenamed, empty, min = 220 }: {
-  userId: string
-  currentId?: string | null
-  onOpen: (b: BoardCardRow) => Promise<void> | void
-  onDeleted?: (id: string) => void
-  onRenamed?: (id: string, title: string) => void
-  empty: string
-  min?: number
-}) {
-  const [boards, setBoards] = useState<BoardCardRow[] | null>(null)
-  const [note, setNote] = useState("")
-  const [openingId, setOpeningId] = useState<string | null>(null)
-  const [menuId, setMenuId] = useState<string | null>(null)
-  const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null)
-  const [confirmId, setConfirmId] = useState<string | null>(null)
-  const [busyId, setBusyId] = useState<string | null>(null)
-
-  const fetchBoards = async () => {
-    setNote("")
-    await waitForSaves(5000) // a save still on its way would make the list out of date
-    const { data, error } = await supabase.from("boards").select(BOARD_CARD_COLS)
-      .eq("user_id", userId).order("updated_at", { ascending: false }).limit(60)
-    if (error) { setNote("Couldn't load your boards. Check your connection."); setBoards(b => b ?? []); return }
-    setBoards((data ?? []).map(boardCardOf))
-  }
-  useEffect(() => { fetchBoards() }, [userId])
-  useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(""), 5000); return () => clearTimeout(t) }, [note])
-
-  const open = async (b: BoardCardRow) => {
-    if (openingId || renaming?.id === b.id) return // one at a time
-    setOpeningId(b.id)
-    try { await onOpen(b) } finally { setOpeningId(null) }
-  }
-  const rename = async () => {
-    if (!renaming) return
-    const b = boards?.find(x => x.id === renaming.id), text = renaming.text.trim().slice(0, 80)
-    setRenaming(null)
-    if (!b || !text || text === b.title) return
-    const { data, error } = await (supabase as any).from("boards").update({ title: text }).eq("id", b.id).eq("user_id", userId).select("id")
-    if (error || !data?.length) { setNote(`Couldn't rename "${b.title}". Try again.`); return }
-    setBoards(list => (list ?? []).map(x => (x.id === b.id ? { ...x, title: text } : x)))
-    onRenamed?.(b.id, text)
-  }
-  const duplicate = async (b: BoardCardRow) => {
-    setBusyId(b.id)
-    await waitForBoardSave(b.id)
-    const { data: src } = await supabase.from("boards").select("canvas_data, narrative").eq("id", b.id).single()
-    const title = `${b.title} (copy)`.slice(0, 80)
-    // a copy is a new piece: it takes its own issue number when it's first exported
-    const cd = (src as any)?.canvas_data, copy = cd && typeof cd === "object" && cd.settings ? { ...cd, settings: { ...cd.settings, issueNo: 0, issueDay: "" } } : cd
-    const res = src ? await (supabase as any).from("boards").insert({ user_id: userId, title, canvas_data: copy, narrative: (src as any).narrative ?? "" }).select("id, updated_at").single() : null
-    setBusyId(null)
-    if (!res || res.error || !res.data?.id) { setNote(`Couldn't duplicate "${b.title}". Try again.`); return }
-    setBoards(list => [{ ...b, id: res.data.id, title, updated_at: res.data.updated_at ?? new Date().toISOString() }, ...(list ?? [])])
-  }
-  const remove = async (b: BoardCardRow) => {
-    setBusyId(b.id)
-    const { error } = await supabase.from("boards").delete().eq("id", b.id).eq("user_id", userId)
-    setBusyId(null); setConfirmId(null)
-    if (error) { setNote(`Couldn't delete "${b.title}". Check your connection and try again.`); return }
-    setBoards(list => (list ?? []).filter(x => x.id !== b.id))
-    onDeleted?.(b.id)
-  }
-
-  const item = (text: string, run: () => void, danger = false) => (
-    <button key={text} onClick={() => { setMenuId(null); run() }}
-      className="w-full text-left px-3 py-2 text-xs transition-colors hover:bg-[var(--ps-hover)]" style={{ color: danger ? DS_ERROR : TEXT_PRIMARY }}>{text}</button>
-  )
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase" style={{ color: TEXT_MUTED, letterSpacing: "0.1em", margin: 0 }}>
-          Your boards{boards ? ` · ${boards.length}` : ""}
-        </p>
-        <p className="text-xs" style={{ color: TEXT_MUTED, margin: 0 }}>Newest first</p>
-      </div>
-      {note && (
-        <div className="flex items-center gap-2 rounded px-3 py-2 text-xs" style={{ background: "rgba(248,81,73,0.12)", color: TEXT_PRIMARY }}>
-          <AlertCircle size={13} style={{ color: DS_ERROR, flexShrink: 0 }} /> <span className="flex-1">{note}</span>
-          <button onClick={fetchBoards} className="font-semibold hover:underline" style={{ color: TEXT_PRIMARY }}>Reload</button>
-        </div>
-      )}
-      {boards === null && (
-        <div className="flex items-center justify-center py-12 gap-2 text-sm" style={{ color: TEXT_MUTED }}>
-          <Clock size={14} className="animate-spin" /> Loading boards…
-        </div>
-      )}
-      {boards?.length === 0 && <p className="text-center py-10 text-sm" style={{ color: TEXT_MUTED }}>{empty}</p>}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${min}px, 1fr))`, gap: 12 }}>
-        {(boards ?? []).map(b => {
-          const here = b.id === currentId
-          return (
-            <div key={b.id} className="rounded-lg border relative" style={{ background: SURFACE_1, borderColor: here ? ACCENT_SOLID : DS_BORDER }}>
-              <button onClick={() => open(b)} aria-label={`Open ${b.title}`} title={`Open ${b.title}`}
-                className="block w-full overflow-hidden transition-opacity hover:opacity-90" style={{ borderRadius: "8px 8px 0 0", padding: 0, border: "none", cursor: "pointer" }}>
-                <DropThumb data={b.thumb} />
-              </button>
-              <div className="flex items-start gap-2 px-3 py-2.5">
-                <div className="flex-1 min-w-0">
-                  {renaming?.id === b.id ? (
-                    <input autoFocus value={renaming.text} maxLength={80} aria-label="Board name"
-                      onChange={e => setRenaming({ id: b.id, text: e.target.value })} onBlur={rename}
-                      onKeyDown={e => { if (e.key === "Enter") rename(); if (e.key === "Escape") setRenaming(null) }}
-                      className="w-full rounded px-1.5 py-0.5 text-sm font-semibold outline-none"
-                      style={{ background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${ACCENT_SOLID}` }} />
-                  ) : (
-                    <button onClick={() => setRenaming({ id: b.id, text: b.title })} title="Click to rename"
-                      className="block max-w-full truncate text-left text-sm font-semibold" style={{ color: TEXT_PRIMARY, background: "transparent", border: "none", padding: 0 }}>{b.title}</button>
-                  )}
-                  <p className="text-xs mt-0.5" style={{ color: here ? ACCENT_SOLID : TEXT_MUTED, margin: 0 }}>
-                    {renaming?.id === b.id ? "Press Enter to save" : openingId === b.id ? "Opening…" : busyId === b.id ? "Working…" : here ? "Open now" : `Edited ${hubRelTime(b.updated_at)}`}
-                  </p>
-                </div>
-                <div className="relative flex-shrink-0">
-                  <button onClick={() => setMenuId(m => (m === b.id ? null : b.id))} aria-label={`More for ${b.title}`} aria-expanded={menuId === b.id} title="Rename, duplicate or delete"
-                    className="p-1 rounded hover:bg-[var(--ps-hover)]" style={{ color: TEXT_MUTED }}><MoreHorizontal size={16} /></button>
-                  {menuId === b.id && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setMenuId(null)} />
-                      <div className="absolute right-0 top-full mt-1 w-36 rounded-lg border shadow-xl z-50 py-1" style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
-                        {item("Rename", () => setRenaming({ id: b.id, text: b.title }))}
-                        {item("Duplicate", () => duplicate(b))}
-                        {item("Delete…", () => setConfirmId(b.id), true)}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-              {confirmId === b.id && (
-                <div className="absolute inset-0 rounded-lg flex flex-col items-center justify-center gap-3 p-4 text-center" style={{ background: "rgba(20,21,24,0.94)", zIndex: 5 }}>
-                  <p className="text-sm font-semibold" style={{ color: TEXT_PRIMARY, margin: 0 }}>Delete “{b.title}”?</p>
-                  <p className="text-xs" style={{ color: TEXT_MUTED, margin: 0 }}>This can't be undone.</p>
-                  <div className="flex gap-2">
-                    <button onClick={() => setConfirmId(null)} className="px-3 py-1.5 rounded text-xs font-semibold" style={{ background: SURFACE_2, color: TEXT_PRIMARY }}>Cancel</button>
-                    <button onClick={() => remove(b)} disabled={busyId === b.id} className="px-3 py-1.5 rounded text-xs font-semibold disabled:opacity-60" style={{ background: DS_ERROR, color: "#ffffff" }}>
-                      {busyId === b.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-/* ─────────────────────────── My Boards Modal ───────────────── */
-function MyBoardsModal({ userId, currentBoardId, onClose, onLoad, onBoardDeleted, onBoardRenamed }: {
-  userId: string
-  currentBoardId: string | null
-  onClose: () => void
-  onLoad: (canvasData: unknown, title: string, id: string, narrative: string | null, updatedAt: string | null) => Promise<void> | void
-  onBoardDeleted: (id: string) => void
-  onBoardRenamed: (id: string, title: string) => void
-}) {
-  const open = async (b: BoardCardRow) => {
-    await waitForBoardSave(b.id) // a save to this board that's still on its way lands first
-    const { data } = await supabase.from("boards").select("canvas_data, title, narrative, updated_at").eq("id", b.id).single()
-    if (data) await onLoad((data as any).canvas_data, (data as any).title, b.id, (data as any).narrative ?? null, (data as any).updated_at ?? null)
-  }
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: SCRIM }}
-      onClick={onClose}>
-      <div className="relative w-full max-h-[80vh] flex flex-col rounded-xl border overflow-hidden"
-        style={{ background: SURFACE_BASE, borderColor: DS_BORDER_STRONG, maxWidth: 760 }}
-        onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: DS_BORDER, background: SURFACE_1 }}>
-          <div className="flex items-center gap-2">
-            <FolderOpen size={16} style={{ color: ACCENT_SOLID }} />
-            <span className="font-semibold" style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.06em", fontSize: 16 }}>
-              MY BOARDS
-            </span>
-          </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--ps-hover)]"><X size={16} /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4">
-          <BoardGrid userId={userId} currentId={currentBoardId} onOpen={open} onDeleted={onBoardDeleted} onRenamed={onBoardRenamed} min={200}
-            empty="No saved boards yet. Press Save to keep your work." />
-        </div>
-      </div>
-    </div>
-  )
 }
 
 /* ─────────────────────────── Lanes Overlay ─────────────────── */
