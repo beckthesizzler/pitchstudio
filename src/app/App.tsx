@@ -2148,7 +2148,17 @@ function TacticsBoard() {
   const [showTemplates, setShowTemplates] = useState(false)
   const [sideTab, setSideTab] = useState<"selected" | "board">("board")
   const [panelOpen, setPanelOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 900 : true)
-  const [boardGroups, setBoardGroups] = useState({ match: true, teams: true, look: false, crop: false })
+  // On a short screen (a laptop) one section is open at a time, so the panel never needs a long scroll
+  const shortScreen = () => typeof window !== "undefined" && window.innerHeight < 860
+  const [boardGroups, setBoardGroups] = useState(() => ({ match: true, teams: !shortScreen(), look: false, crop: false }))
+  // The panel's width: drag its inner edge (260 to 440), double-click the edge for 300 again. Kept on this device.
+  const [panelW, setPanelW] = useState(() => { try { const w = Number(localStorage.getItem("ps-panel-w")); return w >= 260 && w <= 440 ? w : 300 } catch { return 300 } })
+  const panelDrag = useRef<{ x: number; w: number } | null>(null)
+  useEffect(() => { // ⌘\ (Ctrl+\) hides or shows the panel
+    const onKey = (e: KeyboardEvent) => { if (e.key === "\\" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); setPanelOpen(v => !v) } }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
   const [textLayer, setTextLayer] = useState<"foreground" | "background">("foreground")
   const [homeFormation, setHomeFormation] = useState("")
   const [homeShape, setHomeShape] = useState<TeamShape>("base")
@@ -4451,7 +4461,7 @@ function TacticsBoard() {
 
   /** A group's head in the Board tab: tap to open or close it */
   const groupHead = (key: keyof typeof boardGroups, label: string, tour?: string) => (
-    <button data-tour={tour} aria-expanded={boardGroups[key]} onClick={() => setBoardGroups(g => ({ ...g, [key]: !g[key] }))}
+    <button data-tour={tour} aria-expanded={boardGroups[key]} onClick={() => setBoardGroups(g => (!g[key] && shortScreen() ? { match: false, teams: false, look: false, crop: false, [key]: true } : { ...g, [key]: !g[key] }))}
       className="w-full flex items-center gap-2 px-3 transition-colors ps-sec hover:bg-[var(--ps-hover)]"
       style={{ height: 36, background: "transparent", border: "none", borderBottom: `1px solid ${DS_BORDER}`, cursor: "pointer", color: TEXT_MUTED }}>
       {boardGroups[key] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -4476,6 +4486,8 @@ function TacticsBoard() {
         .ps-start-go { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 20px; border: none; border-radius: 11px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 14px 'Inter', sans-serif; cursor: pointer; transition: transform .15s, filter .15s; }
         .ps-start-go:hover { filter: brightness(1.05); transform: translateY(-1px); }
         .ps-start-go:focus-visible, .ps-start-alt button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+        .ps-panel-edge { position: absolute; top: 14px; bottom: 14px; width: 8px; z-index: 5; cursor: col-resize; border-radius: 4px; transition: background .15s; touch-action: none; }
+        .ps-panel-edge:hover, .ps-panel-edge:focus-visible { background: rgba(215,255,60,.35); outline: none; }
         .ps-start-shapes { display: flex; justify-content: center; gap: 4px; margin: 0 0 12px; }
         .ps-start-shapes button { height: 26px; padding: 0 8px; border-radius: 7px; border: 1px solid rgba(255,255,255,.13); background: transparent; color: #a9a9b3; font: 700 12px 'Inter', sans-serif; cursor: pointer; transition: border-color .15s, color .15s; }
         .ps-start-shapes button:hover { color: #fff; }
@@ -4695,7 +4707,16 @@ function TacticsBoard() {
       <div className="flex flex-1 overflow-hidden">
         {panelOpen && !presenting && (
         <aside className="st-glass st-panel" data-panel-side={panelSide}
-          style={{ order: panelSide === "right" ? 2 : 0, width: 300, flexShrink: 0, margin: panelSide === "right" ? "12px 12px 12px 0" : "12px 0 12px 12px", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          style={{ order: panelSide === "right" ? 2 : 0, width: panelW, flexShrink: 0, margin: panelSide === "right" ? "12px 12px 12px 0" : "12px 0 12px 12px", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+          {/* Drag this edge to make the panel wider or narrower */}
+          <div className="ps-panel-edge" role="separator" aria-orientation="vertical" aria-label="Panel width" aria-valuemin={260} aria-valuemax={440} aria-valuenow={panelW} tabIndex={0}
+            title="Drag to resize · double-click for the usual width"
+            style={{ [panelSide === "right" ? "left" : "right"]: 0 }}
+            onPointerDown={e => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); panelDrag.current = { x: e.clientX, w: panelW } }}
+            onPointerMove={e => { const d = panelDrag.current; if (!d) return; const dx = (e.clientX - d.x) * (panelSide === "right" ? -1 : 1); setPanelW(Math.round(Math.min(440, Math.max(260, d.w + dx)))) }}
+            onPointerUp={() => { if (!panelDrag.current) return; panelDrag.current = null; try { localStorage.setItem("ps-panel-w", String(panelW)) } catch { /* fine */ } }}
+            onDoubleClick={() => { setPanelW(300); try { localStorage.removeItem("ps-panel-w") } catch { /* fine */ } }}
+            onKeyDown={e => { const k = e.key === "ArrowLeft" ? -20 : e.key === "ArrowRight" ? 20 : 0; if (!k) return; e.preventDefault(); const w = Math.min(440, Math.max(260, panelW + k * (panelSide === "right" ? -1 : 1))); setPanelW(w); try { localStorage.setItem("ps-panel-w", String(w)) } catch { /* fine */ } }} />
           <div style={{ display: "flex", alignItems: "center", gap: 6, margin: 10, flexShrink: 0 }}>
           <div style={{ flex: 1, display: "flex", gap: 2, padding: 3, borderRadius: 10, background: SURFACE_2 }}>
             {(["board", "selected"] as const).map(t => (
@@ -4710,6 +4731,10 @@ function TacticsBoard() {
             <button aria-label={panelSide === "right" ? "Move the panel to the left" : "Move the panel to the right"} title={panelSide === "right" ? "Move the panel to the left" : "Move the panel to the right"} onClick={movePanel}
               style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 10, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: SURFACE_2, color: TEXT_MUTED }}>
               {panelSide === "right" ? <ArrowLeftToLine size={16} /> : <ArrowRightToLine size={16} />}
+            </button>
+            <button aria-label="Hide the panel" title={`Hide the panel (${isMac ? "⌘" : "Ctrl+"}\\)`} onClick={() => setPanelOpen(false)}
+              style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 10, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: SURFACE_2, color: TEXT_MUTED }}>
+              {panelSide === "right" ? <PanelLeftOpen size={16} style={{ transform: "scaleX(-1)" }} /> : <PanelLeftClose size={16} />}
             </button>
           </div>
 
@@ -6174,7 +6199,7 @@ function TacticsBoard() {
             {([
               { header: "TOOLS", rows: [["Select","V"],["Pan","H"],["Home player","1"],["Away player","2"],["✕ marker","X"],["Ball","B"],["Arrow","A"],["Text","T"],["Shapes","S"],["Zone","Z"],["Upload image","I"]] },
               { header: "EDIT", rows: [["Undo","Ctrl+Z"],["Redo","Ctrl+Shift+Z"],["Duplicate","Ctrl+D"],["Copy","Ctrl+C"],["Paste","Ctrl+V"],["Delete","Del"]] },
-              { header: "VIEW", rows: [["Zoom in (up to 200%)","+"],["Zoom out (down to 80%)","−"],["Back to 100%","0"],["Deselect / cancel","Esc"]] },
+              { header: "VIEW", rows: [["Zoom in (up to 200%)","+"],["Zoom out (down to 80%)","−"],["Back to 100%","0"],["Hide or show the panel","Ctrl+\\"],["Deselect / cancel","Esc"]] },
               { header: "SELECTION", rows: [["Add to selection","Shift+click"],["Box-select","Drag on empty board"],["Select all","Ctrl+A"],["Nudge","Arrow keys"],["Nudge further","Shift+Arrow keys"],["More actions","Right-click"],["Pan canvas","Alt+drag"]] },
               { header: "STEPS", rows: [["Play the move / stop","P"],["Previous step","["],["Next step","]"]] },
             ] as { header: string; rows: [string, string][] }[]).map(group => (
