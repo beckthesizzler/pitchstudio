@@ -4113,7 +4113,23 @@ function TacticsBoard() {
     // a board that took a number is saved now, so the number always belongs to a board in your account
     if (n && !currentBoardId) await saveBoardRef.current().catch(() => false)
   }
-  const doExport = async (fmt: "png" | "jpeg" | "pdf" | "copy") => {
+  /** Share link: the board is saved, its picture goes up, and anyone with the link sees it (and can remix a copy into their own Library) */
+  const [sharedId, setSharedId] = useState<string | null>(null) // the open board, when it's shared
+  useEffect(() => {
+    if (!currentBoardId || !authUser) { setSharedId(null); return }
+    let off = false
+    ;(supabase as any).from("boards").select("is_public").eq("id", currentBoardId).maybeSingle().then(({ data }: { data: { is_public: boolean | null } | null }) => { if (!off) setSharedId(data?.is_public ? currentBoardId : null) })
+    return () => { off = true }
+  }, [currentBoardId, authUser?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const stopSharing = async () => {
+    const id = currentBoardIdRef.current
+    if (!id || !authUser) return
+    const r = await (supabase as any).from("boards").update({ is_public: false }).eq("id", id).eq("user_id", authUser.id)
+    if (r.error) { setExportNote("Couldn't stop sharing. Try again."); return }
+    await supabase.storage.from("board-shares").remove([`${id}.jpg`]).catch(() => null)
+    setSharedId(null); setExportNote("Not shared any more: the link shows nothing now")
+  }
+  const doExport = async (fmt: "png" | "jpeg" | "pdf" | "copy" | "share") => {
     if (!pitchRef.current) return
     exportStarted("board", fmt)
     const node = pitchRef.current
@@ -4136,6 +4152,25 @@ function TacticsBoard() {
         ...(view3d ? { backgroundColor: bgColor, style: { transform: `${UPRIGHT_3D} scale(0.86)`, transformOrigin: "center center" } } : {}),
       }
       const file = title.trim() ? name : safeFileName(autoName.current) // an unnamed board's file takes its day name
+      if (fmt === "share") {
+        if (!authUser) { navigateBoard("/signin"); return }
+        await saveBoardRef.current().catch(() => false) // the link always shows a saved board
+        const id = currentBoardIdRef.current
+        if (!id) { setExportNote("Put something on the pitch and save it, then share it"); return }
+        const pic = await toJpeg(node, { ...opts, quality: 0.9, backgroundColor: bgColor })
+        const blob = await (await fetch(pic)).blob()
+        const up = await supabase.storage.from("board-shares").upload(`${id}.jpg`, blob, { upsert: true, contentType: "image/jpeg", cacheControl: "60" })
+        if (up.error) throw up.error
+        const r = await (supabase as any).from("boards").update({ is_public: true }).eq("id", id).eq("user_id", authUser.id)
+        if (r.error) throw r.error
+        const link = `${window.location.origin}/b/${id}`
+        let copied = true
+        try { await navigator.clipboard.writeText(link) } catch { copied = false }
+        setSharedId(id)
+        setExportNote(copied ? "Link copied: anyone with it sees this board and can remix a copy" : `Your link: ${link}`)
+        ;(window as any).posthog?.capture("board_shared")
+        return
+      }
       if (fmt === "copy") {
         const blob = await toBlob(node, opts)
         if (!blob) throw new Error("no image")
@@ -4641,7 +4676,7 @@ function TacticsBoard() {
               <Download size={13} /> <span className="hidden sm:inline">Export</span> <ChevronDown size={11} />
             </button>
             {headerMenu === "export" && (
-              <div className="absolute right-0 top-full mt-1 w-36 rounded shadow-xl border z-50 flex flex-col"
+              <div className="absolute right-0 top-full mt-1 w-44 rounded shadow-xl border z-50 flex flex-col"
                 style={{ background: SURFACE_1, borderColor: DS_BORDER }}>
                 {(["png", "jpeg", "pdf", "gif", "mp4", "copy"] as const).map(f => {
                   const off = (f === "gif" || f === "mp4") && stepList.length < 2 // a GIF or a video needs a move: 2 steps or more
@@ -4654,6 +4689,18 @@ function TacticsBoard() {
                     </button>
                   )
                 })}
+                {authUser && (
+                  <button onClick={() => { setHeaderMenu(null); doExport("share") }} title="A link anyone can open: they see the board and can remix a copy"
+                    className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-[var(--ps-hover)] transition-colors text-left font-semibold"
+                    style={{ borderTop: `1px solid ${DS_BORDER}`, color: TEXT_PRIMARY }}>
+                    <Waypoints size={12} /> {sharedId && sharedId === currentBoardId ? "Update share link" : "Share link"}
+                  </button>
+                )}
+                {sharedId && sharedId === currentBoardId && (
+                  <button onClick={() => { setHeaderMenu(null); stopSharing() }} className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-[var(--ps-hover)] transition-colors text-left font-semibold" style={{ color: TEXT_MUTED }}>
+                    <X size={12} /> Stop sharing
+                  </button>
+                )}
                 <button role="menuitemcheckbox" aria-checked={endCard} onClick={() => { undoPoint(); setEndCard(v => !v) }} title="Your crest and handle at the end of a GIF or a video"
                   className="flex items-center justify-between gap-2 px-3 py-2 text-xs hover:bg-[var(--ps-hover)] transition-colors text-left font-semibold"
                   style={{ borderTop: `1px solid ${DS_BORDER}`, color: TEXT_PRIMARY }}>

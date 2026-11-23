@@ -18,6 +18,7 @@ const ReportPage = lazy(() => import("./pages/Report")) // only downloaded when 
 const BrainDumpPage = lazy(() => import("./pages/BrainDump")) // only downloaded when someone opens Brain Dump
 const ShelfPage = lazy(() => import("./pages/Shelf")) // only downloaded when someone opens their shelf
 const PublicCardPage = lazy(() => import("./pages/PublicCard")) // a creator's public card, open to anyone
+const SharedBoardPage = lazy(() => import("./pages/SharedBoard")) // a board its owner shared: open to anyone, with Remix
 const WelcomePage = lazy(() => import("./pages/Welcome")) // "Your studio is open", once, after sign-up
 
 /* ─────────────────────────── Error Boundary ────────────────── */
@@ -185,6 +186,7 @@ export default function Root() {
           <Route path="/goodbye" element={<Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><GoodbyePage /></Suspense>} />
           <Route path="/profile" element={authUser ? <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><ProfilePage /></Suspense> : <Navigate to="/" replace />} />
           <Route path="/welcome" element={authUser ? <Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><WelcomePage /></Suspense> : <Navigate to="/" replace />} />
+          <Route path="/b/:id" element={<Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><SharedBoardPage /></Suspense>} />
           <Route path="/c/:handle" element={<Suspense fallback={<div style={{ minHeight: "100vh", background: SURFACE_BASE }} />}><PublicCardPage /></Suspense>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
