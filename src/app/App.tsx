@@ -997,6 +997,37 @@ interface Squad { id: string; name: string; teamName: string; kit: { pat: KitPat
 const SQUADS_KEY = "ps-squads"
 /** Names you've put on a board lately (newest first), kept in this browser so naming can suggest them */
 const NAMES_KEY = "ps-recent-names"
+/* Real squads: football-data.org's free competitions, kept in our database (squad_cache) by the squads-sync function.
+   A board finds its teams by the names on it; a pick brings the shirt number too. */
+type SquadMan = { n: string; f?: string; num?: number | null; pos?: string | null }
+const SQUAD_ALIASES: Record<string, string> = {
+  barca: "barcelona", "man utd": "manchester united", "man united": "manchester united", "man city": "manchester city", spurs: "tottenham",
+  atleti: "atletico", inter: "internazionale", "inter milan": "internazionale", psg: "paris saint-germain", juve: "juventus", bayern: "bayern munchen",
+  bvb: "dortmund", real: "real madrid", wolves: "wolverhampton", milan: "ac milan", "athletic club": "athletic", "athletic bilbao": "athletic",
+}
+const plainName = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 -]/g, " ").replace(/\s+/g, " ").trim()
+const squadSeen = new Map<string, Promise<SquadMan[]>>()
+function findSquad(name: string): Promise<SquadMan[]> {
+  let q = plainName(name)
+  q = SQUAD_ALIASES[q] ?? q.replace(/^(fc|cf|afc|ac|as|ssc|sc|rc|cd|ud|sl|sv|vfb|vfl|1 fc) /, "").replace(/ (fc|cf|afc)$/, "")
+  if (q.length < 3) return Promise.resolve([])
+  if (!squadSeen.has(q)) squadSeen.set(q, (async () => {
+    try {
+      const { data } = await (supabase as any).from("squad_cache").select("name, search, squad").ilike("search", `%${q}%`).limit(8)
+      const rows = ((data ?? []) as { name: string; search: string; squad: SquadMan[] }[]).filter(r => Array.isArray(r.squad) && r.squad.length)
+      rows.sort((a, b) => Number(!a.search.startsWith(q) && !a.search.includes(" " + q)) - Number(!b.search.startsWith(q) && !b.search.includes(" " + q)) || a.name.length - b.name.length)
+      return rows[0]?.squad ?? []
+    } catch { squadSeen.delete(q); return [] }
+  })())
+  return squadSeen.get(q)!
+}
+/** Which line a spot on the pitch is (GK, defence, midfield, attack), and the same for a squad player's position, so the likely names come first */
+const SLOT_D = new Set(["RB", "CB", "LB", "RWB", "LWB", "SW", "RCB", "LCB"]), SLOT_M = new Set(["DM", "CM", "AM", "RM", "LM", "CDM", "CAM", "RCM", "LCM"])
+const slotLine = (pos?: string) => (!pos ? "" : pos === "GK" ? "G" : SLOT_D.has(pos) ? "D" : SLOT_M.has(pos) ? "M" : "F")
+const SLOT_POS: Record<string, RegExp> = { GK: /goal/i, RB: /right.?back|right.?wing.?back/i, LB: /left.?back|left.?wing.?back/i, RWB: /right.?(wing.?)?back/i, LWB: /left.?(wing.?)?back/i,
+  CB: /centre.?back|center.?back/i, DM: /defensive mid/i, CM: /central mid/i, AM: /attacking mid/i, RM: /right mid|right wing/i, LM: /left mid|left wing/i,
+  RW: /right wing/i, LW: /left wing/i, ST: /forward|striker/i, CF: /forward|striker/i }
+const manLine = (pos?: string | null) => (!pos ? "" : /goal/i.test(pos) ? "G" : /back|defen/i.test(pos) ? "D" : /midfield/i.test(pos) ? "M" : "F")
 const recentNames = (): string[] => { try { const v = JSON.parse(localStorage.getItem(NAMES_KEY) || "[]"); return Array.isArray(v) ? v.filter(x => typeof x === "string").slice(0, 300) : [] } catch { return [] } }
 const rememberNames = (names: string[]) => {
   const fresh = names.map(n => n.trim()).filter(n => n && !POS_CODES.has(n))
@@ -2395,44 +2426,45 @@ function TacticsBoard() {
   const [making, setMaking] = useState<null | { fmt: "gif" | "mp4"; done: number }>(null) // a GIF or a video being made
   const [kitEditor, setKitEditor] = useState<Record<"home" | "away", "" | "top" | "more" | "own">>({ home: "", away: "" }) // a team's kits: closed, the few, all of them, or your own
   const [namesFor, setNamesFor] = useState<"home" | "away" | null>(null) // the team whose names are open
-  const [pasteFor, setPasteFor] = useState<"home" | "away" | null>(null) // the "Paste the line-up" box is open for this team
-  const [dropTxt, setDropTxt] = useState<Record<"home" | "away", string>>({ home: "", away: "" }) // Drop the XI: what's in the strip for each team
-  const [landed, setLanded] = useState<{ ids: string[]; k: number } | null>(null) // players that just landed from a paste: they flash in one after another
+  const [landed, setLanded] = useState<{ ids: string[]; fly?: string[]; k: number } | null>(null) // players that just arrived: new ones run out from the centre spot one after another, renamed ones flash
   const [glide, setGlide] = useState(false) // a shape was just picked: the pieces glide to their new spots
-  const swapRef = useRef<string | null>(null) // Drop the XI: the first shirt of a swap
-  const pastedRef = useRef(false)
-  const dropFormRef = useRef<Record<"home" | "away", string>>({ home: "", away: "" }) // the shape each text last wrote, so a shape you pick isn't undone by the next key
-  const dropNamesRef = useRef<Record<"home" | "away", string>>({ home: "", away: "" }) // the names each text last put on the pitch: a key that changes none of them leaves swaps and shapes alone
-  const droppedRef = useRef(new Set<string>()) // players named from the strip (only those are cleared when the text gets shorter)
-  // "Make your first post" from the welcome opens the board on the line-up strip
-  useEffect(() => { if (new URLSearchParams(window.location.search).get("start") === "lineup") setPasteFor("home") }, [])
-  // Players that just landed flash in one after another (not when the person asked for less motion)
+  const glideTimer = useRef(0)
+  const glideNow = () => { setGlide(true); window.clearTimeout(glideTimer.current); glideTimer.current = window.setTimeout(() => setGlide(false), 800) }
+  const dropFormRef = useRef<Record<"home" | "away", string>>({ home: "", away: "" }) // the shape each pasted line-up last wrote
+  const dropNamesRef = useRef<Record<"home" | "away", string>>({ home: "", away: "" }) // the names each pasted line-up last put on the pitch: the same paste again changes nothing
+  const droppedRef = useRef(new Set<string>()) // players named from a paste
+  // New players run out from the centre spot to their places one after another; renamed ones flash (not when the person asked for less motion)
   useEffect(() => {
     if (!landed || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return
+    const c = toCanvas(geo, PW / 2, PH / 2), fly = new Set(landed.fly ?? [])
     landed.ids.forEach((id, i) => {
       const el = document.querySelector(`[data-pid="${id}"]`) as SVGGElement | null
-      el?.animate?.([{ opacity: 0, filter: "drop-shadow(0 0 0 #d7ff3c)" }, { opacity: 1, filter: "drop-shadow(0 0 14px #d7ff3c)", offset: 0.6 }, { opacity: 1, filter: "drop-shadow(0 0 0 #d7ff3c)" }], { duration: 520, delay: i * 70, fill: "backwards", easing: "ease-out" })
+      if (!el?.animate) return
+      const at = fly.has(id) ? /translate\(([-\d.e]+),\s*([-\d.e]+)\)/.exec(el.getAttribute("transform") ?? "") : null
+      if (at) el.animate([{ transform: `translate(${c.x}px, ${c.y}px) scale(0.3)`, opacity: 0 }, { opacity: 1, offset: 0.3 }, { transform: `translate(${at[1]}px, ${at[2]}px) scale(1)`, opacity: 1 }],
+        { duration: 620, delay: i * 45, fill: "backwards", easing: "cubic-bezier(.2,.85,.25,1.12)" })
+      else el.animate([{ opacity: 0, filter: "drop-shadow(0 0 0 #d7ff3c)" }, { opacity: 1, filter: "drop-shadow(0 0 14px #d7ff3c)", offset: 0.6 }, { opacity: 1, filter: "drop-shadow(0 0 0 #d7ff3c)" }], { duration: 520, delay: i * 70, fill: "backwards", easing: "ease-out" })
     })
-  }, [landed])
-  useEffect(() => { if (!pasteFor) swapRef.current = null }, [pasteFor])
-  // ⌘V on the board with a line-up on the clipboard opens the strip and drops it
+  }, [landed]) // eslint-disable-line react-hooks/exhaustive-deps
+  // ⌘V anywhere on the board with a line-up copied puts it straight on the pitch
+  const pasteLineupRef = useRef<(text: string) => void>(() => {})
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const t = e.target as HTMLElement | null
-      if (t && (t.closest("input, textarea, [contenteditable='true']"))) return
+      if (t?.closest?.("input, textarea, [contenteditable='true']")) return
       const text = e.clipboardData?.getData("text/plain") ?? ""
       if (!text || text.length > 4000) return
       const reads = text.replace(/\r/g, "").split(/\n[ \t]*\n/).filter(b => b.trim()).map(readTeamNews)
       if (!reads.length || reads[0].names.length < 9) return // anything that isn't clearly a line-up is left alone
       e.preventDefault()
-      setPasteFor("home"); dropFromRef.current("home", text, true)
+      pasteLineupRef.current(text)
     }
     document.addEventListener("paste", onPaste)
     return () => document.removeEventListener("paste", onPaste)
   }, [])
   const [naming, setNaming] = useState<{ ids: string[]; i: number } | null>(null) // naming players on the pitch, one after another
   const [sheetHl, setSheetHl] = useState<string | null>(null) // the player whose team-sheet row you're in
-  const namingRef = useRef<(from?: string) => void>(() => {})
+  const namingRef = useRef<(from?: string, team?: "home" | "away") => void>(() => {})
   const [kitMode, setKitMode] = useState<null | "gk" | "own">(null) // the kit choice open for the selected player
   useEffect(() => { setKitMode(null) }, [sel?.id])
   const [showPlayerLabels, setShowPlayerLabels] = useState(true)
@@ -2495,6 +2527,35 @@ function TacticsBoard() {
   const [creatorHandle, setCreatorHandle] = useState("") // shown in the watermark, once you've chosen a handle yourself
   const [creatorBrand, setCreatorBrand] = useState<Brand>(DEFAULT_BRAND) // your Creator Card: the crest and look that sign your exports
   const [myClub, setMyClub] = useState("") // your club, from your profile: the home team of every new board
+  const [realSquads, setRealSquads] = useState<Record<"home" | "away", SquadMan[]>>({ home: [], away: [] }) // the real squads of the two teams on the board
+  useEffect(() => {
+    if (!authUser) return
+    let off = false
+    const t = window.setTimeout(() => {
+      Promise.all([findSquad(homeName), findSquad(awayName)]).then(([home, away]) => { if (!off) setRealSquads({ home, away }) })
+    }, 400)
+    return () => { off = true; window.clearTimeout(t) }
+  }, [homeName, awayName, authUser?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { // the squads refresh themselves about once a week; any signed-in visit can start it (the function itself says no when they're fresh)
+    if (!authUser) return
+    try {
+      const k = "ps-squads-nudge", last = Number(localStorage.getItem(k) || 0)
+      if (Date.now() - last < 864e5) return
+      localStorage.setItem(k, String(Date.now()))
+    } catch { return }
+    supabase.functions.invoke("squads-sync").catch(() => {})
+  }, [authUser?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** The names offered for a spot while naming: that team's real squad (the spot's line first: keepers for the goalkeeper), then names you've used before */
+  const suggestFor = (p: NameRunPlayer) => {
+    const line = slotLine(p.pos)
+    const exact = p.pos ? SLOT_POS[p.pos] : undefined
+    const fit = (m: SquadMan) => (exact && m.pos && exact.test(m.pos) ? 0 : manLine(m.pos) === line ? 1 : 2) // the spot's own position, then its line
+    const real = [...realSquads[p.team]].sort((a, b) => fit(a) - fit(b) || (a.num ?? 99) - (b.num ?? 99))
+      .map(m => (m.num != null ? `${m.n} ${m.num}` : m.n))
+    const known = new Set(realSquads[p.team].map(m => m.n.toLowerCase()))
+    const mine = [...squads.flatMap(q => q.players.map(x => x.name)), ...recentNames()].filter(n => !known.has(n.toLowerCase()))
+    return [...new Set([...real, ...mine].filter(n => n && !POS_CODES.has(n)))]
+  }
   /** A new, empty board starts with your club as the home team, in your card's colours. A saved board or a template keeps its own. */
   useEffect(() => {
     if (currentBoardIdRef.current || players.length || homeName.trim()) return
@@ -3749,14 +3810,15 @@ function TacticsBoard() {
           </div>
         </div>
         <div className="flex gap-1.5">
-          {there ? (
+          {there ? (<>
             <button onClick={() => openNames(team)} aria-pressed={namesFor === team}
               className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors" style={{ ...btn, borderColor: namesFor === team ? ACCENT_SOLID : DS_BORDER }}>Names</button>
-          ) : (
-            <button onClick={() => addTeam(team)} title={`Add ${call} in ${(team === "home" ? homeFormation : awayFormation) || "4-3-3"}`}
+            <button onClick={() => kickOff(team)} title="Type the names on the shirts, one after another"
+              className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110" style={btn}>Name on the pitch</button>
+          </>) : (
+            <button onClick={() => kickOff(team)} title={`${call} run out in ${(team === "home" ? homeFormation : awayFormation) || "4-3-3"}, then you type the names on the shirts`}
               className="flex-1 py-1.5 rounded text-xs font-semibold hover:brightness-110" style={{ background: k.c1, color: inkOn(k.c1), border: `1px solid ${DS_BORDER}` }}>+ Add {call}</button>
           )}
-          <button onClick={() => setPasteFor(team)} className="flex-1 py-1.5 rounded text-xs font-semibold transition-colors hover:brightness-110" style={btn}>Drop the XI</button>
         </div>
         {!there && squads.length > 0 && (
           <select value="" aria-label="Saved squad"
@@ -3909,7 +3971,7 @@ function TacticsBoard() {
       } else if (team === "home") setHomeShape(shape)
       else setAwayShape(shape)
     }
-    setPlayers(easeApart(list)) // two lineups as written can stand on the same spots: never on top of each other
+    glideNow(); setPlayers(easeApart(list)) // two lineups as written can stand on the same spots: never on top of each other
     ;(window as any).posthog?.capture("possession_set", { ball })
   }
   /** A team's formation: a team on the board moves into it straight away. One undo step. */
@@ -3920,7 +3982,7 @@ function TacticsBoard() {
     const shape = shapeFor(team, ballSide)
     if (players.some(p => teamOf(p) === team)) {
       const list = placeTeam(players, f, team, shape)
-      setPlayers(easeApart(list))
+      glideNow(); setPlayers(easeApart(list))
     }
     recordFormation(team, f.name, shape)
     ;(window as any).posthog?.capture("formation_used", { formation: f.name, shape })
@@ -3929,9 +3991,11 @@ function TacticsBoard() {
   const addTeam = (team: "home" | "away") => {
     const f = formationFor(team), shape = shapeFor(team, ballSide)
     undoPoint()
-    const list = placeTeam(players, f, team, shape)
-    setPlayers(easeApart(list))
+    const list = easeApart(placeTeam(players, f, team, shape))
+    setPlayers(list)
     recordFormation(team, f.name, shape)
+    const before = new Set(players.map(p => p.id)), fresh = lineupOf(list, team, f, shape).map(p => p.id).filter(id => !before.has(id))
+    if (fresh.length) setLanded({ ids: fresh, fly: fresh, k: Date.now() }) // goalkeeper first, each line from the back
     ;(window as any).posthog?.capture("formation_used", { formation: f.name, shape })
   }
   /** A team in team-sheet order: goalkeeper, then each line from the back, right to left */
@@ -3947,6 +4011,7 @@ function TacticsBoard() {
   const applyLineup = (team: "home" | "away", entries: { name: string; num?: string }[], squad?: Squad, formation?: string) => {
     if (!entries.length) return
     undoPoint()
+    const before = new Set(players.map(p => p.id))
     let list = players, { f, shape } = formationOf(team)
     if (!list.some(p => teamOf(p) === team)) {
       f = FORMATIONS.find(x => x.name === formation) ?? formationFor(team); shape = shapeFor(team, ballSide)
@@ -3961,6 +4026,8 @@ function TacticsBoard() {
       const kitted = squad && teamOf(p) === team && wearsKit(p, cur, base) ? { ...p, ...kitProps(squad.kit) } : p // a goalkeeper's own kit stays
       return e ? { ...kitted, name: e.name, ...(e.num ? { num: e.num } : {}) } : kitted
     }))
+    const came = order.filter((p, i) => i < entries.length || !before.has(p.id)).map(p => p.id)
+    setLanded({ ids: came, fly: came.filter(id => !before.has(id)), k: Date.now() })
     if (squad) {
       const k = squad.kit
       if (team === "home") { setHomeColor(k.c1); setHomePat(k.pat); setHomeC2(k.c2); setHomeNum(k.num); setHomeName(squad.teamName) }
@@ -3992,6 +4059,7 @@ function TacticsBoard() {
     jobs.forEach(([team, news]) => { dropNamesRef.current[team] = JSON.stringify(news.names) })
     undoPoint("drop")
     let list = players
+    const before = new Set(players.map(q => q.id))
     const landedIds: string[] = []
     for (const [team, news] of jobs) {
       const wrote = news.formation && news.formation !== dropFormRef.current[team]
@@ -4009,27 +4077,27 @@ function TacticsBoard() {
         if (e) { droppedRef.current.add(q.id); return { ...q, name: e.name, ...(e.num ? { num: e.num } : {}) } }
         return droppedRef.current.has(q.id) ? { ...q, name: POS_CODES.has(q.name) ? q.name : "" } : q
       })
-      order.slice(0, news.names.length).forEach(q => landedIds.push(q.id))
+      order.forEach((q, i) => { if (i < news.names.length || !before.has(q.id)) landedIds.push(q.id) })
       if (news.team) (team === "home" ? setHomeName : setAwayName)(news.team.slice(0, 30))
       if (news.names.length >= 11) rememberNames(news.names.map(e => e.name))
     }
     setPlayers(list)
-    if (pasted && landedIds.length) setLanded({ ids: landedIds, k: Date.now() })
+    if (pasted && landedIds.length) setLanded({ ids: landedIds, fly: landedIds.filter(id => !before.has(id)), k: Date.now() })
+    if (pasted) setExportNote(jobs.length > 1 ? "Both line-ups are on the pitch" : `${jobs[0][1].names.length} players on the pitch`)
     ;(window as any).posthog?.capture("lineup_dropped", { teams: jobs.length, players: jobs.reduce((n, j) => n + j[1].names.length, 0), pasted })
   }
-  const dropFrom = (team: "home" | "away", text: string, pasted: boolean) => {
-    const blocks = text.replace(/\r/g, "").split(/\n[ \t]*\n/).filter(b => b.trim())
-    const reads = blocks.map(readTeamNews)
-    if (reads.length >= 2 && reads[0].names.length >= 10 && reads[1].names.length >= 10) { // a blank line between two full teams: both fill at once
-      setDropTxt({ home: blocks[0], away: blocks[1] }); setPasteFor("home")
-      dropApply([["home", reads[0]], ["away", reads[1]]], pasted)
-      return
-    }
-    setDropTxt(t => ({ ...t, [team]: text }))
-    dropApply([[team, reads[0] ?? { team: "", formation: "", names: [] }]], pasted)
+  /** A copied line-up pasted anywhere on the board (⌘V). Two teams with a blank line between them fill both; one team fills the team you're naming,
+   *  the opponent once your XI is named, or else your XI. */
+  const pasteLineup = (text: string) => {
+    const reads = text.replace(/\r/g, "").split(/\n[ \t]*\n/).filter(b => b.trim()).map(readTeamNews)
+    if (reads.length >= 2 && reads[0].names.length >= 10 && reads[1].names.length >= 10) { setNaming(null); dropApply([["home", reads[0]], ["away", reads[1]]], true); return }
+    const named = (t: "home" | "away") => players.filter(p => teamOf(p) === t && p.name.trim() && !POS_CODES.has(p.name)).length
+    const now = naming ? players.find(p => p.id === naming.ids[naming.i]) : undefined
+    const team = (now && teamOf(now)) || (named("home") >= 9 && named("away") < 9 ? "away" : "home")
+    setNaming(null)
+    dropApply([[team, reads[0]]], true)
   }
-  const dropFromRef = useRef(dropFrom)
-  dropFromRef.current = dropFrom
+  pasteLineupRef.current = pasteLineup
   /** Keeps a team's names, numbers, kit and name as a squad in your account, to use on any board. Saving under the same name replaces it. */
   const saveSquad = (team: "home" | "away") => {
     const { f, shape } = formationOf(team)
@@ -4074,13 +4142,20 @@ function TacticsBoard() {
     return order.map((p, i) => ({ id: p.id, name: p.name, num: p.num, team, pos: (f && spots[i] >= 0 ? f.positions[spots[i]].pos : undefined) ?? (POS_CODES.has(p.name) ? p.name : undefined) }))
   }
   /** Name the players on the pitch one after another, starting with the home goalkeeper (or the player given). One undo step. */
-  const startNaming = (from?: string) => {
-    const ids = [...sheetRows("home"), ...sheetRows("away")].map(p => p.id)
+  const startNaming = (from?: string, team?: "home" | "away") => {
+    const rows = [...sheetRows("home"), ...sheetRows("away")], ids = rows.map(p => p.id)
     if (!ids.length) { setExportNote("Add a team first, then name its players"); return }
     undoPoint(); setSelection([]); setTool("select"); setNamesFor(null)
-    setNaming({ ids, i: Math.max(0, from ? ids.indexOf(from) : 0) })
+    setNaming({ ids, i: Math.max(0, from ? ids.indexOf(from) : team ? rows.findIndex(p => p.team === team) : 0) })
   }
   namingRef.current = startNaming
+  /** Name a team on the pitch: if it isn't on yet it runs out in its formation, then the name box opens on its goalkeeper */
+  const kickOff = (team: "home" | "away") => {
+    if (naming) settleName(naming.ids[naming.i])
+    if (players.some(p => teamOf(p) === team)) { startNaming(undefined, team); return }
+    addTeam(team)
+    window.setTimeout(() => namingRef.current(undefined, team), 80)
+  }
   const nameOne = (id: string, text: string) => setPlayers(ps => ps.map(p => (p.id === id ? { ...p, name: text.slice(0, 30) } : p)))
   /** Leaving a player: "10 Pedri" also sets the number, a blank name goes back to the position */
   const settleName = (id: string) => setPlayers(ps => ps.map(p => {
@@ -4703,6 +4778,12 @@ function TacticsBoard() {
         .ps-start-go { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 20px; border: none; border-radius: 11px; background: ${ACCENT_SOLID}; color: ${ACCENT_INK}; font: 700 14px 'Inter', sans-serif; cursor: pointer; transition: transform .15s, filter .15s; }
         .ps-start-go:hover { filter: brightness(1.05); transform: translateY(-1px); }
         .ps-start-go:focus-visible, .ps-start-alt button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+        .ps-start-shapes { display: flex; justify-content: center; gap: 4px; margin: 0 0 12px; }
+        .ps-start-shapes button { height: 26px; padding: 0 8px; border-radius: 7px; border: 1px solid rgba(255,255,255,.13); background: transparent; color: #a9a9b3; font: 700 12px 'Inter', sans-serif; cursor: pointer; transition: border-color .15s, color .15s; }
+        .ps-start-shapes button:hover { color: #fff; }
+        .ps-start-shapes button[aria-checked="true"] { border-color: ${ACCENT_SOLID}; color: #fff; }
+        [data-theme="light"] .ps-start-shapes button { color: #3a3b40; border-color: rgba(0,0,0,.14); }
+        [data-theme="light"] .ps-start-shapes button[aria-checked="true"] { color: #121316; border-color: #121316; }
         .ps-start-alt { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
         .ps-start-alt button { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.13); background: transparent; color: #c9c9d1; font: 600 12px 'Inter', sans-serif; cursor: pointer; transition: border-color .15s, color .15s; }
         .ps-start-alt button:hover { border-color: rgba(255,255,255,.3); color: #fff; }
@@ -5650,60 +5731,21 @@ function TacticsBoard() {
           {/* Empty board: one small card, right in the middle of the pitch, with the first move on it */}
           {boardEmpty && startBox && (
             <div className="ps-start" role="region" aria-label="Start your board" onPointerDown={e => e.stopPropagation()}
-              style={{ left: startBox.x + startBox.w / 2, top: startBox.y + startBox.h / 2, transform: `translate(-50%, -50%) scale(${Math.min(1, (startBox.w - 24) / 300, (startBox.h - 24) / 196)})` }}>
+              style={{ left: startBox.x + startBox.w / 2, top: startBox.y + startBox.h / 2, transform: `translate(-50%, -50%) scale(${Math.min(1, (startBox.w - 24) / 300, (startBox.h - 24) / 232)})` }}>
               <p className="ps-start-h">YOUR XI.</p>
-              <button className="ps-start-go" onClick={() => setPasteFor("home")}><UserPlus size={17} /> Drop the XI</button>
+              <div className="ps-start-shapes" role="radiogroup" aria-label="Formation">
+                {["4-3-3", "4-2-3-1", "4-4-2", "3-5-2"].map(f => (
+                  <button key={f} role="radio" aria-checked={(homeFormation || "4-3-3") === f} onClick={() => recordFormation("home", f, shapeFor("home", ballSide))}>{f}</button>
+                ))}
+              </div>
+              <button className="ps-start-go" onClick={() => kickOff("home")}><UserPlus size={17} /> Name your XI</button>
               <div className="ps-start-alt">
                 {lastXI && <button onClick={applyLastXI} title={`${lastXI.teamName || "Your team"} · ${lastXI.formation}, from your last saved board`}>Same XI</button>}
-                <button onClick={() => { addTeam("home"); setTimeout(() => namingRef.current?.(), 80) }} title="Put your team on in 4-3-3 and type the names one by one">Call the roll</button>
-                <button onClick={() => setShowTemplates(true)} title="Start from a ready-made board">Drops</button>
+                <button onClick={() => setShowTemplates(true)} title="Start from a ready-made board">Examples</button>
               </div>
-              <p className="ps-start-tip">or press <kbd>{isMac ? "⌘V" : "Ctrl V"}</kbd> with a line-up copied</p>
+              <p className="ps-start-tip">or <kbd>{isMac ? "⌘V" : "Ctrl V"}</kbd> a copied line-up</p>
             </div>
           )}
-
-          {/* Drop the XI: paste or type, the pitch fills as you go */}
-          {pasteFor && (() => {
-            const team = pasteFor, text = dropTxt[team], news = readTeamNews(text)
-            const shown = (team === "home" ? homeFormation : awayFormation) || "4-3-3"
-            const name = (team === "home" ? homeName : awayName).trim()
-            const close = () => { setPasteFor(null); swapRef.current = null }
-            const mini = ["4-3-3", "4-2-3-1", "4-4-2", "3-5-2"]
-            const read = !text.trim() ? "Paste a line-up, or type names with a comma or new line between them" : !news.names.length ? "No names yet" : `${[news.team || name, shown].filter(Boolean).join(" · ")} · ${news.names.length} of 11`
-            const chip = (on: boolean): React.CSSProperties => ({ height: 30, padding: "0 10px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: on ? ACCENT_SOLID : SURFACE_2, color: on ? ACCENT_INK : TEXT_PRIMARY, border: `1px solid ${on ? ACCENT_SOLID : DS_BORDER}` })
-            return (
-              <div role="region" aria-label="Drop the XI" onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === "Escape") close() }}
-                style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 40, width: "min(780px, calc(100% - 24px))", display: "flex", gap: 10, alignItems: "stretch", padding: 10, borderRadius: 14, background: GLASS, border: `1px solid ${DS_BORDER_STRONG}`, boxShadow: "0 18px 40px rgba(0,0,0,.45)", backdropFilter: "blur(8px)", flexWrap: "wrap" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, width: 104 }}>
-                  {(["home", "away"] as const).map(t => (
-                    <button key={t} onClick={() => setPasteFor(t)} aria-pressed={team === t} style={{ ...chip(false), height: 36, textAlign: "left", display: "flex", alignItems: "center", gap: 7, borderColor: team === t ? ACCENT_SOLID : DS_BORDER }}>
-                      <span style={{ width: 10, height: 10, borderRadius: 99, background: t === "home" ? homeColor : awayColor, flex: "none" }} />
-                      {t === "home" ? "Your XI" : "Their XI"}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ flex: "1 1 280px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-                  <textarea autoFocus value={text} rows={3} aria-label="Line-up" spellCheck={false}
-                    onPaste={() => { pastedRef.current = true }}
-                    onChange={e => { const pasted = pastedRef.current; pastedRef.current = false; dropFrom(team, e.target.value, pasted) }}
-                    placeholder={`${myClub || "Your team"} (4-3-3): Goalkeeper; Right back, Centre back, Centre back, Left back; Midfielder, Midfielder, Midfielder; Right winger, Striker, Left winger`}
-                    style={{ width: "100%", resize: "none", borderRadius: 10, padding: "8px 10px", fontSize: 14, background: SURFACE_2, color: TEXT_PRIMARY, border: `1px solid ${DS_BORDER}`, outline: "none" }} />
-                  <span aria-live="polite" style={{ fontSize: 12, color: news.names.length ? ACCENT_TEXT : TEXT_MUTED }}>{read}</span>
-                </div>
-                <div style={{ width: 232, display: "flex", flexDirection: "column", gap: 6 }}>
-                  <span style={{ fontSize: 12, color: TEXT_MUTED }}>Shape</span>
-                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                    {mini.map(f => (
-                      <button key={f} aria-pressed={shown === f} style={chip(shown === f)}
-                        onClick={() => { setGlide(true); setTeamFormation(team, f); window.setTimeout(() => setGlide(false), 800) }}>{f}</button>
-                    ))}
-                  </div>
-                  <span style={{ fontSize: 12, color: TEXT_MUTED }}>Click two shirts to swap them</span>
-                </div>
-                <button onClick={close} style={{ ...chip(true), height: 36, alignSelf: "flex-start" }}>Done</button>
-              </div>
-            )
-          })()}
 
           {/* Polygon floating hint */}
           {tool === "shape" && shapeKind === "polygon" && polyDraft && polyDraft.length >= 1 && (
@@ -6039,15 +6081,6 @@ function TacticsBoard() {
                         onDoubleClick={e => { if (!p.locked && !p.kind && teamOf(p)) { e.stopPropagation(); startNaming(p.id) } }}
                         onPointerDown={e => {
                           if (naming) { e.stopPropagation(); const i = naming.ids.indexOf(p.id); if (i >= 0) { settleName(naming.ids[naming.i]); setNaming({ ...naming, i }) } return }
-                          if (pasteFor && tool === "select" && !p.locked && !p.kind && teamOf(p)) { // Drop the XI: a shirt, then another of the same team, swaps their names and numbers
-                            const a = swapRef.current && swapRef.current !== p.id ? players.find(x => x.id === swapRef.current) : undefined
-                            if (a && teamOf(a) === teamOf(p)) {
-                              e.stopPropagation(); undoPoint()
-                              setPlayers(ps => ps.map(q => q.id === a.id ? { ...q, name: p.name, num: p.num } : q.id === p.id ? { ...q, name: a.name, num: a.num } : q))
-                              swapRef.current = null; setLanded({ ids: [a.id, p.id], k: Date.now() }); return
-                            }
-                            swapRef.current = p.id
-                          }
                           if (p.locked) { if (tool === "select" && e.button === 0) flashLockHint(); return } // locked: the press goes through to the board
                           if (tool === "homePlayer" || tool === "awayPlayer") {
                             e.stopPropagation()
@@ -6292,10 +6325,11 @@ function TacticsBoard() {
           {picking && <AreaPicker onPick={pickArea} onPreset={a => { setPicking(false); undoPoint(); setArea(a); setFocus("area") }} onCancel={() => setPicking(false)} />}
           {naming && !presenting && (
             <NameRun players={[...sheetRows("home"), ...sheetRows("away")]} ids={naming.ids} index={naming.i}
-              teamLabel={t => (t === "home" ? homeName : awayName).trim() || (t === "home" ? "Home" : "Away")}
+              teamLabel={t => (t === "home" ? homeName : awayName).trim() || (t === "home" ? "Your XI" : "Their XI")}
               colors={t => (t === "home" ? { bg: homeColor, fg: homeNum } : { bg: awayColor, fg: awayNum })}
-              onName={nameOne} onMove={moveNaming} onDone={endNaming} hudTop={66}
-              suggest={[...new Set([...squads.flatMap(q => q.players.map(x => x.name)), ...recentNames()].filter(n => n && !POS_CODES.has(n)))]} />
+              onName={nameOne} onMove={moveNaming} onDone={endNaming} hudTop={66} hudLeft={(() => { const r = canvasRef.current?.getBoundingClientRect(); return r ? r.left + r.width / 2 : undefined })()}
+              onTeam={kickOff} shapes={FORMATIONS.map(f => f.name)} shapeOf={t => (t === "home" ? homeFormation : awayFormation) || "4-3-3"} onShape={setTeamFormation}
+              suggest={suggestFor} />
           )}
           {focus === "area" && area && !presenting && !picking && (
             <AreaMap area={area} vertical={vertical} onRepick={startPicking} onExit={() => { undoPoint(); setFocus("pitch") }} />
