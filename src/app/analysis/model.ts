@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase"
+import type { Calib, CalPoint } from "./calib"
 
 /* Live Game Analysis: the data. An analysis is up to 10 match shots, each with the marks drawn on it.
    Every position is in the shot's own pixels, so a mark sits on the same spot at any screen size and in the export. */
@@ -10,10 +11,24 @@ export type Spot = { id: string; kind: "spot"; color: string; x: number; y: numb
 export type Zone = { id: string; kind: "zone"; color: string; pts: Pt[]; opacity: number; label: string; outline: boolean; size: number; round?: boolean }
 export type Arrow = { id: string; kind: "arrow"; color: string; a: Pt; b: Pt; c: Pt | null; dash: "solid" | "dash" | "dot"; head: "end" | "none" | "both"; size: number }
 export type Note = { id: string; kind: "text"; color: string; x: number; y: number; text: string; box: boolean; size: number }
-export type Mark = Tag | Spot | Zone | Arrow | Note
-export type Shot = { id: string; path: string | null; w: number; h: number; dim: number; items: Mark[] }
-/** A moment in the video: it freezes there for a few seconds with drawings on it */
-export type Moment = { id: string; t: number; hold: number; dim: number; items: Mark[] }
+/** A ring on the grass (r metres across when the shot is calibrated) */
+export type Ring = { id: string; kind: "ring"; color: string; x: number; y: number; r: number; fill: number; double: boolean; size: number }
+/** A tie between two players (or two points). ra and rb: the marks it is tied to, so it follows them. dist: show the metres */
+export type Tie = { id: string; kind: "tie"; color: string; a: Pt; b: Pt; ra: string | null; rb: string | null; dash: "solid" | "dash" | "dot"; dist: boolean; size: number }
+/** A measured distance on the grass */
+export type Measure = { id: string; kind: "measure"; color: string; a: Pt; b: Pt; size: number }
+/** The cover shadow: the space behind a presser (x, y) that the ball (bx, by) can't reach */
+export type Shadow = { id: string; kind: "shadow"; color: string; x: number; y: number; bx: number; by: number; len: number; spread: number; size: number }
+/** Focus: everything outside these corners goes dark */
+export type Focus = { id: string; kind: "focus"; pts: Pt[]; dim: number; color: string; size: number }
+export type Mark = (Tag | Spot | Zone | Arrow | Note | Ring | Tie | Measure | Shadow | Focus) & { step?: number }
+export type Shot = { id: string; path: string | null; w: number; h: number; dim: number; items: Mark[]; calib?: Calib | null }
+/** The words under a shot (and the caption of a video moment) */
+export type Notes = { kicker: string; head: string; body: string; stats: string[]; show: boolean }
+export const EMPTY_NOTES: Notes = { kicker: "", head: "", body: "", stats: [], show: true }
+/** A moment in the video: it freezes there for a few seconds with drawings on it.
+    lead: slow the second before it down. steps: when each build step appears, in seconds after the freeze */
+export type Moment = { id: string; t: number; hold: number; dim: number; items: Mark[]; lead?: "off" | "slow"; calib?: Calib | null; caption?: Notes; steps?: Record<string, number> }
 /** The video an analysis is made from (the file itself stays on the device) and what's drawn on it */
 export type VideoProject = { name: string; key: string; size: number; dur: number; w: number; h: number; inT: number; outT: number; moments: Moment[] }
 export type AnalysisData = { v: 1; shots: Shot[]; video: VideoProject | null }
@@ -61,8 +76,47 @@ function readMark(m: any, w: number, h: number): Mark | null {
       return { id, kind: "arrow", color: col(m.color, "#ffffff"), a, b, c: pt(m.c, w, h), dash: m.dash === "dash" || m.dash === "dot" ? m.dash : "solid", head: m.head === "none" || m.head === "both" ? m.head : "end", size }
     }
     case "text": return { id, kind: "text", color: col(m.color, "#ffffff"), x, y, text: str(m.text, 400), box: m.box !== false, size }
+    case "ring": return { id, kind: "ring", color: col(m.color, "#d7ff3c"), x, y, r: num(m.r, 0.3, 6, 0.95), fill: num(m.fill, 0, 0.6, 0.18), double: m.double === true, size }
+    case "tie": {
+      const a = pt(m.a, w, h), b = pt(m.b, w, h)
+      if (!a || !b) return null
+      return { id, kind: "tie", color: col(m.color, "#ffffff"), a, b, ra: str(m.ra, 60) || null, rb: str(m.rb, 60) || null, dash: m.dash === "dash" || m.dash === "dot" ? m.dash : "solid", dist: m.dist === true, size }
+    }
+    case "measure": {
+      const a = pt(m.a, w, h), b = pt(m.b, w, h)
+      if (!a || !b) return null
+      return { id, kind: "measure", color: col(m.color, "#ffffff"), a, b, size }
+    }
+    case "shadow": return { id, kind: "shadow", color: col(m.color, "#ffffff"), x, y, bx: num(m.bx, -w, 2 * w, x), by: num(m.by, -h, 2 * h, y + 100), len: num(m.len, 3, 40, 14), spread: num(m.spread, 3, 30, 10), size }
+    case "focus": {
+      const pts = (Array.isArray(m.pts) ? m.pts : []).map((p: unknown) => pt(p, w, h)).filter(Boolean) as Pt[]
+      if (pts.length < 3 || pts.length > 8) return null
+      return { id, kind: "focus", pts, dim: num(m.dim, 0.1, 0.85, 0.45), color: col(m.color, "#05060a"), size }
+    }
   }
   return null
+}
+/** A mark read from saved data, keeping its build step */
+function readMarkStep(m: any, w: number, h: number): Mark | null {
+  const r = readMark(m, w, h)
+  if (r && m && typeof m.step === "number" && Number.isFinite(m.step)) (r as Mark).step = Math.max(1, Math.min(99, Math.round(m.step)))
+  return r
+}
+export function readMarks(v: unknown, w: number, h: number): Mark[] {
+  return (Array.isArray(v) ? v.slice(0, MAX_MARKS) : []).map((m: unknown) => readMarkStep(m, w, h)).filter(Boolean) as Mark[]
+}
+export function readCalib(v: any, w: number, h: number): Calib | null {
+  if (!v || typeof v !== "object" || !Array.isArray(v.pts)) return null
+  const pts: CalPoint[] = []
+  for (const q of v.pts.slice(0, 12)) {
+    const img = pt(q?.img, w, h), pitch = Array.isArray(q?.pitch) && q.pitch.length === 2 ? [num(q.pitch[0], -10, 120, 0), num(q.pitch[1], -10, 80, 0)] as Pt : null
+    if (img && pitch) pts.push({ img, pitch, id: str(q.id, 12) })
+  }
+  return pts.length ? { pts } : null
+}
+export function readNotes(v: any): Notes {
+  if (!v || typeof v !== "object") return { ...EMPTY_NOTES, stats: [] }
+  return { kicker: str(v.kicker, 80), head: str(v.head, 90), body: str(v.body, 600), stats: (Array.isArray(v.stats) ? v.stats : []).slice(0, 4).map((s: unknown) => str(s, 24)).filter(Boolean), show: v.show !== false }
 }
 
 /** Turns a saved analysis into safe data. Shots must live in this user's own folder. */
@@ -74,20 +128,22 @@ export function readAnalysis(raw: unknown, userId: string): AnalysisData {
     const path = typeof s.path === "string" && s.path.startsWith(userId + "/") && s.path.length < 300 && !s.path.includes("..") ? s.path : null
     if (!path) continue
     const w = Math.round(num(s.w, 16, 8000, 1920)), h = Math.round(num(s.h, 16, 8000, 1080))
-    const items = (Array.isArray(s.items) ? s.items.slice(0, MAX_MARKS) : []).map((m: unknown) => readMark(m, w, h)).filter(Boolean) as Mark[]
+    const items = readMarks(s.items, w, h)
     shots.push({ id: str(s.id, 60) || newId(), path, w, h, dim: num(s.dim, 0, 0.7, 0), items })
   }
   return { v: 1, shots, video: readVideo(r.video) }
 }
-function readVideo(v: any): VideoProject | null {
+export function readVideo(v: any): VideoProject | null {
   if (!v || typeof v !== "object") return null
   const key = str(v.key, 140), size = num(v.size, 1, 1e12, 0), dur = num(v.dur, 0.1, 601, 0)
   if (!key || !size || !dur) return null
   const w = Math.round(num(v.w, 16, 8000, 1920)), h = Math.round(num(v.h, 16, 8000, 1080))
   const inT = num(v.inT, 0, dur, 0), outT = num(v.outT, inT, dur, dur)
   const moments: Moment[] = (Array.isArray(v.moments) ? v.moments.slice(0, MAX_MOMENTS) : []).filter((m: any) => m && typeof m === "object").map((m: any) => ({
-    id: str(m.id, 60) || newId(), t: num(m.t, 0, dur, 0), hold: num(m.hold, 0.5, 10, 3), dim: num(m.dim, 0, 0.7, 0),
-    items: (Array.isArray(m.items) ? m.items.slice(0, MAX_MARKS) : []).map((x: unknown) => readMark(x, w, h)).filter(Boolean) as Mark[],
+    id: str(m.id, 60) || newId(), t: num(m.t, 0, dur, 0), hold: num(m.hold, 0.5, 15, 3), dim: num(m.dim, 0, 0.7, 0),
+    items: readMarks(m.items, w, h), lead: m.lead === "slow" ? "slow" as const : "off" as const, calib: readCalib(m.calib, w, h),
+    caption: m.caption ? readNotes(m.caption) : undefined,
+    steps: m.steps && typeof m.steps === "object" ? Object.fromEntries(Object.entries(m.steps).slice(0, 40).filter(([k, t]) => /^\d{1,2}$/.test(k) && typeof t === "number" && t >= 0 && t <= 15).map(([k, t]) => [k, t as number])) : undefined,
   })).sort((a: Moment, b: Moment) => a.t - b.t)
   return { name: str(v.name, 200) || "Video", key, size, dur, w, h, inT, outT, moments }
 }
@@ -104,7 +160,11 @@ export function moveMark(m: Mark, dx: number, dy: number): Mark {
   const sh = (p: Pt): Pt => [p[0] + dx, p[1] + dy]
   switch (m.kind) {
     case "zone": return { ...m, pts: m.pts.map(sh) }
+    case "focus": return { ...m, pts: m.pts.map(sh) }
     case "arrow": return { ...m, a: sh(m.a), b: sh(m.b), c: m.c ? sh(m.c) : null }
+    case "tie": return { ...m, a: sh(m.a), b: sh(m.b), ra: null, rb: null }
+    case "measure": return { ...m, a: sh(m.a), b: sh(m.b) }
+    case "shadow": return { ...m, x: m.x + dx, y: m.y + dy, bx: m.bx + dx, by: m.by + dy }
     default: return { ...m, x: m.x + dx, y: m.y + dy }
   }
 }

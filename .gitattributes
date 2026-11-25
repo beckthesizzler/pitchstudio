@@ -144,3 +144,8 @@
 *.stl                filter=lfs diff=lfs merge=lfs -text
 *.nc                 filter=lfs diff=lfs merge=lfs -text
 *.mat                filter=lfs diff=lfs merge=lfs -text
+
+# ---------------------------------------------------------------------------
+# Small site media served as is (Vercel does not fetch LFS files)
+# ---------------------------------------------------------------------------
+public/examples/**   -filter -diff -merge -text

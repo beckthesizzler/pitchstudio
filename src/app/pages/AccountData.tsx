@@ -29,8 +29,8 @@ async function listAll(bucket: string, prefix: string, depth = 0): Promise<strin
   return out
 }
 
-const count = async (table: "boards" | "analyses" | "reports" | "notes" | "library_shots", col: string, id: string) => {
-  const { count: n, error } = await supabase.from(table).select("id", { count: "exact", head: true }).eq(col, id)
+const count = async (table: "boards" | "analyses" | "analysis_items" | "reports" | "notes" | "library_shots", col: string, id: string) => {
+  const { count: n, error } = await (supabase as any).from(table).select("id", { count: "exact", head: true }).eq(col, id)
   if (error) throw error
   return n ?? 0
 }
@@ -48,7 +48,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
     if (!userId || busy) return
     setBusy("download"); setMsg("")
     try {
-      const [p, b, a, r, lf, ls, nd, wl] = await Promise.all([
+      const [p, b, a, r, lf, ls, nd, wl, ai] = await Promise.all([
         supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
         supabase.from("boards").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
         supabase.from("analyses").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
@@ -57,6 +57,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         (supabase as any).from("library_shots").select("*").eq("user_id", userId),
         (supabase as any).from("notes").select("*").eq("user_id", userId).order("pos", { ascending: true }),
         (supabase as any).from("walls").select("*").eq("user_id", userId).order("pos", { ascending: true }),
+        (supabase as any).from("analysis_items").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
       ])
       const failed = [p, b, a, r].find(x => x.error)
       if (failed) throw failed.error
@@ -66,7 +67,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
         about: "Everything you made in PitchStudio. Board pictures are inside each board; report and analysis photos are listed under files.",
         exported_at: new Date().toISOString(),
         account: { id: userId, email },
-        profile: p.data, boards: b.data ?? [], analyses: a.data ?? [], reports: r.data ?? [],
+        profile: p.data, boards: b.data ?? [], analysis: { folders: lf.error ? [] : lf.data ?? [], items: ai.error ? [] : ai.data ?? [], older: a.data ?? [] }, reports: r.data ?? [],
         library: { folders: lf.error ? [] : lf.data ?? [], shots: ls.error ? [] : ls.data ?? [] },
         brain_dump: { walls: wl.error ? [] : wl.data ?? [], trees: nd.error ? [] : (nd.data ?? []).filter((x: any) => x.kind === "tree"), ideas: nd.error ? [] : (nd.data ?? []).filter((x: any) => x.kind !== "tree") }, files,
       }
@@ -87,7 +88,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
     if (!userId) return
     setConfirming(true); setTyped(""); setError(""); setTotals(null)
     try {
-      const [boards, analyses, reports] = await Promise.all([count("boards", "user_id", userId), count("analyses", "user_id", userId), count("reports", "user_id", userId)])
+      const [boards, analyses, reports] = await Promise.all([count("boards", "user_id", userId), count("analysis_items", "user_id", userId), count("reports", "user_id", userId)])
       setTotals({ boards, analyses, reports })
     } catch { /* the totals are only shown for clarity */ }
   }
@@ -145,7 +146,7 @@ export function AccountData({ userId, email }: { userId: string | null; email: s
               <AlertTriangle size={18} style={{ color: DS_ERROR, flexShrink: 0, marginTop: 1 }} />
               <div style={{ fontSize: 14, lineHeight: 1.5 }}>
                 <b>This deletes {email ? <span style={{ wordBreak: "break-all" }}>{email}</span> : "your account"} for good.</b>{" "}
-                {s ? <>Your profile, Creator Card, {plural(s.boards, "board", "boards")}, {plural(s.analyses, "analysis", "analyses")}, {plural(s.reports, "report", "reports")}, your Dump &amp; Arrange ideas and every photo you uploaded go with it.</>
+                {s ? <>Your profile, Creator Card, {plural(s.boards, "board", "boards")}, {plural(s.analyses, "analysis shot", "analysis shots")}, {plural(s.reports, "report", "reports")}, your Dump &amp; Arrange ideas and every photo you uploaded go with it.</>
                   : <>Your profile, Creator Card, boards, analyses, reports, your Dump &amp; Arrange ideas and every photo you uploaded go with it.</>}
                 {" "}Download your data first if you want a copy.
               </div>

@@ -98,7 +98,7 @@ export default function ShelfPage() {
       const [prof, b, a, r, n] = await Promise.all([
         (supabase as any).from("profiles").select("handle, display_name, brand, shelf, card_public").eq("id", u.id).maybeSingle(),
         (supabase as any).from("boards").select(BOARD_CARD_COLS).eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
-        (supabase as any).from("analyses").select("id, title, updated_at, shots:data->shots").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
+        (supabase as any).from("analysis_items").select("id, kind, title, updated_at, cover_path, head:data->notes->>head").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
         (supabase as any).from("reports").select("id, title, updated_at, data").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
         (supabase as any).from("notes").select("id, kind, parent_id, title, color, pos, updated_at, first:body->0->>html").eq("user_id", u.id).limit(2000),
       ])
@@ -115,8 +115,8 @@ export default function ShelfPage() {
         out.push({ key: "board:" + c.id, kind: "board", id: c.id, name: c.title, no, updated: c.updated_at, href: `/board?open=${c.id}`, thumb: <DropThumb data={c.thumb} /> })
       }
       for (const row of a.data ?? []) {
-        const first = Array.isArray(row.shots) ? row.shots.find((s: any) => s && typeof s.path === "string") : null
-        out.push({ key: "analysis:" + row.id, kind: "analysis", id: row.id, name: listName("Analysis", row.title, row.updated_at), no: 0, updated: row.updated_at, href: `/analysis?open=${row.id}`, thumb: <ShotThumb path={first?.path ?? null} /> })
+        const name = (row.title || "").trim() || (row.head || "").trim() || (row.kind === "video" ? "Video" : "Shot")
+        out.push({ key: "analysis:" + row.id, kind: "analysis", id: row.id, name, no: 0, updated: row.updated_at, href: `/analysis?item=${row.id}`, thumb: <ShotThumb path={row.cover_path ?? null} /> })
       }
       for (const row of r.data ?? []) {
         const rep = readReport(row.data, u.id), no = Number(row.data?.issueNo) || 0

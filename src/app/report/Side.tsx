@@ -68,19 +68,19 @@ export function BoardThumb({ row, brand }: { row: BoardRow; brand: Brand }) {
   return <ReportView report={rep} brand={{ ...brand, madeWith: false }} handle="" logo={null} media={{}} />
 }
 
-/** Your boards (with something drawn), the first freeze-frames of each analysis, and your notes, newest first */
+/** Your boards (with something drawn), your Live Analysis shots, and your notes, newest first */
 export async function loadLibrary(userId: string, say: (t: string) => void): Promise<LibItem[]> {
   const db = supabase as any
   const [b, a, n] = await Promise.all([
     db.from("boards").select("id, title, updated_at, players:canvas_data->players, arrows:canvas_data->arrows, zones:canvas_data->customZones, settings:canvas_data->settings").eq("user_id", userId).order("updated_at", { ascending: false }).limit(40),
-    db.from("analyses").select("id, title, updated_at, shots:data->shots").eq("user_id", userId).order("updated_at", { ascending: false }).limit(20),
+    db.from("analysis_items").select("id, title, updated_at, path:data->>path, w:data->w, h:data->h, dim:data->dim, items:data->items, head:data->notes->>head").eq("user_id", userId).eq("kind", "shot").order("updated_at", { ascending: false }).limit(40),
     db.from("notes").select("id, kind, title, color, updated_at, first:body->0->>html").eq("user_id", userId).neq("kind", "tree").order("updated_at", { ascending: false }).limit(40),
   ])
   const out: LibItem[] = []
   for (const r of b.data ?? []) if (boardCounts(r).players + boardCounts(r).lines > 0) out.push({ type: "board", name: (r.title || "").trim() || "Untitled board", row: r })
   for (const r of a.data ?? []) {
-    const shots = (Array.isArray(r.shots) ? r.shots : []).filter((s: any) => s && typeof s.path === "string" && s.w > 0 && s.h > 0)
-    shots.slice(0, 4).forEach((s: any, i: number) => out.push({ type: "shot", name: `${(r.title || "").trim() || "Analysis"}${shots.length > 1 ? ` · ${i + 1}` : ""}`, path: s.path, w: s.w, h: s.h, dim: Number(s.dim) || 0, items: Array.isArray(s.items) ? s.items : [] }))
+    if (typeof r.path !== "string" || !(Number(r.w) > 0) || !(Number(r.h) > 0)) continue
+    out.push({ type: "shot", name: (r.title || "").trim() || (r.head || "").trim() || "Shot", path: r.path, w: Number(r.w), h: Number(r.h), dim: Number(r.dim) || 0, items: Array.isArray(r.items) ? r.items : [] })
   }
   for (const r of n.data ?? []) {
     const text = plain(String(r.first ?? "")).slice(0, 400), name = String(r.title ?? "").trim()

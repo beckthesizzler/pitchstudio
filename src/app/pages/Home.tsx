@@ -51,7 +51,7 @@ export default function HomePage() {
       const [{ data: prof, error: profErr }, { data: boards }, { data: analyses }, { data: reports }] = await Promise.all([
         supabase.from("profiles").select("display_name, handle, brand").eq("id", u.id).maybeSingle(),
         supabase.from("boards").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
-        supabase.from("analyses").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
+        (supabase as any).from("analysis_items").select("id, kind, title, updated_at, head:data->notes->>head").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
         supabase.from("reports").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
       ])
       if (off) return
@@ -73,7 +73,7 @@ export default function HomePage() {
       const b = (boards as any[] | null)?.[0]
       setLast(b ? { id: b.id, title: listName("Board", b.title, b.updated_at), updated_at: b.updated_at } : null)
       const a = (analyses as any[] | null)?.[0]
-      setLastA(a ? { id: a.id, title: listName("Analysis", a.title, a.updated_at), updated_at: a.updated_at } : null)
+      setLastA(a ? { id: a.id, title: (a.title || "").trim() || (a.head || "").trim() || (a.kind === "video" ? "Video" : "Shot"), updated_at: a.updated_at } : null)
       const r = (reports as any[] | null)?.[0]
       setLastR(r ? { id: r.id, title: listName("Report", r.title, r.updated_at), updated_at: r.updated_at } : null)
       setReady(true)
@@ -91,8 +91,8 @@ export default function HomePage() {
       run: () => navigate(last ? `/board?open=${last.id}` : "/board"),
       extra: last ? { label: "New", run: () => navigate("/board") } : undefined },
     { id: "live", name: "Live Game Analysis", icon: <ImageIcon size={20} />,
-      desc: lastA ? `Continue: ${lastA.title} · ${relTime(lastA.updated_at)}` : "Draw on up to 4 match shots",
-      run: () => navigate(lastA ? `/analysis?open=${lastA.id}` : "/analysis"),
+      desc: lastA ? `Continue: ${lastA.title} · ${relTime(lastA.updated_at)}` : "Freeze, mark and render match shots and clips",
+      run: () => navigate(lastA ? `/analysis?item=${lastA.id}` : "/analysis"),
       extra: lastA ? { label: "New", run: () => navigate("/analysis") } : undefined },
     { id: "report", name: "Match Report", icon: <FileText size={20} />,
       desc: lastR ? `Pick a template, or continue: ${lastR.title} · ${relTime(lastR.updated_at)}` : "Pick a template: your story, your colour, your seal",

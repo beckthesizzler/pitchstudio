@@ -450,7 +450,7 @@ function WallPage({ wallId }: { wallId: string }) {
       const { data } = await (supabase as any).from(table).select("id, title, updated_at").eq("user_id", user.id).order("updated_at", { ascending: false }).limit(20)
       return ((data ?? []) as any[]).map(x => ({ ref: `${k}:${x.id}`, kind, title: listName(kind, x.title, x.updated_at), updated: String(x.updated_at ?? "") }))
     }
-    const lists = await Promise.all([ask("boards", "Board", "board"), ask("reports", "Report", "report"), ask("analyses", "Analysis", "analysis")])
+    const lists = await Promise.all([ask("boards", "Board", "board"), ask("reports", "Report", "report"), ask("analysis_items", "Analysis", "analysis")])
     setPieces(lists.flat().filter(p => /^(board|report|analysis):[0-9a-fA-F-]{36}$/.test(p.ref)).sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 20))
   }
 

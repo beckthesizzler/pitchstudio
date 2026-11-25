@@ -104,7 +104,7 @@ function layoutTree(pile: Note, kids: (id: string) => Note[], under: (id: string
 const KIND: Record<string, { table: string; label: PieceKind; path: string }> = {
   board: { table: "boards", label: "Board", path: "/board" },
   report: { table: "reports", label: "Report", path: "/report" },
-  analysis: { table: "analyses", label: "Analysis", path: "/analysis" },
+  analysis: { table: "analysis_items", label: "Analysis", path: "/analysis" },
 }
 const STATUS_LABEL = { idea: "IDEA", making: "MAKING", made: "MADE" } as const
 

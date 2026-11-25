@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import { Marks, arrowPath } from "./Marks"
-import { dist, mid, moveMark, newId, unit, type Arrow, type Mark, type Pt, type Shot, type TagStyle, type Zone } from "./model"
+import { dist, mid, moveMark, newId, unit, type Arrow, type Mark, type Pt, type Shot, type TagStyle, type Tie, type Zone } from "./model"
+import { apply as project, pathOf, pitchLines, ppmAt, type CalPoint, type Fit } from "./calib"
 
 /* The shot you draw on. The picture and the marks are one svg (that is what gets exported);
    handles, the selection outline and half-drawn marks sit on a second svg on top, so they never end up in an export. */
 
-export type Tool = "select" | "tag" | "spot" | "zone" | "oval" | "arrow" | "line" | "text"
+export type Tool = "select" | "tag" | "spot" | "zone" | "oval" | "arrow" | "line" | "text" | "ring" | "tie" | "measure" | "shadow" | "focus" | "calib"
 export type Defaults = {
   tag: { color: string; ring: boolean; glow: boolean; style: TagStyle }
   spot: { color: string }
@@ -14,6 +15,11 @@ export type Defaults = {
   arrow: { color: string; dash: Arrow["dash"]; head: Arrow["head"] }
   line: { color: string; dash: Arrow["dash"] }
   text: { color: string; box: boolean }
+  ring: { color: string; fill: number; double: boolean }
+  tie: { color: string; dash: Tie["dash"]; dist: boolean }
+  measure: { color: string }
+  shadow: { color: string }
+  focus: { dim: number }
 }
 export const START_DEFAULTS: Defaults = {
   tag: { color: "#d7ff3c", ring: true, glow: false, style: "sig" }, // the signature tag: the look that is always PitchStudio
@@ -23,20 +29,33 @@ export const START_DEFAULTS: Defaults = {
   arrow: { color: "#ffffff", dash: "solid", head: "end" },
   line: { color: "#ffffff", dash: "solid" },
   text: { color: "#ffffff", box: true },
+  ring: { color: "#d7ff3c", fill: 0.18, double: false },
+  tie: { color: "#ffffff", dash: "solid", dist: false },
+  measure: { color: "#ffffff" },
+  shadow: { color: "#ffffff" },
+  focus: { dim: 0.45 },
 }
 
 type Drag =
   | { type: "move"; id: string; start: Pt; orig: Mark; moved: boolean }
   | { type: "handle"; id: string; which: string; orig: Mark }
-  | { type: "arrow"; tool: "arrow" | "line"; a: Pt; b: Pt }
-  | { type: "box"; start: Pt; cur: Pt; round: boolean }
+  | { type: "arrow"; tool: "arrow" | "line" | "tie" | "measure" | "shadow"; a: Pt; b: Pt; ra: string | null }
+  | { type: "pin"; i: number }
+  | { type: "box"; start: Pt; cur: Pt; round: boolean; focus?: boolean }
   | { type: "pan"; x: number; y: number; sl: number; st: number }
 
-export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect, onCreate, apply, begin, end, onFocusText, seal, stageRef, hint }: {
+export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect, onCreate, apply: applyItems, begin, end, onFocusText, seal, stageRef, hint, fit: cal, calPts, calPick, onCalib, look, under }: {
   shot: Shot; src: string | undefined; tool: Tool; sel: string | null; zoom: number; setZoom: (z: number) => void; defaults: Defaults
   onSelect: (id: string | null) => void; onCreate: (m: Mark) => void; apply: (fn: (items: Mark[]) => Mark[]) => void
   begin: () => void; end: () => void; onFocusText: () => void; seal: ReactNode; stageRef: RefObject<SVGSVGElement | null>; hint: string
+  fit?: Fit | null
+  calPts?: CalPoint[] // calibration pins (shown while calibrating)
+  calPick?: string | null // the pitch point waiting to be placed
+  onCalib?: (pts: CalPoint[], live?: boolean) => void
+  look?: string // a css filter for the picture only (the render look, previewed)
+  under?: ReactNode // drawn right on the picture, under the marks (the calibration check)
 }) {
+  const apply = applyItems
   const { w, h } = shot
   const U = unit(w)
   const viewRef = useRef<HTMLDivElement>(null)
@@ -116,11 +135,12 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
     return [p.x, p.y]
   }
   // Ends of arrows and lines snap onto tagged players
-  const snap = (p: Pt): Pt => {
-    let best: Pt | null = null, bd = 24 * U / Math.max(0.5, zoom)
-    for (const m of shot.items) if (m.kind === "tag" || m.kind === "spot") { const d = dist(p, [m.x, m.y]); if (d < bd) { bd = d; best = [m.x, m.y] } }
-    return best ?? p
+  const snapTo = (p: Pt): { p: Pt; id: string | null } => {
+    let best: Pt | null = null, id: string | null = null, bd = 30 * U / Math.max(0.5, zoom)
+    for (const m of shot.items) if (m.kind === "tag" || m.kind === "spot" || m.kind === "ring") { const d = dist(p, [m.x, m.y]); if (d < bd) { bd = d; best = [m.x, m.y]; id = m.id } }
+    return { p: best ?? p, id }
   }
+  const snap = (p: Pt): Pt => snapTo(p).p
 
   const finishZone = (pts: Pt[], round = false) => {
     const d = round ? defaults.oval : defaults.zone
@@ -158,7 +178,7 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
     }
     const hit = (target.closest("[data-id]") as HTMLElement | null)?.dataset.id ?? null
     const hitMark = hit ? shot.items.find(x => x.id === hit) : undefined
-    const pickInstead = hitMark && (tool === "select" || (tool === "tag" && hitMark.kind === "tag") || (tool === "spot" && hitMark.kind === "spot") || (tool === "text" && hitMark.kind === "text"))
+    const pickInstead = hitMark && tool !== "calib" && (tool === "select" || (tool === "tag" && hitMark.kind === "tag") || (tool === "spot" && hitMark.kind === "spot") || (tool === "text" && hitMark.kind === "text") || (tool === "ring" && hitMark.kind === "ring"))
     if (tool === "select" || pickInstead) {
       if (hitMark) {
         onSelect(hitMark.id)
@@ -169,9 +189,23 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
       } else onSelect(null)
       return
     }
+    if (tool === "calib") {
+      const pins = calPts ?? []
+      const near = pins.findIndex(q => dist(q.img, p) * scale < 14)
+      if (near >= 0) { setD({ type: "pin", i: near }); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); return }
+      if (calPick && onCalib) onCalib([...pins.filter(q => q.id !== calPick), { id: calPick, img: p, pitch: [0, 0] }])
+      return
+    }
+    if (tool === "ring") { const d = defaults.ring; const s0 = snapTo(p); onCreate({ id: newId(), kind: "ring", color: d.color, x: s0.p[0], y: s0.p[1], r: 0.95, fill: d.fill, double: d.double, size: 1 }); return }
+    if (tool === "tie" || tool === "measure" || tool === "shadow") {
+      const s0 = tool === "shadow" ? { p, id: null } : snapTo(p)
+      setD({ type: "arrow", tool, a: s0.p, b: p, ra: s0.id }); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); return
+    }
+    if (tool === "focus") { setD({ type: "box", start: p, cur: p, round: false, focus: true }); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); return }
     if (tool === "tag") {
       const d = defaults.tag
-      onCreate({ id: newId(), kind: "tag", color: d.color, x: p[0], y: p[1], dx: 0, dy: 52 * U, label: "", ring: d.ring, glow: d.glow, style: d.style, size: 1 })
+      const up = cal ? Math.max(70 * U, ppmAt(cal, p) * 2.9 + 26 * U) : 118 * U // above the player's head
+      onCreate({ id: newId(), kind: "tag", color: d.color, x: p[0], y: p[1], dx: 0, dy: -up, label: "", ring: d.ring, glow: d.glow, style: d.style, size: 1 })
       onFocusText(); return
     }
     if (tool === "spot") { onCreate({ id: newId(), kind: "spot", color: defaults.spot.color, x: p[0], y: p[1], size: 1 }); return }
@@ -182,7 +216,7 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
     }
     if (tool === "arrow" || tool === "line") {
       const a = snap(p)
-      setD({ type: "arrow", tool, a, b: p }); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); return
+      setD({ type: "arrow", tool, a, b: p, ra: null }); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); return
     }
     if (tool === "zone") {
       if (poly.length) {
@@ -218,8 +252,18 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
           if (d.which === "b") return { ...o, b: snap(p) }
           if (d.which === "c") return { ...o, c: p }
         }
+        if (o.kind === "tie") {
+          const s0 = snapTo(p)
+          if (d.which === "a") return { ...o, a: s0.p, ra: s0.id }
+          if (d.which === "b") return { ...o, b: s0.p, rb: s0.id }
+        }
+        if (o.kind === "measure") { if (d.which === "a") return { ...o, a: snap(p) }; if (d.which === "b") return { ...o, b: snap(p) } }
+        if (o.kind === "shadow") { if (d.which === "a") return { ...o, x: p[0], y: p[1] }; if (d.which === "b") return { ...o, bx: p[0], by: p[1] } }
+        if (o.kind === "focus" && d.which.startsWith("p")) { const i = +d.which.slice(1); return { ...o, pts: o.pts.map((q, j) => (j === i ? p : q)) } }
         return x
       }))
+    } else if (d.type === "pin") {
+      if (onCalib && calPts) onCalib(calPts.map((q, i) => (i === d.i ? { ...q, img: p } : q)), true)
     } else if (d.type === "arrow") setD({ ...d, b: p })
     else if (d.type === "box") setD({ ...d, cur: p })
   }
@@ -235,11 +279,27 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
     setD(null)
     if (!d) return
     if (d.type === "move" || d.type === "handle") { end(); return }
+    if (d.type === "pin") { if (onCalib && calPts) onCalib(calPts); return }
+    if (d.type === "arrow" && (d.tool === "tie" || d.tool === "measure" || d.tool === "shadow")) {
+      const raw = toImg(e), s1 = d.tool === "shadow" ? { p: snap(raw), id: null } : snapTo(raw)
+      if (dist(d.a, s1.p) * scale < 10) return
+      if (d.tool === "tie") { const df = defaults.tie; onCreate({ id: newId(), kind: "tie", color: df.color, a: d.a, b: s1.p, ra: d.ra, rb: s1.id, dash: df.dash, dist: df.dist && !!cal, size: 1 }) }
+      else if (d.tool === "measure") onCreate({ id: newId(), kind: "measure", color: defaults.measure.color, a: d.a, b: s1.p, size: 1 })
+      else onCreate({ id: newId(), kind: "shadow", color: defaults.shadow.color, x: s1.p[0], y: s1.p[1], bx: d.a[0], by: d.a[1], len: 14, spread: 10, size: 1 })
+      return
+    }
     if (d.type === "arrow") {
       const b = snap(toImg(e))
       if (dist(d.a, b) * scale < 10) return // a click, not a drag
       const df = d.tool === "line" ? { ...defaults.line, head: "none" as const } : defaults.arrow
       onCreate({ id: newId(), kind: "arrow", color: df.color, a: d.a, b, c: null, dash: df.dash, head: df.head, size: d.tool === "line" ? 0.7 : 1 })
+      return
+    }
+    if (d.type === "box" && d.focus) {
+      const c = toImg(e)
+      let [x0, x1] = [Math.min(d.start[0], c[0]), Math.max(d.start[0], c[0])], [y0, y1] = [Math.min(d.start[1], c[1]), Math.max(d.start[1], c[1])]
+      if ((x1 - x0) * scale < 10 || (y1 - y0) * scale < 10) { x0 = d.start[0] - w * 0.18; x1 = d.start[0] + w * 0.18; y0 = d.start[1] - h * 0.22; y1 = d.start[1] + h * 0.22 }
+      onCreate({ id: newId(), kind: "focus", pts: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dim: defaults.focus.dim, color: "#05060a", size: 1 })
       return
     }
     if (d.type === "box") {
@@ -294,9 +354,10 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel} onDragStart={e => e.preventDefault()}
           onPointerLeave={() => setHover(null)}>
           <svg ref={stageRef} viewBox={`0 0 ${w} ${h}`} width="100%" height="100%" style={{ display: "block" }} data-stage="shot">
-            {src ? <image href={src} x={0} y={0} width={w} height={h} preserveAspectRatio="none" /> : <rect width={w} height={h} fill="#16181c" />}
+            {src ? <image href={src} x={0} y={0} width={w} height={h} preserveAspectRatio="none" style={look ? { filter: look } : undefined} data-pic="1" /> : <rect width={w} height={h} fill="#16181c" />}
             {shot.dim > 0 && <rect width={w} height={h} fill="#000" fillOpacity={shot.dim} />}
-            <Marks items={shot.items} w={w} h={h} />
+            {under}
+            <Marks items={shot.items} w={w} h={h} fit={cal} />
             {seal}
           </svg>
           <svg viewBox={`0 0 ${w} ${h}`} width="100%" height="100%" style={{ position: "absolute", inset: 0, pointerEvents: "none" }} data-stage="overlay">
@@ -310,9 +371,24 @@ export function Stage({ shot, src, tool, sel, zoom, setZoom, defaults, onSelect,
               {H("a", selMark.a, "c", "Start")}{H("b", selMark.b, "c", "End")}
               {H("c", selMark.c ?? mid(selMark.a, selMark.b), "d", "Curve")}
             </>}
-            {ar && <path d={arrowPath(ar.a, ar.b, null)} stroke="#d7ff3c" strokeWidth={4 * U} strokeDasharray={ar.tool === "line" ? undefined : `${12 * U} ${8 * U}`} fill="none" />}
+            {(selMark?.kind === "tie" || selMark?.kind === "measure") && <>{H("a", selMark.a, "c", "Start")}{H("b", selMark.b, "c", "End")}</>}
+            {selMark?.kind === "shadow" && <>{H("a", [selMark.x, selMark.y], "s", "The presser")}{H("b", [selMark.bx, selMark.by], "c", "The ball")}</>}
+            {selMark?.kind === "focus" && <>
+              <polygon points={selMark.pts.map(p => p.join(",")).join(" ")} fill="none" stroke="#d7ff3c" strokeWidth={sw} strokeDasharray={`${5 / scale} ${4 / scale}`} />
+              {selMark.pts.map((p, i) => H("p" + i, p, "s", `Corner ${i + 1}`))}
+            </>}
+            {tool === "calib" && cal && pitchLines().map((ln, i) => <path key={"pl" + i} d={pathOf(ln.map(q => project(cal.H, q)))} fill="none" stroke="#ff3ea5" strokeWidth={2.2 / scale} strokeOpacity={0.9} />)}
+            {tool === "calib" && (calPts ?? []).map((q, i) => (
+              <g key={q.id} style={{ pointerEvents: "all", cursor: "grab" }}>
+                <circle cx={q.img[0]} cy={q.img[1]} r={13 / scale} fill="#d7ff3c" stroke="#0a0c0f" strokeWidth={2.5 / scale} />
+                <text x={q.img[0]} y={q.img[1]} textAnchor="middle" dominantBaseline="central" fontSize={13 / scale} fontWeight={800} fill="#0a0c0f" style={{ fontFamily: "Inter, sans-serif" }}>{i + 1}</text>
+              </g>
+            ))}
+            {ar && (ar.tool === "tie" || ar.tool === "measure" || ar.tool === "shadow") && <path d={`M${ar.a[0]},${ar.a[1]} L${ar.b[0]},${ar.b[1]}`} stroke="#d7ff3c" strokeWidth={3 * U} strokeDasharray={`${8 * U} ${6 * U}`} fill="none" />}
+            {ar && ar.tool !== "tie" && ar.tool !== "measure" && ar.tool !== "shadow" && <path d={arrowPath(ar.a, ar.b, null)} stroke="#d7ff3c" strokeWidth={4 * U} strokeDasharray={ar.tool === "line" ? undefined : `${12 * U} ${8 * U}`} fill="none" />}
             {bx?.round && <ellipse cx={(bx.start[0] + bx.cur[0]) / 2} cy={(bx.start[1] + bx.cur[1]) / 2} rx={Math.abs(bx.cur[0] - bx.start[0]) / 2} ry={Math.abs(bx.cur[1] - bx.start[1]) / 2} fill="rgba(215,255,60,0.18)" stroke="#d7ff3c" strokeWidth={sw} />}
-            {bx && !bx.round && <rect x={Math.min(bx.start[0], bx.cur[0])} y={Math.min(bx.start[1], bx.cur[1])} width={Math.abs(bx.cur[0] - bx.start[0])} height={Math.abs(bx.cur[1] - bx.start[1])} fill="rgba(215,255,60,0.18)" stroke="#d7ff3c" strokeWidth={sw} />}
+            {bx?.focus && <rect x={Math.min(bx.start[0], bx.cur[0])} y={Math.min(bx.start[1], bx.cur[1])} width={Math.abs(bx.cur[0] - bx.start[0])} height={Math.abs(bx.cur[1] - bx.start[1])} fill="none" stroke="#d7ff3c" strokeWidth={2 * sw} strokeDasharray={`${6 / scale} ${4 / scale}`} />}
+            {bx && !bx.round && !bx.focus && <rect x={Math.min(bx.start[0], bx.cur[0])} y={Math.min(bx.start[1], bx.cur[1])} width={Math.abs(bx.cur[0] - bx.start[0])} height={Math.abs(bx.cur[1] - bx.start[1])} fill="rgba(215,255,60,0.18)" stroke="#d7ff3c" strokeWidth={sw} />}
             {poly.length > 0 && <>
               <polyline points={[...poly, ...(hover ? [hover] : [])].map(p => p.join(",")).join(" ")} fill="rgba(215,255,60,0.15)" stroke="#d7ff3c" strokeWidth={2 * sw} />
               {poly.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r={r} fill={i === 0 ? "#d7ff3c" : "#fff"} stroke="#111" strokeWidth={sw} />)}
