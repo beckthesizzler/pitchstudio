@@ -1,5 +1,7 @@
 # PitchStudio
 
+**Read [PS-NOTES.md](PS-NOTES.md) first.** It holds the decisions, rules, current state and past mistakes. Code now goes through GitHub only; Figma Make is retired and must not be published from.
+
 React + Vite + Tailwind CSS project running inside Figma Make.
 
 ## Development Server
