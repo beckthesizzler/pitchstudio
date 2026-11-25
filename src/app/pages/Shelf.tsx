@@ -115,7 +115,7 @@ export default function ShelfPage() {
         out.push({ key: "board:" + c.id, kind: "board", id: c.id, name: c.title, no, updated: c.updated_at, href: `/board?open=${c.id}`, thumb: <DropThumb data={c.thumb} /> })
       }
       for (const row of a.data ?? []) {
-        const name = (row.title || "").trim() || (row.head || "").trim() || (row.kind === "video" ? "Video" : "Shot")
+        const name = (row.title || "").trim() || (row.head || "").trim() || (row.kind === "video" ? "Game Film" : "Game Shot")
         out.push({ key: "analysis:" + row.id, kind: "analysis", id: row.id, name, no: 0, updated: row.updated_at, href: `/analysis?item=${row.id}`, thumb: <ShotThumb path={row.cover_path ?? null} /> })
       }
       for (const row of r.data ?? []) {

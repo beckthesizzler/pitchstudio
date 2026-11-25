@@ -80,7 +80,7 @@ export async function loadLibrary(userId: string, say: (t: string) => void): Pro
   for (const r of b.data ?? []) if (boardCounts(r).players + boardCounts(r).lines > 0) out.push({ type: "board", name: (r.title || "").trim() || "Untitled board", row: r })
   for (const r of a.data ?? []) {
     if (typeof r.path !== "string" || !(Number(r.w) > 0) || !(Number(r.h) > 0)) continue
-    out.push({ type: "shot", name: (r.title || "").trim() || (r.head || "").trim() || "Shot", path: r.path, w: Number(r.w), h: Number(r.h), dim: Number(r.dim) || 0, items: Array.isArray(r.items) ? r.items : [] })
+    out.push({ type: "shot", name: (r.title || "").trim() || (r.head || "").trim() || "Game Shot", path: r.path, w: Number(r.w), h: Number(r.h), dim: Number(r.dim) || 0, items: Array.isArray(r.items) ? r.items : [] })
   }
   for (const r of n.data ?? []) {
     const text = plain(String(r.first ?? "")).slice(0, 400), name = String(r.title ?? "").trim()

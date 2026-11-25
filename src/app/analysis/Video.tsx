@@ -73,10 +73,13 @@ export function stepsOf(m: Moment): { step: number; at: number; marks: Mark[] }[
 /** Where a moment's caption goes: the edge (top or bottom) with fewer marks near it, so it doesn't cover them */
 export function captionAtBottom(m: Moment, h: number, w = h * 16 / 9) {
   let top = 0, bottom = 0
-  // only what the box would cover: the left two thirds, a quarter of the height from that edge. Name tags count most
+  if (m.capAt === "top") return false
+  if (m.capAt === "bottom") return true
+  // only what the box would cover: the left two thirds, a quarter of the height from that edge.
+  // Names and text count most, then the highlighted player (a double ring or a spotlight)
   const see = (x: number, y: number, k = 1) => { if (x > w * 0.7) return; if (y < h * 0.27) top += k; else if (y > h * 0.73) bottom += k }
   for (const it of m.items as any[]) {
-    if (typeof it.x === "number" && typeof it.y === "number") see(it.kind === "tag" ? it.x + (it.dx ?? 0) : it.x, it.kind === "tag" ? it.y + (it.dy ?? 0) : it.y, it.kind === "tag" || it.kind === "text" ? 3 : 1)
+    if (typeof it.x === "number" && typeof it.y === "number") see(it.kind === "tag" ? it.x + (it.dx ?? 0) : it.x, it.kind === "tag" ? it.y + (it.dy ?? 0) : it.y, it.kind === "tag" || it.kind === "text" ? 3 : it.double || it.kind === "spot" ? 2.5 : 1)
     for (const k of ["a", "b", "c"]) if (Array.isArray(it[k])) see(it[k][0], it[k][1])
     if (Array.isArray(it.pts)) for (const q of it.pts) if (Array.isArray(q)) see(q[0], q[1], 0.5)
   }
@@ -630,7 +633,7 @@ export function VideoStudio({ project, file, missing, editing, onChoose, onSet, 
               <span className="vs-len">Clip {fmtTime(p.outT - p.inT, false)} of {fmtTime(dur, false)}</span>
               <button className="vs-b quiet" title="Start the clip here (I)" aria-label="Start the clip here" onClick={() => onSet(q => ({ ...q, inT: Math.min(t, q.outT - 0.5) }))}><span>In<span className="lg"> here</span></span></button>
               <button className="vs-b quiet" title="End the clip here (O)" aria-label="End the clip here" onClick={() => onSet(q => ({ ...q, outT: Math.max(t, q.inT + 0.5) }))}><span>Out<span className="lg"> here</span></span></button>
-              <button className="vs-b" title="Add this frame to your shots" aria-label="Add this frame to your shots" onClick={capture}><Camera size={15} /><span className="lg">To shots</span></button>
+              <button className="vs-b" title="Add this frame as a Game Shot" aria-label="Add this frame as a Game Shot" onClick={capture}><Camera size={15} /><span className="lg">To Game Shots</span></button>
               <button className="vs-b" title="Freeze here and draw (M)" onClick={addMoment}><Plus size={15} /> Add a moment</button>
             </div>
           )}

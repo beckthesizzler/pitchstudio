@@ -9,7 +9,7 @@ import { Suite, type Who } from "../analysis/Suite"
 import { Home } from "../analysis/Home"
 import { unit } from "../analysis/model"
 
-/* Live Game Analysis ("/analysis"). With no item open it is your Library ("?folder=" opens a folder);
+/* Live Game Analysis ("/analysis"). With nothing open: New analysis; "?view=library" is Your Library, "?folder=" opens a folder;
    "?item=ID" opens a shot or a video in the edit suite. "?open=ID" (Brain Dump links) opens the item too; an id that is gone shows "not found" with a way back. */
 
 export default function AnalysisPage() {
@@ -17,7 +17,7 @@ export default function AnalysisPage() {
   const navigate = useNavigate()
   const loc = useLocation()
   const qs = new URLSearchParams(loc.search)
-  const item = qs.get("item") ?? qs.get("open"), folder = qs.get("folder")
+  const item = qs.get("item") ?? qs.get("open"), folder = qs.get("folder"), view = folder ? "folder" : qs.get("view") === "library" ? "library" : "new"
   const [user, setUser] = useState<Who | null>(null)
   const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
   const [handle, setHandle] = useState("")
@@ -54,5 +54,5 @@ export default function AnalysisPage() {
 
   if (!user) return <div style={{ height: "100vh", background: "#17181b" }} />
   if (item) return <Suite key={item} user={user} itemId={item} sealFor={sealFor} />
-  return <Home key={folder ?? "all"} user={user} folderParam={folder} />
+  return <Home user={user} view={view} folderParam={folder} sealFor={sealFor} />
 }

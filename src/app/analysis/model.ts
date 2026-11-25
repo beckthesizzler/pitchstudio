@@ -28,7 +28,7 @@ export type Notes = { kicker: string; head: string; body: string; stats: string[
 export const EMPTY_NOTES: Notes = { kicker: "", head: "", body: "", stats: [], show: true }
 /** A moment in the video: it freezes there for a few seconds with drawings on it.
     lead: slow the second before it down. steps: when each build step appears, in seconds after the freeze */
-export type Moment = { id: string; t: number; hold: number; dim: number; items: Mark[]; lead?: "off" | "slow"; calib?: Calib | null; caption?: Notes; steps?: Record<string, number> }
+export type Moment = { id: string; t: number; hold: number; dim: number; items: Mark[]; lead?: "off" | "slow"; calib?: Calib | null; caption?: Notes; capAt?: "auto" | "top" | "bottom"; steps?: Record<string, number> }
 /** The video an analysis is made from (the file itself stays on the device) and what's drawn on it */
 export type VideoProject = { name: string; key: string; size: number; dur: number; w: number; h: number; inT: number; outT: number; moments: Moment[] }
 export type AnalysisData = { v: 1; shots: Shot[]; video: VideoProject | null }
@@ -142,7 +142,7 @@ export function readVideo(v: any): VideoProject | null {
   const moments: Moment[] = (Array.isArray(v.moments) ? v.moments.slice(0, MAX_MOMENTS) : []).filter((m: any) => m && typeof m === "object").map((m: any) => ({
     id: str(m.id, 60) || newId(), t: num(m.t, 0, dur, 0), hold: num(m.hold, 0.5, 15, 3), dim: num(m.dim, 0, 0.7, 0),
     items: readMarks(m.items, w, h), lead: m.lead === "slow" ? "slow" as const : "off" as const, calib: readCalib(m.calib, w, h),
-    caption: m.caption ? readNotes(m.caption) : undefined,
+    caption: m.caption ? readNotes(m.caption) : undefined, capAt: m.capAt === "top" || m.capAt === "bottom" ? m.capAt : undefined,
     steps: m.steps && typeof m.steps === "object" ? Object.fromEntries(Object.entries(m.steps).slice(0, 40).filter(([k, t]) => /^\d{1,2}$/.test(k) && typeof t === "number" && t >= 0 && t <= 15).map(([k, t]) => [k, t as number])) : undefined,
   })).sort((a: Moment, b: Moment) => a.t - b.t)
   return { name: str(v.name, 200) || "Video", key, size, dur, w, h, inT, outT, moments }

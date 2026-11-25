@@ -132,7 +132,7 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
         ))}
       </div>
       <p className="an-note">Pick a team above the picture and every new mark takes its colour.</p>
-      {slider("Darken the shot", shot.dim, 0, 0.6, 0.05, v => onDim(v, true))}
+      {slider("Darken the picture", shot.dim, 0, 0.6, 0.05, v => onDim(v, true))}
       {!calibrated && <p className="an-note">Calibrate the shot and rings lie flat on the grass, shrink with distance, and ties can show metres.</p>}
       {layers}
     </div>
@@ -155,7 +155,7 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
       </div>
       {m.kind === "tag" && row("Style", <TagLooks value={m.style ?? "sig"} color={m.color} name={m.label} set={v => set({ style: v })} />)}
 
-      {m.kind === "tag" && row("Name", <input ref={textRef} id="an-label" className="an-inp" value={m.label} maxLength={40} placeholder="RW · Yamal" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
+      {m.kind === "tag" && row("Name", <input ref={textRef} id="an-label" className="an-inp" list="la-names" autoComplete="off" value={m.label} maxLength={40} placeholder="RW · Yamal" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
       {m.kind === "zone" && row("Label", <input ref={textRef} id="an-label" className="an-inp" value={m.label} maxLength={24} placeholder="3v2" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
       {m.kind === "text" && row("Text", <textarea ref={textRef} id="an-text" className="an-inp" rows={4} value={m.text} maxLength={400} placeholder={"Inside diag is on." + String.fromCharCode(10) + "N6 vacates the lane."} onFocus={begin} onBlur={end} onChange={e => set({ text: e.target.value }, true)} />)}
 

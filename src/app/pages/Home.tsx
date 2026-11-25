@@ -73,7 +73,7 @@ export default function HomePage() {
       const b = (boards as any[] | null)?.[0]
       setLast(b ? { id: b.id, title: listName("Board", b.title, b.updated_at), updated_at: b.updated_at } : null)
       const a = (analyses as any[] | null)?.[0]
-      setLastA(a ? { id: a.id, title: (a.title || "").trim() || (a.head || "").trim() || (a.kind === "video" ? "Video" : "Shot"), updated_at: a.updated_at } : null)
+      setLastA(a ? { id: a.id, title: (a.title || "").trim() || (a.head || "").trim() || (a.kind === "video" ? "Game Film" : "Game Shot"), updated_at: a.updated_at } : null)
       const r = (reports as any[] | null)?.[0]
       setLastR(r ? { id: r.id, title: listName("Report", r.title, r.updated_at), updated_at: r.updated_at } : null)
       setReady(true)

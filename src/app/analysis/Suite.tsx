@@ -11,8 +11,10 @@ import { SUITE_CSS } from "./suiteCss"
 import { fitCalib, type CalPoint } from "./calib"
 import { findVideo, keepVideo, probeVideo, videoKey, videoProblem } from "./videoStore"
 import { MAX_MARKS, downloadShot, exportFontCSS, moveMark, newId, prepareShot, unit, type Mark, type Notes, type Shot, type VideoProject } from "./model"
-import { createItem, deleteItems, folderItems, itemPicPath, itemThumbPath, loadItem, moveItems, readShotData, readVideoData, reorder, saveItem, shotPayload, signed, uploadPic, videoPayload, DEFAULT_TEAMS, type Folder, type ItemRow, type ShotData, type Teams, type VideoData } from "./items"
+import { createItem, deleteItems, folderItems, itemPicPath, itemThumbPath, loadItem, moveItems, readShotData, readVideoData, reorder, saveItem, shotPayload, signed, uploadPic, videoPayload, withMatch, loadFolders, applyMatch, matchLine, DEFAULT_TEAMS, type Folder, type ItemRow, type ShotData, type Teams, type VideoData } from "./items"
 import { firstUse, markGuide } from "./Guide"
+import { PatternCoach, PatternStrip, PATTERN_CSS, type Pattern } from "./patterns"
+import { nameHints, rememberNames, type NameHint } from "./names"
 
 /* The edit suite: one shot or one video of a folder, with the folder's reel along the bottom.
    Library on the left (folded to a strip), the picture in the middle with its notes underneath, the mark panel on the right.
@@ -49,7 +51,7 @@ const HINTS: Record<Tool, string> = {
   shadow: "Drag from the ball to the presser: the shadow is the lane he takes away.",
   focus: "Drag over the area that matters. Everything else goes dark.",
   text: "Click where your note should go, then type it.",
-  calib: "Pick a point on the little pitch, then click it on your shot.",
+  calib: "Pick a point on the little pitch, then click it on your Game Shot.",
 }
 const hintFor = (t: Tool) => (TOUCH ? HINTS[t].split("Click").join("Tap").split("click").join("tap") : HINTS[t])
 const KEYS: [string, string][] = [["V", "Select"], ["T", "Tag"], ["R", "Ring"], ["J", "Tie"], ["S", "Spotlight"], ["Z", "Zone"], ["O", "Oval"], ["A", "Arrow"], ["L", "Line"], ["M", "Measure"], ["H", "Cover shadow"], ["F", "Focus"], ["X", "Text"], ["C", "Calibrate"],
@@ -266,7 +268,7 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
 
   const create = (m: Mark) => {
     if (!stageShot) return
-    if (stageShot.items.length >= MAX_MARKS) { say(`A shot holds ${MAX_MARKS} marks.`); return }
+    if (stageShot.items.length >= MAX_MARKS) { say(`A Game Shot holds ${MAX_MARKS} marks.`); return }
     const next = Math.max(0, ...stageShot.items.map((x, i) => x.step ?? i + 1)) + 1
     begin(); applyItems(items => [...items, { ...m, step: next } as Mark]); end(); setSel(m.id)
     markGuide("mark")
@@ -288,12 +290,49 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   const [focusReq, setFocusReq] = useState(0)
   const focusText = () => setFocusReq(n => n + 1)
   useEffect(() => { if (focusReq) { textRef.current?.focus(); textRef.current?.select() } }, [focusReq])
-  const pickTool = (t: Tool) => {
-    setTool(cur => (t === "calib" && cur === "calib" ? "select" : t))
+  const pickTool = (t: Tool, quiet = false) => {
+    setTool(cur => (t === "calib" && cur === "calib" && !quiet ? "select" : t))
     if (t !== "select") setSel(null)
     if (t === "calib") { setRightOpen(true); markGuide("calib") }
-    if (t !== "calib" && t !== "select" && firstUse("tool-" + t)) say(hintFor(t))
+    if (!quiet && t !== "calib" && t !== "select" && firstUse("tool-" + t)) say(hintFor(t))
   }
+
+  /* ── pattern starters: one step, one tool, moving on by itself once its mark is made ── */
+  const [pattern, setPattern] = useState<{ p: Pattern; step: number } | null>(null)
+  const kindsOf = (t: Tool) => (t === "zone" ? ["zone"] : t === "arrow" ? ["arrow"] : [t])
+  const countFor = (t: Tool) => (t === "calib" ? (fitCalib(stageShot?.calib ?? { pts: [] }) ? 1 : 0) : (stageShot?.items ?? []).filter(m => kindsOf(t).includes(m.kind)).length)
+  const patBase = useRef(0)
+  const goStep = (step: number) => {
+    if (!pattern) return
+    const t = pattern.p.steps[step].tool
+    patBase.current = countFor(t)
+    setPattern({ ...pattern, step })
+    pickTool(t, true)
+  }
+  const startPattern = (p: Pattern) => {
+    patBase.current = 0
+    setPattern({ p, step: 0 })
+    pickTool(p.steps[0].tool, true)
+    patBase.current = countFor(p.steps[0].tool)
+    if (notes && !notes.head.trim() && !notes.body.trim()) setNotes({ ...notes, head: p.head, body: p.body })
+    ;(window as any).posthog?.capture("analysis_pattern_started", { pattern: p.id })
+  }
+  useEffect(() => {
+    if (!pattern) return
+    const t = pattern.p.steps[pattern.step].tool
+    if (countFor(t) <= patBase.current) return
+    const t0 = setTimeout(() => {
+      if (pattern.step < pattern.p.steps.length - 1) goStep(pattern.step + 1)
+      else { setPattern(null); pickTool("select", true); say(`${pattern.p.name}: done. Fill in the __ in your notes.`) }
+    }, t === "calib" ? 400 : 700)
+    return () => clearTimeout(t0)
+  }) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPattern(null) }, [row?.id, moment?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── player names for tags ── */
+  const [hints, setHints] = useState<NameHint[]>([])
+  useEffect(() => { let off = false; nameHints(teams.us.name, teams.them.name).then(h => { if (!off) setHints(h) }); return () => { off = true } }, [teams.us.name, teams.them.name, row?.id])
+  useEffect(() => { if (status === "saved") rememberNames((stageShot?.items ?? []).flatMap(m => (m.kind === "tag" && m.label.trim() ? [m.label] : []))) }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
   // a note left empty is removed when you move on
   const prevSel = useRef<string | null>(null)
   useEffect(() => {
@@ -317,7 +356,8 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
     if (!imgs.length && !vids.length) { say("Use a screenshot (PNG, JPG, WebP) or a clip (MP4, MOV, WebM)."); return }
     await save()
     const made: string[] = []
-    let n = sibs.length
+    let n = Math.max(0, ...sibs.map(x => x.sort)) + 1
+    const match = folders.find(f => f.id === row?.folder_id)?.match ?? null
     for (const f of imgs) {
       setBusy(`Adding ${made.length + 1} of ${imgs.length}…`)
       let prep
@@ -325,15 +365,15 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
       const id = newId(), path = itemPicPath(user.id, id)
       try {
         await uploadPic(path, prep.blob)
-        await createItem(user.id, row?.folder_id ?? null, "shot", { v: 2, path, w: prep.w, h: prep.h, dim: 0, items: [] }, { id, sort: n++, cover: path })
+        await createItem(user.id, row?.folder_id ?? null, "shot", withMatch({ v: 2, path, w: prep.w, h: prep.h, dim: 0, items: [] }, match), { id, sort: n++, cover: path })
         made.push(id)
-      } catch { say("Couldn't add a shot. Check your connection and try again.") }
+      } catch { say("Couldn't add a Game Shot. Check your connection and try again.") }
     }
     for (const f of vids.slice(0, 1)) {
       setBusy("Opening the clip…")
       try {
         const info = await probeVideo(f), key = videoKey(f), id = newId()
-        await createItem(user.id, row?.folder_id ?? null, "video", { v: 2, video: { name: f.name.slice(0, 200), key, size: f.size, dur: info.dur, w: info.w, h: info.h, inT: 0, outT: info.dur, moments: [] } }, { id, sort: n++, title: f.name.replace(/\.[^.]+$/, "").slice(0, 80) })
+        await createItem(user.id, row?.folder_id ?? null, "video", withMatch({ v: 2, video: { name: f.name.slice(0, 200), key, size: f.size, dur: info.dur, w: info.w, h: info.h, inT: 0, outT: info.dur, moments: [] } }, match), { id, sort: n++, title: f.name.replace(/\.[^.]+$/, "").slice(0, 80) })
         pendingFiles.set(id, f)
         keepVideo(f, key)
         made.push(id)
@@ -348,7 +388,7 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
     const v = vdRef.current
     if (!v?.video) return
     try { await probeVideo(f) } catch (e) { say(videoProblem(e)); return }
-    if (videoKey(f) !== v.video.key && f.size !== v.video.size) { say("That's a different clip. Add it as a new video instead."); return }
+    if (videoKey(f) !== v.video.key && f.size !== v.video.size) { say("That's a different clip. Add it as a new Game Film instead."); return }
     setVideoFile(f); keepVideo(f, v.video.key)
   }
 
@@ -370,13 +410,24 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
     if (row && ids.includes(row.id)) {
       const rest = sibs.filter(s => !ids.includes(s.id))
       savedJson.current = payload() // nothing left to save
-      navigate(rest[0] ? `/analysis?item=${rest[0].id}` : row.folder_id ? `/analysis?folder=${row.folder_id}` : "/analysis")
+      navigate(rest[0] ? `/analysis?item=${rest[0].id}` : row.folder_id ? `/analysis?folder=${row.folder_id}` : "/analysis?view=library")
     } else refreshReel(row?.folder_id ?? null)
   }
   const moveTicked = async (folder: string | null) => {
     const ids = picking ? [...ticked] : row ? [row.id] : []
     setMoveOpen(false)
     try { await moveItems(ids, folder) } catch { say("Couldn't move them. Try again."); return }
+    // the folder's match: on the open one here (so the next save keeps it), on the others in the database
+    const m = folder ? folders.find(f => f.id === folder)?.match ?? null : null
+    if (m && folder) {
+      const others = ids.filter(id => id !== row?.id)
+      if (others.length) applyMatch(user.id, folder, m, others).catch(() => {})
+      if (row && ids.includes(row.id)) {
+        const teams = { us: { name: (m.home || "Us").slice(0, 20), color: m.homeColor }, them: { name: (m.away || "Them").slice(0, 20), color: m.awayColor } }
+        const fill = (n: Notes): Notes => ({ ...n, kicker: n.kicker.trim() ? n.kicker : matchLine(m) })
+        if (kind === "shot") { const s0 = shotRef.current; if (s0) setShot({ ...s0, teams, notes: fill(s0.notes) }) } else { const v0 = vdRef.current; if (v0) setVd({ ...v0, teams }) }
+      }
+    }
     const name = folder ? folders.find(f => f.id === folder)?.name ?? "the folder" : "Unsorted"
     say(`Moved ${ids.length === 1 ? "it" : ids.length} to ${name}.`)
     setTicked(new Set()); setPicking(false)
@@ -518,13 +569,13 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
     return out
   })()
   const kindNo = sibs.filter(s => s.kind === kind).findIndex(s => s.id === row?.id) + 1
-  const placeholder = notes?.head.trim() || (kind === "shot" ? `Shot ${kindNo || 1}` : video?.name.replace(/\.[^.]+$/, "") || "Video")
+  const placeholder = notes?.head.trim() || (kind === "shot" ? `Game Shot ${kindNo || 1}` : video?.name.replace(/\.[^.]+$/, "") || "Game Film")
   const clipFrames = useClipFrames(kind === "video" ? videoFile : null, video ? stripTimes(video.dur) : [], 160)
 
   if (phase === "missing") return (
     <div className="la-page" style={{ display: "grid", placeItems: "center", gridTemplateColumns: "1fr", gridTemplateRows: "1fr" }}>
       <style>{SUITE_CSS}</style>
-      <div className="la-empty"><h2>This isn't here</h2><p>It may have been deleted, or it belongs to another account.</p><button className="an-btn pri" onClick={() => navigate("/analysis")}>Back to your Library</button></div>
+      <div className="la-empty"><h2>This isn't here</h2><p>It may have been deleted, or it belongs to another account.</p><button className="an-btn pri" onClick={() => navigate("/analysis?view=library")}>Back to Your Library</button></div>
     </div>
   )
 
@@ -534,6 +585,9 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
       <p className="an-cap">Moment · {fmtTime(moment.t)}</p>
       <div className="an-row"><span className="an-lab">Lead-in</span>
         <div className="an-seg" role="group" aria-label="Lead-in">{(["off", "slow"] as const).map(v => <button key={v} className={(moment.lead ?? "off") === v ? "on" : ""} aria-pressed={(moment.lead ?? "off") === v} onClick={() => { begin(); editMoment(m => ({ ...m, lead: v })); end() }}>{v === "off" ? "Off" : "Slow 0.4×"}</button>)}</div>
+      </div>
+      <div className="an-row"><span className="an-lab">Caption</span>
+        <div className="an-seg" role="group" aria-label="Where the caption sits">{(["auto", "top", "bottom"] as const).map(v => <button key={v} className={(moment.capAt ?? "auto") === v ? "on" : ""} aria-pressed={(moment.capAt ?? "auto") === v} title={v === "auto" ? "Top or bottom, whichever covers fewer marks" : undefined} onClick={() => { begin(); editMoment(m => ({ ...m, capAt: v === "auto" ? undefined : v })); end() }}>{v === "auto" ? "Auto" : v === "top" ? "Top" : "Bottom"}</button>)}</div>
       </div>
       <div className="an-row"><span className="an-lab">Hold</span>
         <div className="an-slide"><input type="range" min={1} max={15} step={0.5} value={moment.hold} aria-label="How long it freezes" onPointerDown={begin} onChange={e => editMoment(m => ({ ...m, hold: +e.target.value }))} onPointerUp={end} /><span>{moment.hold.toFixed(1)} s</span></div>
@@ -553,30 +607,30 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   return (
     <div className={`la-page${dropOver ? " over" : ""}`} style={{ ["--lw" as any]: leftOpen ? "248px" : "52px", ["--rw" as any]: rightOpen && stageShot ? `${rw}px` : "0px", ["--rh" as any]: reelOpen ? "128px" : "44px" }}
       onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={e => { if ([...e.dataTransfer.types].includes("Files")) e.preventDefault() }} onDrop={onDrop}>
-      <style>{SUITE_CSS + MOMENT_CSS}</style>
+      <style>{SUITE_CSS + MOMENT_CSS + PATTERN_CSS}</style>
       <FilterDefs />
       <input ref={fileRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm,.mov,.mp4,.m4v,.webm" multiple hidden onChange={e => { const f = [...(e.target.files ?? [])]; e.target.value = ""; if (f.length) addFiles(f) }} />
       <input ref={videoInput} type="file" accept="video/mp4,video/quicktime,video/webm,.mov,.mp4,.m4v,.webm" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) chooseVideoFile(f) }} />
 
       {/* ── the top ── */}
       <header className="la-top">
-        <button className="la-home" aria-label="Back to your Library" title="Library" onClick={() => go(row?.folder_id ? `/analysis?folder=${row.folder_id}` : "/analysis")}><PSMark size={28} color="#d7ff3c" /></button>
+        <button className="la-home" aria-label="Back to the folder" title={row?.folder_id ? "Back to the folder" : "Your Library"} onClick={() => go(row?.folder_id ? `/analysis?folder=${row.folder_id}` : "/analysis?view=library")}><PSMark size={28} color="#d7ff3c" /></button>
         <div className="la-crumb">
           <input className="la-title" aria-label="Title" value={title} maxLength={120} placeholder={placeholder} onChange={e => setTitle(e.target.value)} />
           <div className="la-sub">
             {status === "error" ? <span className="la-err">Not saved <button onClick={() => save()} style={{ color: "#ff8fa3", textDecoration: "underline" }}>Retry</button></span>
               : status === "saving" ? <span className="la-saving">Saving…</span> : <span className="la-saved">✓ Saved</span>}
             <span>·</span>
-            <button onClick={() => go("/analysis")}>Library</button>
+            <button onClick={() => go("/analysis?view=library")}>Your Library</button>
             {folderPath.map(f => <span key={f.id} style={{ display: "contents" }}><span>›</span><button onClick={() => go(`/analysis?folder=${f.id}`)}>{f.name}</button></span>)}
             {!row?.folder_id && <><span>›</span><button onClick={() => go("/analysis?folder=unsorted")}>Unsorted</button></>}
-            {kindNo > 0 && <span>· {kind} {kindNo} of {sibs.filter(s => s.kind === kind).length}</span>}
+            {kindNo > 0 && <span>· {kind === "shot" ? "Game Shot" : "Game Film"} {kindNo} of {sibs.filter(s => s.kind === kind).length}</span>}
           </div>
         </div>
         <div className="la-sp" />
-        <div className="la-seg" role="group" aria-label="Shots or video">
-          <button className={kind === "shot" ? "on" : ""} aria-pressed={kind === "shot"} onClick={() => { if (kind !== "shot") { const s = sibs.find(x => x.kind === "shot"); if (s) go(`/analysis?item=${s.id}`); else fileRef.current?.click() } }}><Images size={14} /> Shot</button>
-          <button className={kind === "video" ? "on" : ""} aria-pressed={kind === "video"} onClick={() => { if (kind !== "video") { const s = sibs.find(x => x.kind === "video"); if (s) go(`/analysis?item=${s.id}`); else fileRef.current?.click() } }}><Clapperboard size={14} /> Video</button>
+        <div className="la-seg" role="group" aria-label="Game Shots or Game Films">
+          <button className={kind === "shot" ? "on" : ""} aria-pressed={kind === "shot"} onClick={() => { if (kind !== "shot") { const s = sibs.find(x => x.kind === "shot"); if (s) go(`/analysis?item=${s.id}`); else fileRef.current?.click() } }}><Images size={14} /> Game Shot</button>
+          <button className={kind === "video" ? "on" : ""} aria-pressed={kind === "video"} onClick={() => { if (kind !== "video") { const s = sibs.find(x => x.kind === "video"); if (s) go(`/analysis?item=${s.id}`); else fileRef.current?.click() } }}><Clapperboard size={14} /> Game Film</button>
         </div>
         <div className="la-sp" />
         <button className="an-icon ghost" onClick={undo} disabled={!past.current.length} aria-label="Undo" title="Undo (⌘Z)"><Undo2 size={16} /></button>
@@ -589,8 +643,9 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
       <aside className="la-left" aria-label="Library">
         {leftOpen ? (
           <div className="la-tree">
-            <h4>Library <button className="an-x" aria-label="Fold the Library" onClick={() => setLeft(false)}><ChevronLeft size={15} /></button></h4>
-            <button className="la-fi" onClick={() => go("/analysis")}><LibraryIcon size={15} /> Everything</button>
+            <h4>Your Library <button className="an-x" aria-label="Fold the Library" onClick={() => setLeft(false)}><ChevronLeft size={15} /></button></h4>
+            <button className="la-fi" onClick={() => go("/analysis")}><Plus size={15} /> New analysis</button>
+            <button className="la-fi" onClick={() => go("/analysis?view=library")}><LibraryIcon size={15} /> Your Library</button>
             {folders.filter(f => !f.parent_id).map(f => (
               <div key={f.id}>
                 <button className={`la-fi${row?.folder_id === f.id ? " on" : ""}`} onClick={() => go(`/analysis?folder=${f.id}`)}><FolderGlyph /> {f.name}</button>
@@ -639,9 +694,12 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
           ) : stageShot ? (
             <Stage shot={stageShot} src={stageSrc} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
               onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={sealFor(stageShot.w, stageShot.h)} stageRef={stageRef}
-              hint={src === "" ? "This shot couldn't be loaded. Check your connection and reopen it." : src ? hintFor(tool) : "Loading the shot…"}
+              hint={src === "" ? "This Game Shot couldn't be loaded. Check your connection and reopen it." : src ? hintFor(tool) : "Loading the Game Shot…"}
               fit={fit} calPts={stageShot.calib?.pts} calPick={calPick} onCalib={(p, live) => { if (!live) begin(); setCalibPts(p); if (!live) end(); setCalPick(null) }} />
           ) : <div className="la-empty"><Loader2 className="an-spin" size={22} color="#d7ff3c" /></div>}
+          {kind === "shot" && stageShot && src && !stageShot.items.length && !pattern && <PatternStrip onPick={startPattern} />}
+          {pattern && <PatternCoach p={pattern.p} step={pattern.step} setStep={goStep} onClose={() => { setPattern(null); pickTool("select", true) }} toolName={t => { const x = TOOLS.find(y => y.id === t); return t === "calib" ? "Calibrate · C" : x ? `${x.name} · ${x.key}` : t }} />}
+          <datalist id="la-names">{hints.map(h => <option key={h.value} value={h.value} label={h.label} />)}</datalist>
           {stageShot && (kind === "shot" || moment) && (
             <div className="la-dock" role="toolbar" aria-label="Tools" style={kind === "video" ? { bottom: 92 } : undefined}>
               {GROUPS.map((g, gi) => (
@@ -733,15 +791,15 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
                 <button key={s.id} role="listitem" className={`la-tile${s.id === row?.id ? " on" : ""}${overTile === s.id ? " over" : ""}`} style={pic ? { backgroundImage: `url(${pic})` } : undefined}
                   draggable={!picking} onDragStart={e => { setDragTile(s.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", s.id) }} onDragEnd={() => { setDragTile(null); setOverTile(null) }}
                   onDragOver={e => { if (dragTile) { e.preventDefault(); setOverTile(s.id) } }} onDrop={e => { if (dragTile) { e.preventDefault(); e.stopPropagation(); setOverTile(null); dropTile(s.id) } }}
-                  aria-label={`${s.kind === "video" ? "Video" : "Shot"} ${i + 1}${s.title || s.head ? `: ${s.title || s.head}` : ""}`} aria-current={s.id === row?.id}
+                  aria-label={`${s.kind === "video" ? "Game Film" : "Game Shot"} ${i + 1}${s.title || s.head ? `: ${s.title || s.head}` : ""}`} aria-current={s.id === row?.id}
                   onClick={() => { if (picking) setTicked(t => { const n = new Set(t); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n }); else if (s.id !== row?.id) go(`/analysis?item=${s.id}`) }}>
                   <b>{i + 1}</b>
-                  {s.kind === "video" && <span className="vid">▶ Video</span>}
+                  {s.kind === "video" && <span className="vid">▶ Game Film</span>}
                   {picking && <span className={`tick${ticked.has(s.id) ? " on" : ""}`}>{ticked.has(s.id) && <Check size={12} strokeWidth={3} />}</span>}
                 </button>
               )
             })}
-            <button className="la-add" onClick={() => fileRef.current?.click()} aria-label="Add shots or a clip to this folder" title="Add shots or a clip (or drop them anywhere)"><Plus size={20} /></button>
+            <button className="la-add" onClick={() => fileRef.current?.click()} aria-label="Add Game Shots or a Game Film to this folder" title="Add Game Shots or a Game Film (or drop them anywhere)"><Plus size={20} /></button>
           </div>
         )}
       </section>
@@ -794,8 +852,6 @@ function MoveMenu({ folders, onPick, onClose }: { folders: Folder[]; onPick: (id
 
 /** The folders, for the Library strip and Move */
 async function supabase_folders(userId: string): Promise<Folder[]> {
-  const { supabase } = await import("../lib/supabase")
-  const { data } = await (supabase as any).from("library_folders").select("id, parent_id, name, x, y, created_at").eq("user_id", userId).order("created_at")
-  return data ?? []
+  try { return await loadFolders(userId) } catch { return [] }
 }
 void exportFontCSS
