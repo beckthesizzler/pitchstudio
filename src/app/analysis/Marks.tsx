@@ -270,7 +270,7 @@ function TieMark({ m, U, fit, byId }: { m: Tie; U: number; fit?: Fit | null; byI
   const d = `M${a[0]},${a[1]} L${b[0]},${b[1]}`
   const sw = 2.8 * u * depthK(fit, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], U)
   const dash = m.dash === "dash" ? `${16 * u} ${10 * u}` : m.dash === "dot" ? `0.1 ${10 * u}` : undefined
-  const mm = fit && m.dist ? metres(fit, a0, b0) : null
+  const mm: number | null = null // metres are not shown
   return (
     <g data-id={m.id}>
       <path d={d} stroke="rgba(0,0,0,0.42)" strokeWidth={sw + 3 * U} strokeLinecap="round" strokeDasharray={dash} fill="none" />
@@ -357,7 +357,7 @@ export function Marks({ items, w, h, fit, only }: { items: Mark[]; w: number; h:
               : m.kind === "arrow" ? <ArrowMark key={m.id} m={m} U={U} />
                 : m.kind === "ring" ? <RingMark key={m.id} m={m} U={U} fit={fit} />
                   : m.kind === "tie" ? <TieMark key={m.id} m={m} U={U} fit={fit} byId={byId} />
-                    : m.kind === "measure" ? <MeasureMark key={m.id} m={m} U={U} fit={fit} />
+                    : m.kind === "measure" ? null
                       : m.kind === "shadow" ? <ShadowMark key={m.id} m={m} U={U} fit={fit} />
                         : m.kind === "focus" ? <FocusMark key={m.id} m={m} w={w} h={h} />
                           : <NoteMark key={m.id} m={m} U={U} />)}

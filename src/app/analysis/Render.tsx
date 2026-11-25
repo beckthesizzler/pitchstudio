@@ -151,8 +151,7 @@ export async function notesHeight(n: Notes, W: number) {
   const k = W / 1600
   const cv = document.createElement("canvas").getContext("2d")!
   cv.font = `400 ${Math.round(22 * k)}px Inter, sans-serif`
-  const statsW = n.stats.length ? Math.min(W * 0.36, n.stats.length * 170 * k) : 0
-  const lines = n.body.trim() ? wrap(cv, n.body.trim(), W - 2 * 44 * k - statsW - 30 * k).length : 0
+  const lines = n.body.trim() ? wrap(cv, n.body.trim(), W - 2 * 44 * k - 30 * k).length : 0
   return Math.round(5 * k + 34 * k + (n.kicker.trim() ? 26 * k : 0) + (n.head.trim() ? 62 * k : 0) + lines * 33 * k + 30 * k)
 }
 export async function drawNotes(ctx: CanvasRenderingContext2D, n: Notes, x: number, y: number, W: number, H: number) {
@@ -164,27 +163,6 @@ export async function drawNotes(ctx: CanvasRenderingContext2D, n: Notes, x: numb
   const pad = 44 * k
   let cy = y + 5 * k + 30 * k
   ctx.textBaseline = "top"
-  // stats, bottom right
-  if (n.stats.length) {
-    let sx = x + W - pad
-    const sy = y + H - 30 * k - 76 * k
-    for (const s0 of [...n.stats].reverse()) {
-      const [val, ...rest] = s0.split(/\s*[·|]\s*/), lab = rest.join(" ")
-      ctx.font = `800 ${Math.round(38 * k)}px "Barlow Condensed", sans-serif`
-      const vw = ctx.measureText(val.toUpperCase()).width
-      ctx.font = `600 ${Math.round(14 * k)}px "Barlow Condensed", sans-serif`
-      const lw = ctx.measureText(lab.toUpperCase()).width + lab.length * 2 * k
-      const bw = Math.max(vw, lw) + 36 * k
-      sx -= bw
-      ctx.strokeStyle = "#2c3038"; ctx.lineWidth = Math.max(1, 1.5 * k)
-      ctx.beginPath(); ctx.roundRect(sx, sy, bw, 76 * k, 10 * k); ctx.stroke()
-      ctx.fillStyle = "#fff"; ctx.font = `800 ${Math.round(38 * k)}px "Barlow Condensed", sans-serif`; ctx.fillText(val.toUpperCase(), sx + 18 * k, sy + 10 * k)
-      ctx.fillStyle = "#8e929b"; ctx.font = `600 ${Math.round(14 * k)}px "Barlow Condensed", sans-serif`
-      ;(ctx as any).letterSpacing = `${2 * k}px`; ctx.fillText(lab.toUpperCase(), sx + 18 * k, sy + 52 * k); (ctx as any).letterSpacing = "0px"
-      sx -= 12 * k
-    }
-  }
-  const statsW = n.stats.length ? Math.min(W * 0.36, n.stats.length * 170 * k) : 0
   if (n.kicker.trim()) {
     ctx.fillStyle = "#d7ff3c"; ctx.font = `600 ${Math.round(16 * k)}px "Barlow Condensed", sans-serif`
     ;(ctx as any).letterSpacing = `${4 * k}px`; ctx.fillText(n.kicker.trim().toUpperCase(), x + pad, cy); (ctx as any).letterSpacing = "0px"
@@ -192,12 +170,12 @@ export async function drawNotes(ctx: CanvasRenderingContext2D, n: Notes, x: numb
   }
   if (n.head.trim()) {
     ctx.fillStyle = "#fff"; ctx.font = `800 ${Math.round(58 * k)}px "Barlow Condensed", sans-serif`
-    ctx.fillText(n.head.trim().toUpperCase(), x + pad, cy, W - 2 * pad - statsW)
+    ctx.fillText(n.head.trim().toUpperCase(), x + pad, cy, W - 2 * pad)
     cy += 62 * k
   }
   if (n.body.trim()) {
     ctx.fillStyle = "#c9ccd3"; ctx.font = `400 ${Math.round(22 * k)}px Inter, sans-serif`
-    for (const l of wrap(ctx, n.body.trim(), W - 2 * pad - statsW - 30 * k)) { ctx.fillText(l, x + pad, cy); cy += 33 * k }
+    for (const l of wrap(ctx, n.body.trim(), W - 2 * pad - 30 * k)) { ctx.fillText(l, x + pad, cy); cy += 33 * k }
   }
   ctx.restore()
 }

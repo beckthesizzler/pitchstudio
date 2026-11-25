@@ -133,7 +133,6 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
       </div>
       <p className="an-note">Pick a team above the picture and every new mark takes its colour.</p>
       {slider("Darken the picture", shot.dim, 0, 0.6, 0.05, v => onDim(v, true))}
-      {!calibrated && <p className="an-note">Calibrate the shot and rings lie flat on the grass, shrink with distance, and ties can show metres.</p>}
       {layers}
     </div>
   )
@@ -172,22 +171,18 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
       {m.kind === "ring" && <>
         {row("Echo ring", <Seg label="Echo ring" value={m.double} options={[[false, "Off"], [true, "On"]]} set={v => set({ double: v })} />)}
         {slider("Fill", m.fill, 0, 0.6, 0.02, v => set({ fill: v }, true))}
-        {slider("Size", m.size, 0.5, 3, 0.05, v => set({ size: v }, true), v => `${(m.r * v * 2).toFixed(1)} m`)}
-        {!calibrated && <p className="an-note">Calibrate the shot and the ring lies flat on the grass, smaller further away.</p>}
+        {slider("Size", m.size, 0.5, 3, 0.05, v => set({ size: v }, true), v => `${Math.round(v * 100)}%`)}
       </>}
       {m.kind === "tie" && <>
         {row("Line", <Seg label="Line style" value={m.dash} options={[["solid", "Solid"], ["dash", "Dashed"], ["dot", "Dotted"]]} set={v => set({ dash: v })} />)}
-        {row("Distance", <Seg label="Show the distance" value={m.dist} options={[[false, "Hide"], [true, "Show"]]} set={v => set({ dist: v })} />)}
         {slider("Thickness", m.size, 0.4, 2.5, 0.05, v => set({ size: v }, true))}
-        {m.dist && !calibrated && <p className="an-note">Distances show once the shot is calibrated.</p>}
         {(m.ra || m.rb) && <p className="an-note">Tied to the players: move them and it follows.</p>}
       </>}
       {m.kind === "measure" && <>
         {slider("Thickness", m.size, 0.4, 2.5, 0.05, v => set({ size: v }, true))}
-        {!calibrated && <p className="an-note">Calibrate the shot to measure in metres.</p>}
       </>}
       {m.kind === "shadow" && <>
-        {slider("Length", m.len, 4, 30, 0.5, v => set({ len: v }, true), v => calibrated ? `${v} m` : `${v}`)}
+        {slider("Length", m.len, 4, 30, 0.5, v => set({ len: v }, true), v => `${v}`)}
         {slider("Width", m.spread, 4, 25, 1, v => set({ spread: v }, true), v => `${v}°`)}
         <p className="an-note">Drag the square onto the presser and the dot onto the ball. The shadow is the lane he takes away.</p>
       </>}

@@ -8,7 +8,7 @@ import { newId } from "./model"
    analysis-shares bucket under the folder's id; stopping sharing deletes it. Game Films stay private for now. */
 
 const BUCKET = "analysis-shares"
-export type SharedItem = { n: number; img: string; raw: string; w: number; h: number; kicker: string; head: string; body: string; stats: string[]; data: object }
+export type SharedItem = { n: number; img: string; raw: string; w: number; h: number; kicker: string; head: string; body: string; data: object }
 export type SharePack = { at: string; items: SharedItem[] }
 
 export const shareUrl = (folderId: string) => `${location.origin}/a/${folderId}`
@@ -46,8 +46,8 @@ export async function shareFolder(userId: string, folder: Folder, items: ItemRow
     const src = await supabase.storage.from("analysis-shots").download(data.path!)
     if (src.error || !src.data) throw src.error ?? new Error("still")
     await put(raw, await jpeg(src.data))
-    const n = data.notes
-    out.push({ n: k + 1, img, raw, w: data.w, h: data.h, kicker: n.kicker || line, head: n.head, body: n.body, stats: n.stats, data: { v: 2, w: data.w, h: data.h, dim: data.dim, items: data.items, notes: n, calib: data.calib, teams: data.teams } })
+    const n = data.notes, on = n.show !== false
+    out.push({ n: k + 1, img, raw, w: data.w, h: data.h, kicker: on ? n.kicker || line : line, head: on ? n.head : "", body: on ? n.body : "", data: { v: 2, w: data.w, h: data.h, dim: data.dim, items: data.items, notes: on ? n : { kicker: "", head: "", body: "", show: false }, calib: data.calib, teams: data.teams } })
   }
   progress(shots.length, shots.length)
   await updateFolder(folder.id, { share: { at: new Date().toISOString(), items: out }, is_public: true })

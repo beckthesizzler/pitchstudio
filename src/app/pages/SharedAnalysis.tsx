@@ -69,7 +69,6 @@ export default function SharedAnalysisPage() {
         .sa-n { font: 800 15px 'Barlow Condensed', sans-serif; color: ${ACCENT_INK}; background: ${ACCENT_SOLID}; border-radius: 5px; padding: 2px 8px; margin-right: 10px; }
         .sa-shot h2 { font: 800 28px/1.05 'Barlow Condensed', sans-serif; text-transform: uppercase; margin: 16px 0 8px; display: flex; align-items: center; }
         .sa-shot p { font-size: 16px; line-height: 1.6; color: #d5d7dc; margin: 0; max-width: 760px; white-space: pre-wrap; }
-        .sa-stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; } .sa-stats span { font: 600 13px Inter; padding: 5px 10px; border-radius: 7px; background: rgba(255,255,255,.06); }
         .sa-none { max-width: 520px; margin: 18vh auto 0; text-align: center; padding: 0 24px; }
         .sa-none button { background: none; border: none; color: ${TEXT_PRIMARY}; text-decoration: underline; text-underline-offset: 4px; font: 600 15px 'Inter', sans-serif; cursor: pointer; }
         @media (max-width: 720px) { .sa-wrap { padding: 20px 16px 60px; } .sa-side { margin-left: 0; align-items: flex-start; } .sa-side p { text-align: left; } }
@@ -102,7 +101,6 @@ export default function SharedAnalysisPage() {
               <img src={sharedPic(it.img)} alt={it.head || `Game Shot ${it.n}`} width={it.w} height={it.h} loading={it.n > 2 ? "lazy" : undefined} />
               {(it.head || page.pack.items.length > 1) && <h2>{page.pack.items.length > 1 && <span className="sa-n">{it.n}/{page.pack.items.length}</span>}{it.head}</h2>}
               {it.body && <p>{it.body}</p>}
-              {it.stats?.length > 0 && <div className="sa-stats">{it.stats.map(s => <span key={s}>{s}</span>)}</div>}
             </section>
           ))}
         </div>

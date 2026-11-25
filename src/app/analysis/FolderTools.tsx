@@ -72,7 +72,7 @@ export function ThreadDialog({ userId, folder, items, urls, seal, onClose }: { u
     Promise.all(items.map(async i => {
       const r = await loadItem(i.id, userId).catch(() => null)
       const n = readNotes(r?.data?.notes)
-      return { id: i.id, kind: i.kind, title: i.title, head: n.head || i.title, body: n.body }
+      return { id: i.id, kind: i.kind, title: i.title, head: n.show ? n.head || i.title : "", body: n.show ? n.body : "" }
     })).then(p => { if (!off) setPosts(p) })
     return () => { off = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

@@ -2,12 +2,11 @@
    Progress is kept on this device; nothing here blocks you, and every step can be skipped. */
 
 const KEY = "la-guide"
-export type GuideStep = "drop" | "calib" | "mark" | "notes" | "render" | "moment"
+export type GuideStep = "drop" | "mark" | "notes" | "render" | "moment"
 export const GUIDE: { id: GuideStep; title: string; sub: string }[] = [
   { id: "drop", title: "Bring in a shot or a clip", sub: "A screenshot, or a clip up to 10 min" },
-  { id: "calib", title: "Pin it to the pitch", sub: "Click 4 lines or corners you can see. Gaps turn into metres" },
   { id: "mark", title: "Mark the shape", sub: "Rings, ties, zones, cover shadows" },
-  { id: "notes", title: "Write what it shows", sub: "A headline and a few lines under it" },
+  { id: "notes", title: "Write what it shows", sub: "A headline and a few lines under it. Optional: switch it off any time" },
   { id: "render", title: "Render and post", sub: "Picture or video, cropped for X, Instagram or TikTok" },
 ]
 const read = (): Set<string> => { try { return new Set(JSON.parse(localStorage.getItem(KEY) ?? "[]")) } catch { return new Set() } }

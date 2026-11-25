@@ -176,12 +176,12 @@ export async function uploadPic(path: string, blob: Blob) {
 export const itemPicPath = (userId: string, id: string) => `${userId}/items/${id}.jpg`
 export const itemThumbPath = (userId: string, id: string) => `${userId}/items/${id}-thumb.jpg`
 
-export const freshShot = (w: number, h: number, path: string | null): ShotData => ({ path, w, h, dim: 0, items: [], notes: { ...EMPTY_NOTES, stats: [] }, calib: null, teams: { ...DEFAULT_TEAMS } })
+export const freshShot = (w: number, h: number, path: string | null): ShotData => ({ path, w, h, dim: 0, items: [], notes: { ...EMPTY_NOTES }, calib: null, teams: { ...DEFAULT_TEAMS } })
 
 /** A new item's data with the folder's match on it: teams, colours, and the line above the headline */
 export function withMatch<T extends object>(d: T, m: Match | null): T {
   if (!m) return d
-  return { ...d, teams: { us: { name: (m.home || "Us").slice(0, 20), color: m.homeColor }, them: { name: (m.away || "Them").slice(0, 20), color: m.awayColor } }, notes: { kicker: matchLine(m), head: "", body: "", stats: [], show: true } }
+  return { ...d, teams: { us: { name: (m.home || "Us").slice(0, 20), color: m.homeColor }, them: { name: (m.away || "Them").slice(0, 20), color: m.awayColor } }, notes: { kicker: matchLine(m), head: "", body: "", show: true } }
 }
 export async function loadFolders(userId: string): Promise<Folder[]> {
   const { data, error } = await db.from("library_folders").select(FOLDER_COLS).eq("user_id", userId).order("created_at")

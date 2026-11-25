@@ -24,8 +24,8 @@ export type Focus = { id: string; kind: "focus"; pts: Pt[]; dim: number; color: 
 export type Mark = (Tag | Spot | Zone | Arrow | Note | Ring | Tie | Measure | Shadow | Focus) & { step?: number }
 export type Shot = { id: string; path: string | null; w: number; h: number; dim: number; items: Mark[]; calib?: Calib | null }
 /** The words under a shot (and the caption of a video moment) */
-export type Notes = { kicker: string; head: string; body: string; stats: string[]; show: boolean }
-export const EMPTY_NOTES: Notes = { kicker: "", head: "", body: "", stats: [], show: true }
+export type Notes = { kicker: string; head: string; body: string; show: boolean }
+export const EMPTY_NOTES: Notes = { kicker: "", head: "", body: "", show: true }
 /** A moment in the video: it freezes there for a few seconds with drawings on it.
     lead: slow the second before it down. steps: when each build step appears, in seconds after the freeze */
 export type Moment = { id: string; t: number; hold: number; dim: number; items: Mark[]; lead?: "off" | "slow"; calib?: Calib | null; caption?: Notes; capAt?: "auto" | "top" | "bottom"; steps?: Record<string, number> }
@@ -115,8 +115,8 @@ export function readCalib(v: any, w: number, h: number): Calib | null {
   return pts.length ? { pts } : null
 }
 export function readNotes(v: any): Notes {
-  if (!v || typeof v !== "object") return { ...EMPTY_NOTES, stats: [] }
-  return { kicker: str(v.kicker, 80), head: str(v.head, 90), body: str(v.body, 600), stats: (Array.isArray(v.stats) ? v.stats : []).slice(0, 4).map((s: unknown) => str(s, 24)).filter(Boolean), show: v.show !== false }
+  if (!v || typeof v !== "object") return { ...EMPTY_NOTES }
+  return { kicker: str(v.kicker, 80), head: str(v.head, 90), body: str(v.body, 600), show: v.show !== false }
 }
 
 /** Turns a saved analysis into safe data. Shots must live in this user's own folder. */

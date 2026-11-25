@@ -357,7 +357,7 @@ export function VideoStudio({ project, file, missing, editing, onChoose, onSet, 
         const st = stepsOf(m), list: { at: number; img: HTMLImageElement }[] = []
         for (const s of st) list.push({ at: s.at, img: await raster(`${m.id}:${s.step}`) })
         const last = st.length ? st[st.length - 1].at : 0
-        const cap = m.caption && (m.caption.head.trim() || m.caption.body.trim() || m.caption.kicker.trim()) ? m.caption : undefined
+        const cap = m.caption && m.caption.show !== false && (m.caption.head.trim() || m.caption.body.trim() || m.caption.kicker.trim()) ? m.caption : undefined
         plans.set(m.id, { steps: list, capAt: Math.min(Math.max(0.4, last + 0.75), Math.max(0.4, m.hold - 1.2)), cap , low: captionAtBottom(m, p.h, p.w) })
       }
       setDrawOff(false)

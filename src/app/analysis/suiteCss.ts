@@ -87,16 +87,19 @@ export const SUITE_CSS = `        .an-icon.ghost { border-color: transparent; ba
         .la-tool.on { background: #d7ff3c; color: #0a0c0f; }
         .la-tool:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
         .la-notes { margin: 0 16px 12px; background: #0f1013; border: 1px solid ${DS_BORDER}; border-top: 3px solid #d7ff3c; border-radius: 0 0 10px 10px; padding: 10px 14px 12px; display: flex; gap: 16px; align-items: flex-end; }
-        .la-notes.off { border-top-color: ${DS_BORDER_STRONG}; opacity: .7; }
+        .la-notes.off { border-top-color: ${DS_BORDER_STRONG}; padding: 8px 14px; align-items: center; }
+        .la-narroff { flex: 1; margin: 0; font: 400 13px/1.4 'Inter', sans-serif; color: #8e929b; }
+        .la-switch { display: inline-flex; align-items: center; gap: 9px; height: 30px; padding: 0 4px 0 10px; border-radius: 15px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; color: ${TEXT_PRIMARY}; font: 600 12.5px 'Inter', sans-serif; cursor: pointer; flex: none; flex-direction: row-reverse; }
+        .la-switch i { position: relative; width: 30px; height: 18px; border-radius: 9px; background: #3a3e46; transition: background .15s; }
+        .la-switch i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
+        .la-switch.on i { background: #d7ff3c; } .la-switch.on i::after { transform: translateX(12px); background: #0f1013; }
+        .la-switch:focus-visible { outline: 2px solid #d7ff3c; outline-offset: 2px; }
         .la-notes input, .la-notes textarea { background: none; border: 1px solid transparent; border-radius: 6px; color: ${TEXT_PRIMARY}; width: 100%; padding: 2px 6px; margin-left: -6px; resize: none; }
         .la-notes input:hover, .la-notes textarea:hover { border-color: ${DS_BORDER}; }
         .la-notes input:focus, .la-notes textarea:focus { outline: none; border-color: rgba(215,255,60,.5); background: rgba(255,255,255,.03); }
         .la-kick { font: 600 13px 'Barlow Condensed', sans-serif !important; letter-spacing: .26em; text-transform: uppercase; color: #d7ff3c !important; }
         .la-head { font: 800 30px/1.05 'Barlow Condensed', sans-serif !important; text-transform: uppercase; letter-spacing: .02em; }
         .la-body { font: 400 14px/1.5 'Inter', sans-serif !important; color: #c3c6cd !important; }
-        .la-stats { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 46%; }
-        .la-stat { display: inline-flex; align-items: center; height: 28px; border-radius: 7px; border: 1px solid ${DS_BORDER}; background: ${SURFACE_1}; padding: 0 4px 0 8px; }
-        .la-stat input { field-sizing: content; min-width: 70px; max-width: 200px; width: auto; font: 600 12.5px 'Inter', sans-serif; margin: 0; }
         .la-right { grid-area: right; position: relative; background: #1c1d21; border-left: 1px solid ${DS_BORDER}; min-height: 0; display: flex; flex-direction: column; }
         .la-right .an-insp { border-left: none; flex: 1; }
         .la-edge { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 5; }

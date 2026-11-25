@@ -1,19 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleDot, Copy, Crosshair, Eraser, Flashlight, FolderInput, Images, Library as LibraryIcon, Loader2, MousePointer2, MoveUpRight, Pentagon, Plus, Redo2, Ruler, ScanEye, Spline, Tag as TagIcon, Trash2, Triangle, Type, Undo2, Clapperboard, X, Film } from "lucide-react"
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleDot, Copy, Eraser, Flashlight, FolderInput, Images, Library as LibraryIcon, Loader2, MousePointer2, MoveUpRight, Pentagon, Plus, Redo2, Ruler, ScanEye, Spline, Tag as TagIcon, Trash2, Triangle, Type, Undo2, Clapperboard, X, Film } from "lucide-react"
 import { Mark as PSMark } from "../brand/Mark"
 import { Stage, START_DEFAULTS, type Defaults, type Tool } from "./Stage"
 import { Inspector, inOrder } from "./Inspector"
-import { CalibratePanel, pitchOf } from "./Calibrate"
 import { VideoStudio, useClipFrames, stripTimes, fmtTime, stepsOf } from "./Video"
 import { FilterDefs, DEFAULT_OPTS, RenderPanel, renderShot, canvasBlob, pictureFilter, type RenderOpts } from "./Render"
 import { SUITE_CSS } from "./suiteCss"
-import { fitCalib, type CalPoint } from "./calib"
+import { fitCalib } from "./calib"
 import { findVideo, keepVideo, probeVideo, videoKey, videoProblem } from "./videoStore"
 import { MAX_MARKS, downloadShot, exportFontCSS, moveMark, newId, prepareShot, unit, type Mark, type Notes, type Shot, type VideoProject } from "./model"
 import { createItem, deleteItems, folderItems, itemPicPath, itemThumbPath, loadItem, moveItems, readShotData, readVideoData, reorder, saveItem, shotPayload, signed, uploadPic, videoPayload, withMatch, loadFolders, applyMatch, matchLine, DEFAULT_TEAMS, type Folder, type ItemRow, type ShotData, type Teams, type VideoData } from "./items"
 import { firstUse, markGuide } from "./Guide"
-import { PatternCoach, PatternStrip, PATTERN_CSS, type Pattern } from "./patterns"
 import { nameHints, rememberNames, type NameHint } from "./names"
 
 /* The edit suite: one shot or one video of a folder, with the folder's reel along the bottom.
@@ -34,8 +32,8 @@ const TOOLS: { id: Tool; name: string; key: string; icon: ReactNode }[] = [
   { id: "focus", name: "Focus", key: "F", icon: <ScanEye size={17} /> },
   { id: "text", name: "Text", key: "X", icon: <Type size={17} /> },
 ]
-const GROUPS: Tool[][] = [["select"], ["tag", "ring", "tie", "spot"], ["zone", "arrow", "measure"], ["shadow", "focus", "text"]]
-const BY_KEY: Record<string, Tool> = { v: "select", t: "tag", r: "ring", j: "tie", s: "spot", z: "zone", o: "oval", a: "arrow", l: "line", m: "measure", h: "shadow", f: "focus", x: "text", c: "calib" }
+const GROUPS: Tool[][] = [["select"], ["tag", "ring", "tie", "spot"], ["zone", "arrow"], ["shadow", "focus", "text"]]
+const BY_KEY: Record<string, Tool> = { v: "select", t: "tag", r: "ring", j: "tie", s: "spot", z: "zone", o: "oval", a: "arrow", l: "line", h: "shadow", f: "focus", x: "text" }
 const TOUCH = typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(pointer: coarse)").matches
 const HINTS: Record<Tool, string> = {
   select: "Click a mark to change it. Drag to move it.",
@@ -51,10 +49,10 @@ const HINTS: Record<Tool, string> = {
   shadow: "Drag from the ball to the presser: the shadow is the lane he takes away.",
   focus: "Drag over the area that matters. Everything else goes dark.",
   text: "Click where your note should go, then type it.",
-  calib: "Pick a point on the little pitch, then click it on your Game Shot.",
+  calib: "",
 }
 const hintFor = (t: Tool) => (TOUCH ? HINTS[t].split("Click").join("Tap").split("click").join("tap") : HINTS[t])
-const KEYS: [string, string][] = [["V", "Select"], ["T", "Tag"], ["R", "Ring"], ["J", "Tie"], ["S", "Spotlight"], ["Z", "Zone"], ["O", "Oval"], ["A", "Arrow"], ["L", "Line"], ["M", "Measure"], ["H", "Cover shadow"], ["F", "Focus"], ["X", "Text"], ["C", "Calibrate"],
+const KEYS: [string, string][] = [["V", "Select"], ["T", "Tag"], ["R", "Ring"], ["J", "Tie"], ["S", "Spotlight"], ["Z", "Zone"], ["O", "Oval"], ["A", "Arrow"], ["L", "Line"], ["H", "Cover shadow"], ["F", "Focus"], ["X", "Text"],
   ["Del", "Remove the mark"], ["⌘Z", "Undo"], ["⌘⇧Z", "Redo"], ["⌘D", "Duplicate"], ["⌘S", "Save now"], ["Arrows", "Nudge"], ["+ / −", "Zoom"], ["Space drag", "Pan"], ["[ ]", "Previous / next shot"], ["⌘\\", "Hide the panels"], ["?", "These keys"]]
 const store = { get: (k: string, d: string) => { try { return localStorage.getItem(k) ?? d } catch { return d } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v) } catch { /* not kept */ } } }
 
@@ -80,7 +78,6 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   const [tool, setTool] = useState<Tool>("select")
   const [sel, setSel] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)
-  const [calPick, setCalPick] = useState<string | null>(null)
   const [team, setTeam] = useState<"us" | "them">("us")
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [toast, setToast] = useState("")
@@ -251,10 +248,6 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
     if (kind === "shot") { const s = shotRef.current; if (s) setShot({ ...s, items: fn(s.items) }) }
     else editMoment(m => ({ ...m, items: fn(m.items) }))
   }
-  const setCalibPts = (pts: CalPoint[]) => {
-    const c = pts.length ? { pts: pts.map(q => ({ ...q, pitch: pitchOf(q.id) ?? q.pitch })) } : null
-    if (kind === "shot") { const s = shotRef.current; if (s) setShot({ ...s, calib: c }) } else editMoment(m => ({ ...m, calib: c }))
-  }
   const setTeams = (t: Teams) => {
     if (kind === "shot") { const s = shotRef.current; if (s) setShot({ ...s, teams: t }) } else { const v = vdRef.current; if (v) setVd({ ...v, teams: t }) }
     setTeamColours(t, team)
@@ -291,43 +284,10 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   const focusText = () => setFocusReq(n => n + 1)
   useEffect(() => { if (focusReq) { textRef.current?.focus(); textRef.current?.select() } }, [focusReq])
   const pickTool = (t: Tool, quiet = false) => {
-    setTool(cur => (t === "calib" && cur === "calib" && !quiet ? "select" : t))
+    setTool(t)
     if (t !== "select") setSel(null)
-    if (t === "calib") { setRightOpen(true); markGuide("calib") }
-    if (!quiet && t !== "calib" && t !== "select" && firstUse("tool-" + t)) say(hintFor(t))
+    if (!quiet && t !== "select" && firstUse("tool-" + t)) say(hintFor(t))
   }
-
-  /* ── pattern starters: one step, one tool, moving on by itself once its mark is made ── */
-  const [pattern, setPattern] = useState<{ p: Pattern; step: number } | null>(null)
-  const kindsOf = (t: Tool) => (t === "zone" ? ["zone"] : t === "arrow" ? ["arrow"] : [t])
-  const countFor = (t: Tool) => (t === "calib" ? (fitCalib(stageShot?.calib ?? { pts: [] }) ? 1 : 0) : (stageShot?.items ?? []).filter(m => kindsOf(t).includes(m.kind)).length)
-  const patBase = useRef(0)
-  const goStep = (step: number) => {
-    if (!pattern) return
-    const t = pattern.p.steps[step].tool
-    patBase.current = countFor(t)
-    setPattern({ ...pattern, step })
-    pickTool(t, true)
-  }
-  const startPattern = (p: Pattern) => {
-    patBase.current = 0
-    setPattern({ p, step: 0 })
-    pickTool(p.steps[0].tool, true)
-    patBase.current = countFor(p.steps[0].tool)
-    if (notes && !notes.head.trim() && !notes.body.trim()) setNotes({ ...notes, head: p.head, body: p.body })
-    ;(window as any).posthog?.capture("analysis_pattern_started", { pattern: p.id })
-  }
-  useEffect(() => {
-    if (!pattern) return
-    const t = pattern.p.steps[pattern.step].tool
-    if (countFor(t) <= patBase.current) return
-    const t0 = setTimeout(() => {
-      if (pattern.step < pattern.p.steps.length - 1) goStep(pattern.step + 1)
-      else { setPattern(null); pickTool("select", true); say(`${pattern.p.name}: done. Fill in the __ in your notes.`) }
-    }, t === "calib" ? 400 : 700)
-    return () => clearTimeout(t0)
-  }) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setPattern(null) }, [row?.id, moment?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── player names for tags ── */
   const [hints, setHints] = useState<NameHint[]>([])
@@ -520,7 +480,7 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
       if (e.key === "]") { step(1); return }
       if (!stageShot) return
       if (e.key === "Delete" || e.key === "Backspace") { if (selMark) { e.preventDefault(); del() } return }
-      if (e.key === "Escape") { if (sel) setSel(null); else if (tool === "calib") { setTool("select"); setCalPick(null) } else setTool("select"); return }
+      if (e.key === "Escape") { if (sel) setSel(null); else setTool("select"); return }
       if (e.key.startsWith("Arrow") && selMark) {
         e.preventDefault()
         const st = (e.shiftKey ? 10 : 1) * 2 * unit(stageShot.w)
@@ -579,16 +539,27 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
     </div>
   )
 
-  const calPanel = tool === "calib" && stageShot
+  const dock = stageShot && (kind === "shot" || moment) ? (
+    <div className="la-dock" role="toolbar" aria-label="Tools">
+      {GROUPS.map((g, gi) => (
+        <span key={gi} style={{ display: "contents" }}>
+          {gi > 0 && <span className="sep" />}
+          {g.map(id => { const t = TOOLS.find(x => x.id === id)!; return (
+            <button key={id} className={`la-tool${tool === id || (id === "zone" && tool === "oval") || (id === "arrow" && tool === "line") ? " on" : ""}`} aria-pressed={tool === id} title={`${t.name} (${t.key})`} onClick={() => pickTool(id)}>{t.icon}<span>{t.name}</span></button>
+          ) })}
+        </span>
+      ))}
+    </div>
+  ) : null
   const momentPanel = kind === "video" && moment ? (
     <div className="an-moment">
       <p className="an-cap">Moment · {fmtTime(moment.t)}</p>
       <div className="an-row"><span className="an-lab">Lead-in</span>
         <div className="an-seg" role="group" aria-label="Lead-in">{(["off", "slow"] as const).map(v => <button key={v} className={(moment.lead ?? "off") === v ? "on" : ""} aria-pressed={(moment.lead ?? "off") === v} onClick={() => { begin(); editMoment(m => ({ ...m, lead: v })); end() }}>{v === "off" ? "Off" : "Slow 0.4×"}</button>)}</div>
       </div>
-      <div className="an-row"><span className="an-lab">Caption</span>
+      {moment.caption?.show !== false && <div className="an-row"><span className="an-lab">Caption</span>
         <div className="an-seg" role="group" aria-label="Where the caption sits">{(["auto", "top", "bottom"] as const).map(v => <button key={v} className={(moment.capAt ?? "auto") === v ? "on" : ""} aria-pressed={(moment.capAt ?? "auto") === v} title={v === "auto" ? "Top or bottom, whichever covers fewer marks" : undefined} onClick={() => { begin(); editMoment(m => ({ ...m, capAt: v === "auto" ? undefined : v })); end() }}>{v === "auto" ? "Auto" : v === "top" ? "Top" : "Bottom"}</button>)}</div>
-      </div>
+      </div>}
       <div className="an-row"><span className="an-lab">Hold</span>
         <div className="an-slide"><input type="range" min={1} max={15} step={0.5} value={moment.hold} aria-label="How long it freezes" onPointerDown={begin} onChange={e => editMoment(m => ({ ...m, hold: +e.target.value }))} onPointerUp={end} /><span>{moment.hold.toFixed(1)} s</span></div>
       </div>
@@ -607,7 +578,7 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   return (
     <div className={`la-page${dropOver ? " over" : ""}`} style={{ ["--lw" as any]: leftOpen ? "248px" : "52px", ["--rw" as any]: rightOpen && stageShot ? `${rw}px` : "0px", ["--rh" as any]: reelOpen ? "128px" : "44px" }}
       onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={e => { if ([...e.dataTransfer.types].includes("Files")) e.preventDefault() }} onDrop={onDrop}>
-      <style>{SUITE_CSS + MOMENT_CSS + PATTERN_CSS}</style>
+      <style>{SUITE_CSS + MOMENT_CSS}</style>
       <FilterDefs />
       <input ref={fileRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm,.mov,.mp4,.m4v,.webm" multiple hidden onChange={e => { const f = [...(e.target.files ?? [])]; e.target.value = ""; if (f.length) addFiles(f) }} />
       <input ref={videoInput} type="file" accept="video/mp4,video/quicktime,video/webm,.mov,.mp4,.m4v,.webm" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) chooseVideoFile(f) }} />
@@ -666,9 +637,6 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
       <main className="la-main">
         {stageShot && (
           <div className="la-chips">
-            <button className={`la-chip${fit ? " v" : ""}${tool === "calib" ? " on" : ""}`} onClick={() => pickTool("calib")} title="Calibrate (C)">
-              <Crosshair size={14} /> {fit ? `Calibrated · ${stageShot.calib?.pts.length} points` : stageShot.calib?.pts.length ? `Calibrate · ${stageShot.calib.pts.length} of 4` : "Calibrate"}
-            </button>
             {(["us", "them"] as const).map(k => (
               <button key={k} className={`la-chip${team === k ? " on" : ""}`} aria-pressed={team === k} onClick={() => pickTeam(k)} title={`New marks in ${teams[k].name}'s colour`}>
                 {teams[k].name} <i style={{ background: teams[k].color }} />
@@ -689,47 +657,33 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
               seal={sealFor} fileBase={fileBase} exportRef={exportVideo} frameRef={frameRef} openRef={openMomentRef} frames={clipFrames} say={say}>
               {stageShot && <Stage shot={stageShot} src={stageSrc} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
                 onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={null} stageRef={stageRef}
-                hint={hintFor(tool)} fit={fit} calPts={stageShot.calib?.pts} calPick={calPick} onCalib={(p, live) => { if (!live) begin(); setCalibPts(p); if (!live) end(); setCalPick(null) }} />}
+                hint={hintFor(tool)} fit={fit} />}
+              {dock}
             </VideoStudio>
           ) : stageShot ? (
             <Stage shot={stageShot} src={stageSrc} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
               onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={sealFor(stageShot.w, stageShot.h)} stageRef={stageRef}
               hint={src === "" ? "This Game Shot couldn't be loaded. Check your connection and reopen it." : src ? hintFor(tool) : "Loading the Game Shot…"}
-              fit={fit} calPts={stageShot.calib?.pts} calPick={calPick} onCalib={(p, live) => { if (!live) begin(); setCalibPts(p); if (!live) end(); setCalPick(null) }} />
+              fit={fit} />
           ) : <div className="la-empty"><Loader2 className="an-spin" size={22} color="#d7ff3c" /></div>}
-          {kind === "shot" && stageShot && src && !stageShot.items.length && !pattern && <PatternStrip onPick={startPattern} />}
-          {pattern && <PatternCoach p={pattern.p} step={pattern.step} setStep={goStep} onClose={() => { setPattern(null); pickTool("select", true) }} toolName={t => { const x = TOOLS.find(y => y.id === t); return t === "calib" ? "Calibrate · C" : x ? `${x.name} · ${x.key}` : t }} />}
           <datalist id="la-names">{hints.map(h => <option key={h.value} value={h.value} label={h.label} />)}</datalist>
-          {stageShot && (kind === "shot" || moment) && (
-            <div className="la-dock" role="toolbar" aria-label="Tools" style={kind === "video" ? { bottom: 92 } : undefined}>
-              {GROUPS.map((g, gi) => (
-                <span key={gi} style={{ display: "contents" }}>
-                  {gi > 0 && <span className="sep" />}
-                  {g.map(id => { const t = TOOLS.find(x => x.id === id)!; return (
-                    <button key={id} className={`la-tool${tool === id || (id === "zone" && tool === "oval") || (id === "arrow" && tool === "line") ? " on" : ""}`} aria-pressed={tool === id} title={`${t.name} (${t.key})`} onClick={() => pickTool(id)}>{t.icon}<span>{t.name}</span></button>
-                  ) })}
-                </span>
-              ))}
-            </div>
-          )}
+          {kind === "shot" && dock}
         </div>
         {notes && stageShot && (kind === "shot" || moment) && (
-          <div className={`la-notes${notes.show ? "" : " off"}`} aria-label={kind === "shot" ? "Notes under the shot" : "Caption"}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <input className="la-kick" value={notes.kicker} maxLength={80} placeholder={kind === "shot" ? "BARÇA V MADRID · BUILD-UP" : "CAPTION · SHOWS IN THE FREEZE"} aria-label="Kicker" onFocus={begin} onBlur={end} onChange={e => setNotes({ ...notes, kicker: e.target.value })} />
-              <input className="la-head" value={notes.head} maxLength={90} placeholder="Your headline" aria-label="Headline" onFocus={begin} onBlur={end} onChange={e => setNotes({ ...notes, head: e.target.value })} />
-              <textarea className="la-body" rows={Math.min(6, Math.max(2, Math.ceil(notes.body.length / 80) + (notes.body.match(/\n/g)?.length ?? 0)))} value={notes.body} maxLength={600} placeholder="What it shows, in a line or two. It goes under the picture when you render." aria-label="What it shows" onFocus={begin} onBlur={end} onChange={e => setNotes({ ...notes, body: e.target.value })} />
-            </div>
-            {kind === "shot" && (
-              <div className="la-stats">
-                {notes.stats.map((s, i) => (
-                  <span key={i} className="la-stat"><input value={s} maxLength={24} aria-label={`Stat ${i + 1}`} placeholder="12 m · lines" onFocus={begin} onBlur={end} onChange={e => setNotes({ ...notes, stats: notes.stats.map((x, j) => (j === i ? e.target.value : x)) })} />
-                    <button className="an-x" aria-label="Remove this stat" onClick={() => setNotes({ ...notes, stats: notes.stats.filter((_, j) => j !== i) })}><X size={12} /></button></span>
-                ))}
-                {notes.stats.length < 4 && <button className="la-tiny" onClick={() => setNotes({ ...notes, stats: [...notes.stats, ""] })} title="A number and what it is, e.g. 12 m · between lines"><Plus size={13} /> stat</button>}
-                <button className={`la-tiny${notes.show ? " on" : ""}`} onClick={() => setNotes({ ...notes, show: !notes.show })} title="Put the notes under the picture when you render">{notes.show ? <Check size={13} /> : null} In render</button>
+          <div className={`la-notes${notes.show ? "" : " off"}`} aria-label={kind === "shot" ? "Narration under the Game Shot" : "Narration on the Game Film"}>
+            {notes.show ? (
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <input className="la-kick" value={notes.kicker} maxLength={80} placeholder={kind === "shot" ? "BARÇA V MADRID · BUILD-UP" : "CAPTION · SHOWS IN THE FREEZE"} aria-label="Kicker" onFocus={begin} onBlur={end} onChange={e => setNotes({ ...notes, kicker: e.target.value })} />
+                <input className="la-head" value={notes.head} maxLength={90} placeholder="Your headline" aria-label="Headline" onFocus={begin} onBlur={end} onChange={e => setNotes({ ...notes, head: e.target.value })} />
+                <textarea className="la-body" rows={Math.min(6, Math.max(2, Math.ceil(notes.body.length / 80) + (notes.body.match(/\n/g)?.length ?? 0)))} value={notes.body} maxLength={600} placeholder={kind === "shot" ? "What it shows, in a line or two. It goes under the picture when you render." : "What it shows, in a line or two. It appears over the freeze."} aria-label="What it shows" onFocus={begin} onBlur={end} onChange={e => setNotes({ ...notes, body: e.target.value })} />
               </div>
+            ) : (
+              <p className="la-narroff">Narration is off. {kind === "shot" ? "Nothing is written under the Game Shot," : "No caption on the Game Film,"} and nothing goes in the thread or share link. {(notes.head || notes.body || notes.kicker) ? "Your words are kept." : ""}</p>
             )}
+            <button type="button" role="switch" aria-checked={notes.show} className={`la-switch${notes.show ? " on" : ""}`} title={notes.show ? "Hide the narration. Your words are kept." : "Add narration"}
+              onClick={() => { begin(); setNotes({ ...notes, show: !notes.show }); end() }}>
+              <i aria-hidden="true" /><span>Narration</span>
+            </button>
           </div>
         )}
       </main>
@@ -740,17 +694,11 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
           <div className="la-edge" role="separator" aria-orientation="vertical" aria-label="Resize the panel" tabIndex={0}
             onPointerDown={e => { e.preventDefault(); edge.current = { x: e.clientX, w: rw } }} onDoubleClick={() => { setRw(300); store.set("la-rw", "300") }}
             onKeyDown={e => { if (e.key === "ArrowLeft") setRw(w => Math.min(440, w + 16)); if (e.key === "ArrowRight") setRw(w => Math.max(260, w - 16)) }} />
-          <div className="la-rhead"><span className="an-cap" style={{ margin: 0 }}>{calPanel ? "Calibrate" : selMark ? "Mark" : kind === "shot" ? "This shot" : "This moment"}</span>
+          <div className="la-rhead"><span className="an-cap" style={{ margin: 0 }}>{selMark ? "Mark" : kind === "shot" ? "This shot" : "This moment"}</span>
             <button className="an-x" aria-label="Fold the panel" title="Fold the panel (⌘\)" onClick={() => setRight(false)}><ChevronRight size={15} /></button></div>
-          {calPanel ? (
-            <CalibratePanel pts={stageShot.calib?.pts ?? []} pick={calPick} setPick={setCalPick} fit={fit}
-              onRemove={id => { begin(); setCalibPts((stageShot.calib?.pts ?? []).filter(q => q.id !== id)); end() }}
-              onClear={() => { begin(); setCalibPts([]); end() }} onDone={() => { setTool("select"); setCalPick(null) }} />
-          ) : (
             <Inspector mark={selMark} shot={stageShot} set={setMark} begin={begin} end={end} textRef={textRef} onDuplicate={dup} onDelete={del} onFront={() => restack(true)} onBack={() => restack(false)}
               onDim={v => setDim(v)} where={kind === "shot" ? undefined : "Moment"} teams={teams} onTeams={t => setTeams(t)}
               onOrder={next => { begin(); applyItems(() => next); end() }} onSelect={id => setSel(id)} calibrated={!!fit} extra={momentPanel} />
-          )}
         </aside>
       )}
       {stageShot && !rightOpen && <button className="la-unfold" aria-label="Open the panel" title="Open the panel" onClick={() => setRight(true)}><ChevronLeft size={15} /></button>}
