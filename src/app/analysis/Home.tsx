@@ -32,6 +32,7 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
   const navigate = useNavigate()
   const [folders, setFolders] = useState<Folder[]>([])
   const [items, setItems] = useState<ItemRow[] | null>(null)
+  const [loadErr, setLoadErr] = useState(false)
   const [urls, setUrls] = useState<Record<string, string>>({})
   const [view, setViewS] = useState<"wall" | "list">(() => { try { return (localStorage.getItem("la-view") as "wall" | "list") || "wall" } catch { return "wall" } })
   const place: Place = folderParam ?? "all"
@@ -60,8 +61,8 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
 
   const load = async () => {
     const r = await loadLibrary(user.id)
-    if (!r) { say("Couldn't load your Library. Check your connection."); setItems(x => x ?? []); return }
-    setFolders(r.folders); setItems(r.items)
+    if (!r) { setLoadErr(true); return }
+    setLoadErr(false); setFolders(r.folders); setItems(r.items)
     const u = await signed(r.items.map(i => i.cover_path).filter(Boolean) as string[])
     setUrls(u)
   }
@@ -138,7 +139,7 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
         await uploadPic(path, prep.blob)
         await createItem(user.id, targetFolder, "shot", { v: 2, path, w: prep.w, h: prep.h, dim: 0, items: [] }, { id, sort: n++, cover: path })
         made.push(id)
-      } catch (e) { say((e as Error).message === "too big" ? "A picture is over 25 MB." : "Couldn't add a picture. Try a PNG or JPG.") }
+      } catch (e) { const m = (e as Error).message; console.error(e); say(m === "too big" ? "That picture is over 25 MB." : /decode|image|load/i.test(m) ? "That file didn't open as a picture. Try a PNG or JPG." : "Couldn't save it to your Library. Check your connection and try again.") }
     }
     for (const f of vids.slice(0, 1)) {
       setBusy("Opening the clip…")
@@ -200,6 +201,7 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
     catch { say("Couldn't duplicate it.") }
   }
   const takeApart = async (k: number) => {
+    if (busy) return
     setBusy("Opening the example…")
     try { const id = await openExample(user.id, k, folders); markGuide("drop"); navigate(`/analysis?item=${id}`) }
     catch (e) { console.error(e); say("Couldn't open the example. Check your connection.") } finally { setBusy("") }
@@ -262,6 +264,13 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
         onDrop={e => { const raw = e.dataTransfer.getData(DRAG_ITEM); setOver(null); if (raw) { e.preventDefault(); moveTo(JSON.parse(raw), null) } }}>
         <Glyph dashed /> Unsorted<em>{byFolder.get(null)?.length ?? 0}</em></button>
       <button className="la-fi" style={{ color: TEXT_MUTED }} onClick={() => setNaming({ id: null, parent: null, name: "" })}><FolderPlus size={15} /> New folder</button>
+      {!fresh && <>
+        <h4 style={{ marginTop: 16 }}>Examples</h4>
+        {EXAMPLES.map((x, k) => (
+          <button key={x.key} className="la-fi" title="Copies it into your Examples folder to change" onClick={() => takeApart(k)}>
+            {x.kind === "video" ? <Clapperboard size={15} /> : <ImagePlus size={15} />} {x.title}</button>
+        ))}
+      </>}
     </aside>
   )
 
@@ -275,12 +284,12 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
       <input ref={fileRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm,.mov,.mp4,.m4v,.webm" multiple hidden onChange={e => { const f = [...(e.target.files ?? [])]; e.target.value = ""; if (f.length) addFiles(f) }} />
       <header className="la-top">
         <button className="la-home" aria-label="PitchStudio home" title="Home" onClick={() => navigate("/")}><PSMark size={28} color="#d7ff3c" /></button>
-        <div className="la-crumb"><b style={{ fontSize: 15 }}>Live Analysis</b><span className="la-sub">{items ? `${items.length} ${items.length === 1 ? "piece" : "pieces"} · ${folders.length} ${folders.length === 1 ? "folder" : "folders"}` : "Loading…"}</span></div>
+        <div className="la-crumb"><b style={{ fontSize: 15 }}>Live Analysis</b><span className="la-sub">{items ? (fresh && !folders.length ? "" : tally(items, folders.length)) : loadErr ? "" : "Loading…"}</span></div>
         <div className="la-sp" />
-        {!fresh && <label className="lh-search"><Search size={15} /><input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Search shots, players, notes…" aria-label="Search" />{q ? <button className="an-x" aria-label="Clear the search" onClick={() => setQ("")}><X size={13} /></button> : <kbd>⌘K</kbd>}</label>}
+        {items && !fresh && <label className="lh-search"><Search size={15} /><input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Search shots, players, notes…" aria-label="Search" />{q ? <button className="an-x" aria-label="Clear the search" onClick={() => setQ("")}><X size={13} /></button> : <kbd>⌘K</kbd>}</label>}
         <div className="la-sp" />
         {busy && <span style={{ color: "#d7ff3c", fontSize: 13, display: "inline-flex", gap: 6, alignItems: "center" }}><Loader2 size={14} className="an-spin" /> {busy}</span>}
-        {!fresh && place === "all" && !qn && <div className="la-seg" role="group" aria-label="View"><button className={view === "wall" ? "on" : ""} onClick={() => setView("wall")}><LayoutGrid size={14} /> Wall</button><button className={view === "list" ? "on" : ""} onClick={() => setView("list")}><ListIcon size={14} /> List</button></div>}
+        {items && !fresh && place === "all" && !qn && <div className="la-seg" role="group" aria-label="View"><button className={view === "wall" ? "on" : ""} onClick={() => setView("wall")}><LayoutGrid size={14} /> Wall</button><button className={view === "list" ? "on" : ""} onClick={() => setView("list")}><ListIcon size={14} /> List</button></div>}
         {!fresh && showGrid && shown.length > 0 && <button className={`an-btn${picking ? " pri" : ""}`} onClick={() => { setPicking(p => !p); setTicked(new Set()) }}>{picking ? "Done" : "Select"}</button>}
         <span style={{ position: "relative" }}>
           <button className="an-btn pri" onClick={() => setNewOpen(o => !o)}><Plus size={15} /> New</button>
@@ -291,38 +300,44 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
         </span>
       </header>
 
-      {items === null ? <div className="lh-load"><Loader2 className="an-spin" size={24} color="#d7ff3c" /></div> : fresh ? (
+      {loadErr && items === null ? (
+        <div className="lh-load"><div style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 12, alignItems: "center" }}>
+          <b style={{ font: "800 26px 'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>Your Library didn't load</b>
+          <span style={{ color: TEXT_MUTED }}>Nothing is lost. Check your connection and try again.</span>
+          <button className="an-btn pri" onClick={() => { setLoadErr(false); load() }}>Try again</button></div></div>
+      ) : items === null ? <div className="lh-load"><Loader2 className="an-spin" size={24} color="#d7ff3c" /></div> : fresh ? (
         /* ── new here ── */
         <div className="lh-fresh">
           <Rail />
           <main className="lh-welcome">
-            <div className="lh-k">Welcome to the edit suite</div>
-            <h1 className="lh-h1">Freeze it. Mark it. Make it yours.</h1>
+            <div className="lh-k">Live Analysis</div>
+            <h1 className="lh-h1">Show what the broadcast missed.</h1>
+            <p className="lh-lede">Bring in a still or a clip from the match, pin it to the pitch, mark the shape and render it with your name on it.</p>
             <div className="lh-drop" onClick={() => fileRef.current?.click()} role="button" tabIndex={0} onKeyDown={e => { if (e.key === "Enter") fileRef.current?.click() }}>
-              <b>Drop a match shot or a clip here</b>
-              <span>Screenshots, MP4, MOV or WebM, up to 10 minutes · or paste with <kbd>⌘V</kbd></span>
-              <div style={{ display: "flex", gap: 10 }}><span className="an-btn pri" style={{ height: 42 }}><ImagePlus size={16} /> Add shots</span><span className="an-btn" style={{ height: 42 }}><Clapperboard size={16} /> Open a video</span></div>
-              <small>Your frames stay private. Only what you render is shared.</small>
+              <b>Drop a screenshot or a clip</b>
+              <span>PNG, JPG or WebP · MP4, MOV or WebM up to 10 min · or paste with <kbd>⌘V</kbd></span>
+              <div style={{ display: "flex", gap: 10 }}><span className="an-btn pri" style={{ height: 42 }}><ImagePlus size={16} /> Add screenshots</span><span className="an-btn" style={{ height: 42 }}><Clapperboard size={16} /> Add a clip</span></div>
+              <small>Private to you until you render it. Clips stay on this computer.</small>
             </div>
-            <div className="lh-k" style={{ margin: "26px 0 12px", color: TEXT_MUTED }}>See what you can make · open one and take it apart</div>
+            <div className="lh-k" style={{ margin: "26px 0 12px", color: TEXT_MUTED }}>Or start from a finished breakdown · open one and change anything</div>
             <div className="lh-ex">
               {EXAMPLES.map((x, k) => (
                 <button key={x.title} className="lh-excard" onClick={() => takeApart(k)}>
                   <span className="pic" style={{ backgroundImage: `url(${x.thumb})` }}>{x.kind === "video" && <span className="play"><Play size={18} fill="currentColor" /></span>}</span>
-                  <span className="t">{x.title}</span><span className="s">{x.sub}</span><span className="go">Open and take it apart →</span>
+                  <span className="t">{x.title}</span><span className="s">{x.sub}</span><span className="go">Open it →</span>
                 </button>
               ))}
             </div>
           </main>
           <aside className="lh-guide" aria-label="Your first breakdown">
-            <div className="lh-k">Your first breakdown · about 3 minutes</div>
-            <h2>We'll do it together</h2>
-            <p>Each step lights up when you reach it. Skip any time.</p>
+            <div className="lh-k">Your first breakdown · 3 min</div>
+            <h2>Five steps to your first post</h2>
+            <p>Each one ticks off as you do it. Skip whenever you like.</p>
             <ol>{GUIDE.map((g, i) => { const d = done.has(g.id), now = !d && GUIDE.findIndex(x => !done.has(x.id)) === i; return (
               <li key={g.id} className={d ? "done" : now ? "now" : ""}><i>{d ? <Check size={13} strokeWidth={3} /> : i + 1}</i><div><b>{g.title}</b><span>{g.sub}</span></div></li>
             ) })}</ol>
             <video className="lh-film" src="/examples/man-for-man.mp4" muted loop playsInline autoPlay poster="/examples/man-for-man.jpg" aria-label="What a directed moment looks like" />
-            <button className="la-tiny" style={{ marginTop: 10 }} onClick={() => { skipGuide(); say("Guide skipped. The keys are under ? in the editor.") }}>Skip the guide</button>
+            <button className="la-tiny" style={{ marginTop: 10 }} onClick={() => { skipGuide(); say("Guide off. Press ? in the editor for every key.") }}>Skip the guide</button>
           </aside>
         </div>
       ) : (
@@ -333,14 +348,14 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
             {curFolder && !qn && (
               <div className="lh-fbar">
                 <button className="an-x" aria-label="Back" onClick={() => navigate(curFolder.parent_id ? `/analysis?folder=${curFolder.parent_id}` : "/analysis")}><ChevronLeft size={16} /></button>
-                <h2>{curFolder.name}</h2><span className="lh-count">{shown.length} {shown.length === 1 ? "piece" : "pieces"}</span>
+                <h2>{curFolder.name}</h2><span className="lh-count">{tally(shown)}</span>
                 <span className="la-sp" />
                 <button className="la-tiny" onClick={() => setNaming({ id: curFolder.id, parent: curFolder.parent_id, name: curFolder.name })}><Pencil size={13} /> Rename</button>
                 {!curFolder.parent_id && <button className="la-tiny" onClick={() => setNaming({ id: null, parent: curFolder.id, name: "" })}><FolderPlus size={13} /> Folder inside</button>}
                 <button className="la-tiny bad" onClick={() => setConfirm({ folder: curFolder.id })}><Trash2 size={13} /> Delete folder</button>
               </div>
             )}
-            {(place === "unsorted" || place === "recent") && !qn && <div className="lh-fbar"><h2>{place === "unsorted" ? "Unsorted" : "Recent"}</h2><span className="lh-count">{place === "unsorted" ? "New shots land here. Drag them onto a folder." : "What you worked on last"}</span></div>}
+            {(place === "unsorted" || place === "recent") && !qn && <div className="lh-fbar"><h2>{place === "unsorted" ? "Unsorted" : "Recent"}</h2><span className="lh-count">{place === "unsorted" ? "Not in a folder yet. Drag them onto one to file them." : "What you worked on last"}</span></div>}
             {qn && <div className="lh-fbar"><h2>Search</h2><span className="lh-count">{shown.length} found for “{q}”</span></div>}
 
             {picking && (
@@ -360,7 +375,7 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
 
             {!showGrid ? <>
               {/* ── coming back: pick up where you left off, the wall ── */}
-              <div className="lh-k" style={{ color: TEXT_MUTED }}>Pick up where you left off</div>
+              <div className="lh-k" style={{ color: TEXT_MUTED }}>Last worked on</div>
               <div className="lh-cont">
                 {(items ?? []).slice(0, 3).map((i, k) => (
                   <button key={i.id} className="lh-ccard" onClick={() => navigate(`/analysis?item=${i.id}`)}>
@@ -369,9 +384,9 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
                   </button>
                 ))}
               </div>
-              <div style={{ display: "flex", alignItems: "center", marginTop: 22 }}><div className="lh-k" style={{ color: TEXT_MUTED, margin: 0 }}>Your folders · drag them anywhere, drop shots on them</div><span className="la-sp" />{top.length > 1 && <button className="la-tiny" onClick={tidy}>Tidy up</button>}</div>
+              <div style={{ display: "flex", alignItems: "center", marginTop: 22 }}><div className="lh-k" style={{ color: TEXT_MUTED, margin: 0 }}>Folders · drag to arrange · drop shots in to file them</div><span className="la-sp" />{top.length > 1 && <button className="la-tiny" onClick={tidy}>Line them up</button>}</div>
               <div className="lh-wall" ref={wallRef} style={{ height: wallH + 120 }}>
-                {!top.length && <div className="lh-nofolders"><b>No folders yet</b><span>A folder is an analysis: one match, one idea, one player.</span><button className="an-btn pri" onClick={() => setNaming({ id: null, parent: null, name: "" })}><FolderPlus size={15} /> New folder</button></div>}
+                {!top.length && <div className="lh-nofolders"><b>No folders yet</b><span>One folder per match, idea or player, with every shot and clip for it inside.</span><button className="an-btn pri" onClick={() => setNaming({ id: null, parent: null, name: "" })}><FolderPlus size={15} /> New folder</button></div>}
                 {top.map((f, i) => {
                   const p = drag?.id === f.id ? drag : spot(f, i)
                   const kids = (byFolder.get(f.id) ?? []).slice(0, 3)
@@ -380,7 +395,7 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
                       onPointerDown={e => onStackDown(e, f, i)} onPointerMove={onStackMove} onPointerUp={onStackUp}
                       onDragOver={e => { if ([...e.dataTransfer.types].includes(DRAG_ITEM)) { e.preventDefault(); setOver(f.id) } }} onDragLeave={() => setOver(null)}
                       onDrop={e => { const raw = e.dataTransfer.getData(DRAG_ITEM); setOver(null); if (raw) { e.preventDefault(); moveTo(JSON.parse(raw), f.id) } }}
-                      role="button" tabIndex={0} aria-label={`${f.name}, ${countIn(f.id)} pieces. Open`} onKeyDown={e => { if (e.key === "Enter") navigate(`/analysis?folder=${f.id}`) }}>
+                      role="button" tabIndex={0} aria-label={`${f.name}, ${tally(byFolder.get(f.id) ?? [])}. Open`} onKeyDown={e => { if (e.key === "Enter") navigate(`/analysis?folder=${f.id}`) }}>
                       <div className="pile">
                         {(kids.length ? [...kids].reverse() : [null]).map((it, j, arr) => (
                           <span key={j} className="card" style={{ left: (arr.length - 1 - j) * 8, top: -(arr.length - 1 - j) * 8, backgroundImage: it && cover(it) ? `url(${cover(it)})` : undefined }} />
@@ -400,7 +415,7 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
                 <div className={`lh-tray${over === "unsorted" ? " drop" : ""}`}
                   onDragOver={e => { if ([...e.dataTransfer.types].includes(DRAG_ITEM)) { e.preventDefault(); setOver("unsorted") } }} onDragLeave={() => setOver(null)}
                   onDrop={e => { const raw = e.dataTransfer.getData(DRAG_ITEM); setOver(null); if (raw) { e.preventDefault(); moveTo(JSON.parse(raw), null) } }}>
-                  <div><div className="lh-k" style={{ margin: 0, color: TEXT_MUTED }}>Unsorted</div><small>New shots land here · drag them onto a folder</small></div>
+                  <div><div className="lh-k" style={{ margin: 0, color: TEXT_MUTED }}>Unsorted</div><small>Not in a folder yet · drag onto one to file it</small></div>
                   {(byFolder.get(null) ?? []).slice(0, 8).map(i => (
                     <button key={i.id} className="lh-mini" draggable onDragStart={e => { e.dataTransfer.setData(DRAG_ITEM, JSON.stringify([i.id])); e.dataTransfer.effectAllowed = "move" }}
                       style={cover(i) ? { backgroundImage: `url(${cover(i)})` } : undefined} aria-label={`Open ${nameOf(i)}`} onClick={() => navigate(`/analysis?item=${i.id}`)} />
@@ -417,7 +432,7 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
                         onDragOver={e => { if ([...e.dataTransfer.types].includes(DRAG_ITEM)) { e.preventDefault(); setOver(f.id) } }} onDragLeave={() => setOver(null)}
                         onDrop={e => { const raw = e.dataTransfer.getData(DRAG_ITEM); setOver(null); if (raw) { e.preventDefault(); moveTo(JSON.parse(raw), f.id) } }}>
                         <span className="pic" style={(byFolder.get(f.id) ?? [])[0] && cover((byFolder.get(f.id) ?? [])[0]) ? { backgroundImage: `url(${cover((byFolder.get(f.id) ?? [])[0])})` } : undefined}><Glyph /></span>
-                        <b>{f.name}</b><small>{countIn(f.id)} pieces</small>
+                        <b>{f.name}</b><small>{tally(byFolder.get(f.id) ?? [])}</small>
                       </button>
                     ))}
                   </div>
@@ -457,6 +472,15 @@ export function Home({ user, folderParam }: { user: Who; folderParam: string | n
       {toast && <div className="an-toast" role="status">{toast}</div>}
     </div>
   )
+}
+
+/** "3 shots · 1 video · 2 folders" */
+function tally(list: ItemRow[], folders?: number) {
+  const s = list.filter(i => i.kind === "shot").length, v = list.length - s
+  const parts = [`${s} ${s === 1 ? "shot" : "shots"}`]
+  if (v) parts.push(`${v} ${v === 1 ? "video" : "videos"}`)
+  if (folders != null) parts.push(`${folders} ${folders === 1 ? "folder" : "folders"}`)
+  return parts.join(" · ")
 }
 
 function Glyph({ dashed }: { dashed?: boolean }) {
@@ -533,7 +557,8 @@ const HOME_CSS = `
   .lh-addcard:hover { border-color: #d7ff3c; color: #d7ff3c; } .lh-addcard b { font-size: 14px; color: inherit; } .lh-addcard small { font-size: 12px; }
   .lh-none { color: ${TEXT_MUTED}; margin-top: 20px; }
   .lh-welcome { overflow-y: auto; padding: 32px 40px; min-width: 0; }
-  .lh-h1 { font: 800 clamp(40px, 4.4vw, 60px)/0.95 'Barlow Condensed', sans-serif; text-transform: uppercase; margin: 4px 0 22px; }
+  .lh-h1 { font: 800 clamp(34px, 3.4vw, 50px)/1 'Barlow Condensed', sans-serif; text-transform: uppercase; margin: 4px 0 10px; }
+  .lh-lede { color: #b9bcc4; font-size: 16px; line-height: 1.5; max-width: 620px; margin: 0 0 22px; }
   .lh-drop { height: 250px; border: 2px dashed rgba(215,255,60,.45); border-radius: 18px; background: rgba(215,255,60,.04); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; cursor: pointer; text-align: center; padding: 0 20px; }
   .lh-drop:hover, .lh-drop:focus-visible { background: rgba(215,255,60,.08); outline: none; border-color: #d7ff3c; }
   .lh-drop b { font: 800 30px 'Barlow Condensed', sans-serif; letter-spacing: .02em; text-transform: uppercase; }

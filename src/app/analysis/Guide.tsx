@@ -4,11 +4,11 @@
 const KEY = "la-guide"
 export type GuideStep = "drop" | "calib" | "mark" | "notes" | "render" | "moment"
 export const GUIDE: { id: GuideStep; title: string; sub: string }[] = [
-  { id: "drop", title: "Drop a frame or a clip", sub: "Screenshot, MP4, MOV, up to 10 min" },
-  { id: "calib", title: "Calibrate", sub: "Click 4 pitch points you can see" },
-  { id: "mark", title: "Mark it", sub: "Rings, ties, zones, measure in metres" },
-  { id: "notes", title: "Tell the story", sub: "Headline and notes under the shot" },
-  { id: "render", title: "Render", sub: "Picture or video, ready to post" },
+  { id: "drop", title: "Bring in a shot or a clip", sub: "A screenshot, or a clip up to 10 min" },
+  { id: "calib", title: "Pin it to the pitch", sub: "Click 4 lines or corners you can see. Gaps turn into metres" },
+  { id: "mark", title: "Mark the shape", sub: "Rings, ties, zones, cover shadows" },
+  { id: "notes", title: "Write what it shows", sub: "A headline and a few lines under it" },
+  { id: "render", title: "Render and post", sub: "Picture or video, cropped for X, Instagram or TikTok" },
 ]
 const read = (): Set<string> => { try { return new Set(JSON.parse(localStorage.getItem(KEY) ?? "[]")) } catch { return new Set() } }
 export function guideDone(): Set<string> { return read() }
