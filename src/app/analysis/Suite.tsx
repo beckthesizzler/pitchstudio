@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleDot, Copy, Eraser, Flashlight, FolderInput, Images, Library as LibraryIcon, Loader2, MousePointer2, MoveUpRight, Pentagon, Plus, Redo2, Ruler, ScanEye, Spline, Tag as TagIcon, Trash2, Triangle, Type, Undo2, Clapperboard, X, Film } from "lucide-react"
+import { Check, Crosshair, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleDot, Copy, Eraser, Flashlight, FolderInput, Images, Library as LibraryIcon, Loader2, MousePointer2, MoveUpRight, Pentagon, Plus, Redo2, Ruler, ScanEye, Spline, Tag as TagIcon, Trash2, Triangle, Type, Undo2, Clapperboard, X, Film } from "lucide-react"
 import { Mark as PSMark } from "../brand/Mark"
 import { Stage, START_DEFAULTS, type Defaults, type Tool } from "./Stage"
 import { Inspector, inOrder } from "./Inspector"
 import { VideoStudio, useClipFrames, stripTimes, fmtTime, stepsOf } from "./Video"
 import { FilterDefs, DEFAULT_OPTS, RenderPanel, renderShot, canvasBlob, pictureFilter, type RenderOpts } from "./Render"
 import { SUITE_CSS } from "./suiteCss"
-import { fitCalib } from "./calib"
+import { fitCalib, type CalPoint } from "./calib"
+import { PinGuide, PIN_CSS, PIN_ORDER, pitchPoint } from "./PinToPitch"
 import { findVideo, keepVideo, probeVideo, videoKey, videoProblem } from "./videoStore"
 import { MAX_MARKS, downloadShot, exportFontCSS, moveMark, newId, prepareShot, unit, type Mark, type Notes, type Shot, type VideoProject } from "./model"
 import { createItem, toBin, folderItems, itemPicPath, itemThumbPath, loadItem, moveItems, readShotData, readVideoData, reorder, saveItem, shotPayload, signed, uploadPic, videoPayload, withMatch, loadFolders, applyMatch, matchLine, DEFAULT_TEAMS, type Folder, type ItemRow, type ShotData, type Teams, type VideoData } from "./items"
@@ -239,6 +240,46 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
     : moment && video ? { id: moment.id, path: "video", w: video.w, h: video.h, dim: moment.dim, items: moment.items, calib: moment.calib ?? null } : null
   const stageSrc = kind === "shot" ? src || undefined : moment ? momentSrc[moment.id] : undefined
   const fit = useMemo(() => fitCalib(stageShot?.calib), [stageShot?.calib]) // eslint-disable-line react-hooks/exhaustive-deps
+  /* ── Pin to pitch: optional, one marking at a time ── */
+  const [pin, setPin] = useState<null | { step: number; before: CalPoint[] | null; back: Tool }>(null)
+  const [pinMenu, setPinMenu] = useState(false)
+  const setCalibPts = (pts: CalPoint[] | null) => {
+    const c = pts && pts.length ? { pts } : null
+    if (kind === "shot") { const s = shotRef.current; if (s) setShot({ ...s, calib: c }) } else editMoment(m => ({ ...m, calib: c }))
+  }
+  const pinPts = stageShot?.calib?.pts ?? []
+  const startPin = () => {
+    if (!stageShot) return
+    setPinMenu(false); setSel(null)
+    setPin({ step: 0, before: stageShot.calib?.pts ?? null, back: tool === "calib" ? "select" : tool })
+    if (!rightOpen) setRight(true)
+    begin(); setCalibPts(null); end()
+    setTool("calib")
+  }
+  const nextPin = (pts: CalPoint[], from: number) => {
+    const ok = pts.length >= 4 && !!fitCalib({ pts })
+    if (ok) { const back = pin?.back ?? "select"; setPin(null); setTool(back); say("Pinned. Rings now lie flat on the grass."); return }
+    // skip markings already pinned, and any that would sit on one line with two pins already there (adds nothing)
+    const inLine = (c: [number, number]) => pts.some((a, i) => pts.some((b2, j) => j > i && Math.abs((b2.pitch[0] - a.pitch[0]) * (c[1] - a.pitch[1]) - (b2.pitch[1] - a.pitch[1]) * (c[0] - a.pitch[0])) < 1))
+    let k = from + 1
+    while (k < PIN_ORDER.length && (pts.some(q => q.id === PIN_ORDER[k].id) || inLine(pitchPoint(PIN_ORDER[k].id)!))) k++
+    if (k >= PIN_ORDER.length) { stopPin(true); return }
+    setPin(p => (p ? { ...p, step: k } : p))
+  }
+  const placePin = (pts: CalPoint[], live?: boolean) => {
+    if (!pin) { setCalibPts(pts); return }
+    const id = PIN_ORDER[pin.step]?.id
+    const fixed = pts.map(q => ({ ...q, pitch: pitchPoint(q.id) ?? q.pitch }))
+    if (!live) begin(); setCalibPts(fixed); if (!live) end()
+    if (!live && id && fixed.some(q => q.id === id)) nextPin(fixed, pin.step)
+  }
+  const stopPin = (noMore = false) => {
+    if (!pin) return
+    const done = pinPts.length >= 4 && !!fitCalib({ pts: pinPts })
+    if (!done) { setCalibPts(pin.before); say(noMore ? "Couldn't pin this one: not enough pitch markings in view. Nothing changed." : "Stopped. Nothing changed.") }
+    setTool(pin.back); setPin(null)
+  }
+  const removePin = () => { setPinMenu(false); begin(); setCalibPts(null); end(); say("Unpinned. Rings are back to flat circles.") }
   const selMark = stageShot && sel ? stageShot.items.find(m => m.id === sel) ?? null : null
   const teams: Teams = (kind === "shot" ? shot?.teams : vd?.teams) ?? DEFAULT_TEAMS
 
@@ -319,6 +360,7 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   const focusText = () => setFocusReq(n => n + 1)
   useEffect(() => { if (focusReq) { textRef.current?.focus(); textRef.current?.select() } }, [focusReq])
   const pickTool = (t: Tool, quiet = false) => {
+    if (pin && t !== "calib") { const done = pinPts.length >= 4 && !!fitCalib({ pts: pinPts }); if (!done) setCalibPts(pin.before); setPin(null) }
     setTool(t)
     if (t !== "select") { setSel(null); if (!rightOpen) setRight(true) }
     if (!quiet && t !== "select" && firstUse("tool-" + t)) say(hintFor(t))
@@ -516,7 +558,7 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
       if (e.key === "]") { step(1); return }
       if (!stageShot) return
       if (e.key === "Delete" || e.key === "Backspace") { if (selMark) { e.preventDefault(); del() } return }
-      if (e.key === "Escape") { if (sel) setSel(null); else setTool("select"); return }
+      if (e.key === "Escape") { if (pin) stopPin(); else if (sel) setSel(null); else setTool("select"); return }
       if (e.key.startsWith("Arrow") && selMark) {
         e.preventDefault()
         const st = (e.shiftKey ? 10 : 1) * 2 * unit(stageShot.w)
@@ -614,7 +656,7 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   return (
     <div className={`la-page${dropOver ? " over" : ""}`} style={{ ["--lw" as any]: leftOpen ? "248px" : "52px", ["--rw" as any]: rightOpen && stageShot ? `${rw}px` : "0px", ["--rh" as any]: reelOpen ? "128px" : "44px" }}
       onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={e => { if ([...e.dataTransfer.types].includes("Files")) e.preventDefault() }} onDrop={onDrop}>
-      <style>{SUITE_CSS + MOMENT_CSS}</style>
+      <style>{SUITE_CSS + MOMENT_CSS + PIN_CSS}</style>
       <FilterDefs />
       <input ref={fileRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm,.mov,.mp4,.m4v,.webm" multiple hidden onChange={e => { const f = [...(e.target.files ?? [])]; e.target.value = ""; if (f.length) addFiles(f) }} />
       <input ref={videoInput} type="file" accept="video/mp4,video/quicktime,video/webm,.mov,.mp4,.m4v,.webm" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) chooseVideoFile(f) }} />
@@ -679,6 +721,13 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
               </button>
             ))}
             <span className="la-sp" />
+            {pin ? <button className="la-chip on" onClick={() => stopPin()} title="Stop pinning (Esc)"><Crosshair size={14} /> Pinning · {Math.min(pinPts.length + 1, 4)} of 4</button>
+              : fit ? <span className="pp-chip" style={{ position: "relative" }}>
+                <button className="la-chip pp-done" onClick={() => setPinMenu(o => !o)}><Check size={14} /> Pinned to pitch</button>
+                {pinMenu && <div className="la-pop pp-menu" onPointerLeave={() => setPinMenu(false)}><button onClick={startPin}><Crosshair size={14} /> Pin again</button><button onClick={removePin}><X size={14} /> Remove the pins</button></div>}
+              </span>
+              : <span className="pp-chip"><button className="la-chip" onClick={startPin} aria-describedby="pp-tip"><Crosshair size={14} /> Pin to pitch</button>
+                <span className="pp-tip" id="pp-tip" role="tooltip"><b>Pin to pitch · optional, 20 seconds</b>Click 4 pitch markings it asks for. Your rings then lie flat on the grass and shrink with distance, and your marks know where they are on the pitch. Skip it and nothing changes.</span></span>}
             {stageShot.items.length > 0 && <button className="la-chip" onClick={clearShot} title="Take every mark off (⌘Z brings them back)"><Eraser size={14} /> Clear {kind === "shot" ? "shot" : "moment"}</button>}
             <span className="la-chip" style={{ cursor: "default" }}>{Math.round(zoom * 100)}%</span>
           </div>
@@ -693,17 +742,17 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
               seal={sealFor} fileBase={fileBase} exportRef={exportVideo} frameRef={frameRef} openRef={openMomentRef} frames={clipFrames} say={say}>
               {stageShot && <Stage shot={stageShot} src={stageSrc} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
                 onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={null} stageRef={stageRef}
-                hint={hintFor(tool)} fit={fit} />}
-              {dock}
+                hint={pin ? "" : hintFor(tool)} fit={fit} calPts={tool === "calib" ? pinPts : undefined} calPick={pin ? PIN_ORDER[pin.step]?.id ?? null : null} onCalib={placePin} />}
+              {!pin && dock}
             </VideoStudio>
           ) : stageShot ? (
             <Stage shot={stageShot} src={stageSrc} tool={tool} sel={sel} zoom={zoom} setZoom={setZoom} defaults={defaults.current}
               onSelect={setSel} onCreate={create} apply={applyItems} begin={begin} end={end} onFocusText={focusText} seal={sealFor(stageShot.w, stageShot.h)} stageRef={stageRef}
               hint={src === "" ? "This Game Shot couldn't be loaded. Check your connection and reopen it." : src ? hintFor(tool) : "Loading the Game Shot…"}
-              fit={fit} />
+              fit={fit} calPts={tool === "calib" ? pinPts : undefined} calPick={pin ? PIN_ORDER[pin.step]?.id ?? null : null} onCalib={placePin} />
           ) : <div className="la-empty"><Loader2 className="an-spin" size={22} color="#d7ff3c" /></div>}
           <datalist id="la-names">{hints.map(h => <option key={h.value} value={h.value} label={h.label} />)}</datalist>
-          {kind === "shot" && dock}
+          {kind === "shot" && !pin && dock}
         </div>
         {notes && stageShot && (kind === "shot" || moment) && (
           <div className={`la-notes${notes.show ? "" : " off"}`} aria-label={kind === "shot" ? "Narration under the Game Shot" : "Narration on the Game Film"}>
@@ -730,11 +779,11 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
           <div className="la-edge" role="separator" aria-orientation="vertical" aria-label="Resize the panel" tabIndex={0}
             onPointerDown={e => { e.preventDefault(); edge.current = { x: e.clientX, w: rw } }} onDoubleClick={() => { setRw(300); store.set("la-rw", "300") }}
             onKeyDown={e => { if (e.key === "ArrowLeft") setRw(w => Math.min(440, w + 16)); if (e.key === "ArrowRight") setRw(w => Math.max(260, w - 16)) }} />
-          <div className="la-rhead"><span className="an-cap" style={{ margin: 0 }}>{selMark ? "Mark" : draftMark ? "Next mark" : kind === "shot" ? "This shot" : "This moment"}</span>
+          <div className="la-rhead"><span className="an-cap" style={{ margin: 0 }}>{pin ? "Pin to pitch" : selMark ? "Mark" : draftMark ? "Next mark" : kind === "shot" ? "This shot" : "This moment"}</span>
             <button className="an-x" aria-label="Fold the panel" title="Fold the panel (⌘\)" onClick={() => setRight(false)}><ChevronRight size={15} /></button></div>
-            <Inspector mark={selMark ?? draftMark} draft={!selMark && !!draftMark} shot={stageShot} set={selMark ? setMark : setDraft} begin={begin} end={end} textRef={textRef} onDuplicate={dup} onDelete={del} onFront={() => restack(true)} onBack={() => restack(false)}
+            {pin ? <PinGuide step={pin.step} pins={pinPts} stuck={pinPts.length >= 4} onSkip={() => nextPin(pinPts, pin.step)} onStop={() => stopPin()} /> : <Inspector mark={selMark ?? draftMark} draft={!selMark && !!draftMark} shot={stageShot} set={selMark ? setMark : setDraft} begin={begin} end={end} textRef={textRef} onDuplicate={dup} onDelete={del} onFront={() => restack(true)} onBack={() => restack(false)}
               onDim={v => setDim(v)} where={kind === "shot" ? undefined : "Moment"} teams={teams} onTeams={t => setTeams(t)}
-              onOrder={next => { begin(); applyItems(() => next); end() }} onSelect={id => setSel(id)} calibrated={!!fit} extra={momentPanel} />
+              onOrder={next => { begin(); applyItems(() => next); end() }} onSelect={id => setSel(id)} calibrated={!!fit} extra={momentPanel} />}
         </aside>
       )}
       {stageShot && !rightOpen && <button className="la-unfold" aria-label="Open the panel" title="Open the panel" onClick={() => setRight(true)}><ChevronLeft size={15} /></button>}

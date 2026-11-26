@@ -77,7 +77,8 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
   const bgLook = useMemo(() => {
     const q = new URLSearchParams(window.location.search).get("bg")
     if (q != null) store.set("la-bg", q === "off" ? "" : q.replace(/[^a-z ]/g, " ").trim())
-    return store.get("la-bg") || undefined
+    const v = store.get("la-bg")
+    return v === null ? "flood chalk" : v || undefined // floodlights + chalk lines unless you chose otherwise
   }, [])
   const done = guideDone()
   const say = (t: string) => setToast(t)
