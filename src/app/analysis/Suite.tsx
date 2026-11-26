@@ -10,7 +10,7 @@ import { SUITE_CSS } from "./suiteCss"
 import { fitCalib } from "./calib"
 import { findVideo, keepVideo, probeVideo, videoKey, videoProblem } from "./videoStore"
 import { MAX_MARKS, downloadShot, exportFontCSS, moveMark, newId, prepareShot, unit, type Mark, type Notes, type Shot, type VideoProject } from "./model"
-import { createItem, deleteItems, folderItems, itemPicPath, itemThumbPath, loadItem, moveItems, readShotData, readVideoData, reorder, saveItem, shotPayload, signed, uploadPic, videoPayload, withMatch, loadFolders, applyMatch, matchLine, DEFAULT_TEAMS, type Folder, type ItemRow, type ShotData, type Teams, type VideoData } from "./items"
+import { createItem, toBin, folderItems, itemPicPath, itemThumbPath, loadItem, moveItems, readShotData, readVideoData, reorder, saveItem, shotPayload, signed, uploadPic, videoPayload, withMatch, loadFolders, applyMatch, matchLine, DEFAULT_TEAMS, type Folder, type ItemRow, type ShotData, type Teams, type VideoData } from "./items"
 import { firstUse, markGuide } from "./Guide"
 import { nameHints, rememberNames, type NameHint } from "./names"
 
@@ -263,8 +263,43 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
     if (!stageShot) return
     if (stageShot.items.length >= MAX_MARKS) { say(`A Game Shot holds ${MAX_MARKS} marks.`); return }
     const next = Math.max(0, ...stageShot.items.map((x, i) => x.step ?? i + 1)) + 1
-    begin(); applyItems(items => [...items, { ...m, step: next } as Mark]); end(); setSel(m.id)
+    const sz = drafts.current[kindKey(m)]?.size
+    begin(); applyItems(items => [...items, { ...m, ...(sz ? { size: sz } : {}), step: next } as Mark]); end(); setSel(m.id)
     markGuide("mark")
+  }
+  /** sizes picked before placing, by kind (the rest of the style lives in defaults) */
+  const drafts = useRef<Partial<Record<keyof Defaults, { size?: number }>>>({})
+  const [, bumpDraft] = useState(0)
+  /** with a tool picked and nothing selected, the panel shows the settings the next mark gets */
+  const draftMark = ((): Mark | null => {
+    if (selMark || tool === "select" || tool === "calib") return null
+    const key: keyof Defaults = tool === "oval" ? "oval" : (tool as keyof Defaults)
+    const d = (defaults.current as any)[key]
+    if (!d) return null
+    const size = drafts.current[key]?.size ?? 1, base = { id: "draft", size, color: d.color ?? "#ffffff" }
+    switch (tool) {
+      case "tag": return { ...base, kind: "tag", x: 0, y: 0, dx: 0, dy: -100, label: "", ring: d.ring, glow: d.glow, style: d.style } as Mark
+      case "ring": return { ...base, kind: "ring", x: 0, y: 0, r: 0.95, fill: d.fill, double: d.double } as Mark
+      case "tie": return { ...base, kind: "tie", a: [0, 0], b: [1, 1], ra: null, rb: null, dash: d.dash, dist: false } as Mark
+      case "spot": return { ...base, kind: "spot", x: 0, y: 0 } as Mark
+      case "zone": case "oval": return { ...base, kind: "zone", pts: [[0, 0], [1, 0], [1, 1], [0, 1]], opacity: d.opacity, outline: d.outline, label: "", round: tool === "oval" } as Mark
+      case "arrow": return { ...base, kind: "arrow", a: [0, 0], b: [1, 1], c: null, dash: d.dash, head: d.head } as Mark
+      case "line": return { ...base, kind: "arrow", a: [0, 0], b: [1, 1], c: null, dash: d.dash, head: "none" } as Mark
+      case "shadow": return { ...base, kind: "shadow", x: 0, y: 0, bx: 1, by: 1, len: 14, spread: 10 } as Mark
+      case "focus": return { id: "draft", kind: "focus", pts: [[0, 0], [1, 0], [1, 1], [0, 1]], dim: d.dim, color: "#05060a", size: 1 } as Mark
+      case "text": return { ...base, kind: "text", x: 0, y: 0, text: "", box: d.box } as Mark
+      default: return null
+    }
+  })()
+  const setDraft = (patch: Partial<Mark>) => {
+    if (!draftMark) return
+    const key = kindKey(draftMark), d = defaults.current[key] as Record<string, unknown>
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === "size") drafts.current[key] = { ...drafts.current[key], size: v as number }
+      else if (k === "round") continue
+      else if (k in d) d[k] = v
+    }
+    bumpDraft(n => n + 1)
   }
   const kindKey = (m: Mark): keyof Defaults => (m.kind === "arrow" ? (m.head === "none" ? "line" : "arrow") : m.kind === "zone" && m.round ? "oval" : m.kind)
   const setMark = (patch: Partial<Mark>, live?: boolean) => {
@@ -285,7 +320,7 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   useEffect(() => { if (focusReq) { textRef.current?.focus(); textRef.current?.select() } }, [focusReq])
   const pickTool = (t: Tool, quiet = false) => {
     setTool(t)
-    if (t !== "select") setSel(null)
+    if (t !== "select") { setSel(null); if (!rightOpen) setRight(true) }
     if (!quiet && t !== "select" && firstUse("tool-" + t)) say(hintFor(t))
   }
 
@@ -365,7 +400,8 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
   const deleteTicked = async () => {
     const ids = [...ticked]
     setConfirmDel(false)
-    try { await deleteItems(ids.map(id => ({ id })), user.id) } catch { say("Couldn't delete them. Try again."); return }
+    try { await toBin(ids, [], []) } catch { say("Couldn't delete them. Try again."); return }
+    say(`Moved ${ids.length === 1 ? "it" : ids.length} to the Bin. You can bring ${ids.length === 1 ? "it" : "them"} back for 30 days.`)
     setTicked(new Set()); setPicking(false)
     if (row && ids.includes(row.id)) {
       const rest = sibs.filter(s => !ids.includes(s.id))
@@ -694,9 +730,9 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
           <div className="la-edge" role="separator" aria-orientation="vertical" aria-label="Resize the panel" tabIndex={0}
             onPointerDown={e => { e.preventDefault(); edge.current = { x: e.clientX, w: rw } }} onDoubleClick={() => { setRw(300); store.set("la-rw", "300") }}
             onKeyDown={e => { if (e.key === "ArrowLeft") setRw(w => Math.min(440, w + 16)); if (e.key === "ArrowRight") setRw(w => Math.max(260, w - 16)) }} />
-          <div className="la-rhead"><span className="an-cap" style={{ margin: 0 }}>{selMark ? "Mark" : kind === "shot" ? "This shot" : "This moment"}</span>
+          <div className="la-rhead"><span className="an-cap" style={{ margin: 0 }}>{selMark ? "Mark" : draftMark ? "Next mark" : kind === "shot" ? "This shot" : "This moment"}</span>
             <button className="an-x" aria-label="Fold the panel" title="Fold the panel (⌘\)" onClick={() => setRight(false)}><ChevronRight size={15} /></button></div>
-            <Inspector mark={selMark} shot={stageShot} set={setMark} begin={begin} end={end} textRef={textRef} onDuplicate={dup} onDelete={del} onFront={() => restack(true)} onBack={() => restack(false)}
+            <Inspector mark={selMark ?? draftMark} draft={!selMark && !!draftMark} shot={stageShot} set={selMark ? setMark : setDraft} begin={begin} end={end} textRef={textRef} onDuplicate={dup} onDelete={del} onFront={() => restack(true)} onBack={() => restack(false)}
               onDim={v => setDim(v)} where={kind === "shot" ? undefined : "Moment"} teams={teams} onTeams={t => setTeams(t)}
               onOrder={next => { begin(); applyItems(() => next); end() }} onSelect={id => setSel(id)} calibrated={!!fit} extra={momentPanel} />
         </aside>
@@ -710,17 +746,13 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
           {busy && <span style={{ color: "#d7ff3c", fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}><Loader2 size={13} className="an-spin" /> {busy}</span>}
           <span className="la-sp" />
           {picking ? <>
-            <span style={{ fontSize: 12.5, color: "#c9ccd2" }}>{ticked.size} ticked</span>
-            <button className="la-tiny" onClick={() => setTicked(ticked.size === sibs.length ? new Set() : new Set(sibs.map(s => s.id)))}>{ticked.size === sibs.length ? "None" : "All"}</button>
+            <span style={{ fontSize: 12.5, color: "#c9ccd2" }}>{ticked.size ? `${ticked.size} selected` : "Click to select"}</span>
             <span style={{ position: "relative" }}>
               <button className="la-tiny" disabled={!ticked.size} onClick={() => setMoveOpen(o => !o)}><FolderInput size={13} /> Move to…</button>
               {moveOpen && <MoveMenu folders={folders} onPick={moveTicked} onClose={() => setMoveOpen(false)} />}
             </span>
-            {confirmDel ? <>
-              <span style={{ fontSize: 12.5, color: "#ff8fa3" }}>Delete {ticked.size}? This can't be undone.</span>
-              <button className="la-tiny bad" onClick={deleteTicked}>Delete</button><button className="la-tiny" onClick={() => setConfirmDel(false)}>Keep</button>
-            </> : <button className="la-tiny bad" disabled={!ticked.size} onClick={() => setConfirmDel(true)}><Trash2 size={13} /> Delete</button>}
-            <button className="la-tiny" onClick={() => { setPicking(false); setTicked(new Set()); setConfirmDel(false) }}>Done</button>
+            <button className="la-tiny bad" disabled={!ticked.size} onClick={deleteTicked}><Trash2 size={13} /> Delete</button>
+            <button className="la-tiny" onClick={() => { setPicking(false); setTicked(new Set()); setConfirmDel(false) }}>Cancel</button>
           </> : <>
             <span style={{ position: "relative" }}>
               <button className="la-tiny" onClick={() => setMoveOpen(o => !o)} title="Move this to another folder"><FolderInput size={13} /> Move</button>
@@ -736,14 +768,13 @@ export function Suite({ user, itemId, sealFor }: { user: Who; itemId: string; se
             {sibs.map((s, i) => {
               const pic = thumbs[s.id] ?? (s.cover_path ? thumbs[s.cover_path] : undefined)
               return (
-                <button key={s.id} role="listitem" className={`la-tile${s.id === row?.id ? " on" : ""}${overTile === s.id ? " over" : ""}`} style={pic ? { backgroundImage: `url(${pic})` } : undefined}
+                <button key={s.id} role="listitem" className={`la-tile${s.id === row?.id ? " on" : ""}${overTile === s.id ? " over" : ""}${picking && ticked.has(s.id) ? " sel" : ""}`} style={pic ? { backgroundImage: `url(${pic})` } : undefined}
                   draggable={!picking} onDragStart={e => { setDragTile(s.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", s.id) }} onDragEnd={() => { setDragTile(null); setOverTile(null) }}
                   onDragOver={e => { if (dragTile) { e.preventDefault(); setOverTile(s.id) } }} onDrop={e => { if (dragTile) { e.preventDefault(); e.stopPropagation(); setOverTile(null); dropTile(s.id) } }}
                   aria-label={`${s.kind === "video" ? "Game Film" : "Game Shot"} ${i + 1}${s.title || s.head ? `: ${s.title || s.head}` : ""}`} aria-current={s.id === row?.id}
                   onClick={() => { if (picking) setTicked(t => { const n = new Set(t); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n }); else if (s.id !== row?.id) go(`/analysis?item=${s.id}`) }}>
                   <b>{i + 1}</b>
                   {s.kind === "video" && <span className="vid">▶ Game Film</span>}
-                  {picking && <span className={`tick${ticked.has(s.id) ? " on" : ""}`}>{ticked.has(s.id) && <Check size={12} strokeWidth={3} />}</span>}
                 </button>
               )
             })}

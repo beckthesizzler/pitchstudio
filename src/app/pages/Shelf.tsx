@@ -98,7 +98,7 @@ export default function ShelfPage() {
       const [prof, b, a, r, n] = await Promise.all([
         (supabase as any).from("profiles").select("handle, display_name, brand, shelf, card_public").eq("id", u.id).maybeSingle(),
         (supabase as any).from("boards").select(BOARD_CARD_COLS).eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
-        (supabase as any).from("analysis_items").select("id, kind, title, updated_at, cover_path, head:data->notes->>head").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
+        (supabase as any).from("analysis_items").select("id, kind, title, updated_at, cover_path, head:data->notes->>head").is("deleted_at", null).eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
         (supabase as any).from("reports").select("id, title, updated_at, data").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(500),
         (supabase as any).from("notes").select("id, kind, parent_id, title, color, pos, updated_at, first:body->0->>html").eq("user_id", u.id).limit(2000),
       ])

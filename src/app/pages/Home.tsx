@@ -51,7 +51,7 @@ export default function HomePage() {
       const [{ data: prof, error: profErr }, { data: boards }, { data: analyses }, { data: reports }] = await Promise.all([
         supabase.from("profiles").select("display_name, handle, brand").eq("id", u.id).maybeSingle(),
         supabase.from("boards").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
-        (supabase as any).from("analysis_items").select("id, kind, title, updated_at, head:data->notes->>head").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
+        (supabase as any).from("analysis_items").select("id, kind, title, updated_at, head:data->notes->>head").is("deleted_at", null).eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
         supabase.from("reports").select("id, title, updated_at").eq("user_id", u.id).order("updated_at", { ascending: false }).limit(1),
       ])
       if (off) return

@@ -94,8 +94,8 @@ function Layers({ items, sel, onSelect, onOrder }: { items: Mark[]; sel: string 
 
 export type TeamPick = { us: { name: string; color: string }; them: { name: string; color: string } }
 
-export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, onDelete, onFront, onBack, onDim, where, teams, onTeams, onOrder, onSelect, calibrated, extra, fit }: {
-  mark: Mark | null; shot: Shot; set: (patch: Partial<Mark>, live?: boolean) => void; begin: () => void; end: () => void
+export function Inspector({ mark, draft, shot, set, begin, end, textRef, onDuplicate, onDelete, onFront, onBack, onDim, where, teams, onTeams, onOrder, onSelect, calibrated, extra, fit }: {
+  mark: Mark | null; draft?: boolean; shot: Shot; set: (patch: Partial<Mark>, live?: boolean) => void; begin: () => void; end: () => void
   textRef: RefObject<(HTMLInputElement & HTMLTextAreaElement) | null>; onDuplicate: () => void; onDelete: () => void; onFront: () => void; onBack: () => void; onDim: (v: number, live?: boolean) => void
   where?: string
   teams: TeamPick; onTeams: (t: TeamPick) => void
@@ -148,15 +148,15 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
       <div className="an-head">
         <span className="an-ico" aria-hidden="true">{ICONS[kind]}</span>
         <div style={{ minWidth: 0 }}>
-          <p className="an-cap" style={{ margin: 0 }}>{kindName}{where ? ` · ${where}` : ""}</p>
-          <p className="an-big">{big}</p>
+          <p className="an-cap" style={{ margin: 0 }}>{draft ? "Before you place it" : kindName}{where ? ` · ${where}` : ""}</p>
+          <p className="an-big">{draft ? kindName : big}</p>
         </div>
       </div>
       {m.kind === "tag" && row("Style", <TagLooks value={m.style ?? "sig"} color={m.color} name={m.label} set={v => set({ style: v })} />)}
 
-      {m.kind === "tag" && row("Name", <input ref={textRef} id="an-label" className="an-inp" list="la-names" autoComplete="off" value={m.label} maxLength={40} placeholder="RW · Yamal" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
-      {m.kind === "zone" && row("Label", <input ref={textRef} id="an-label" className="an-inp" value={m.label} maxLength={24} placeholder="3v2" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
-      {m.kind === "text" && row("Text", <textarea ref={textRef} id="an-text" className="an-inp" rows={4} value={m.text} maxLength={400} placeholder={"Inside diag is on." + String.fromCharCode(10) + "N6 vacates the lane."} onFocus={begin} onBlur={end} onChange={e => set({ text: e.target.value }, true)} />)}
+      {!draft && m.kind === "tag" && row("Name", <input ref={textRef} id="an-label" className="an-inp" list="la-names" autoComplete="off" value={m.label} maxLength={40} placeholder="RW · Yamal" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
+      {!draft && m.kind === "zone" && row("Label", <input ref={textRef} id="an-label" className="an-inp" value={m.label} maxLength={24} placeholder="3v2" onFocus={begin} onBlur={end} onChange={e => set({ label: e.target.value }, true)} />)}
+      {!draft && m.kind === "text" && row("Text", <textarea ref={textRef} id="an-text" className="an-inp" rows={4} value={m.text} maxLength={400} placeholder={"Inside diag is on." + String.fromCharCode(10) + "N6 vacates the lane."} onFocus={begin} onBlur={end} onChange={e => set({ text: e.target.value }, true)} />)}
 
       {m.kind !== "focus" && row("Colour", <div className="an-cols">
         {colours.map(c => <button key={c} className={`an-sw${m.color === c ? " on" : ""}`} aria-label={`Colour ${c}${c === teams.us.color ? `, ${teams.us.name}` : c === teams.them.color ? `, ${teams.them.name}` : ""}`} title={c === teams.us.color ? teams.us.name : c === teams.them.color ? teams.them.name : undefined} aria-pressed={m.color === c} style={{ background: c }} onClick={() => set({ color: c })} />)}
@@ -176,7 +176,7 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
       {m.kind === "tie" && <>
         {row("Line", <Seg label="Line style" value={m.dash} options={[["solid", "Solid"], ["dash", "Dashed"], ["dot", "Dotted"]]} set={v => set({ dash: v })} />)}
         {slider("Thickness", m.size, 0.4, 2.5, 0.05, v => set({ size: v }, true))}
-        {(m.ra || m.rb) && <p className="an-note">Tied to the players: move them and it follows.</p>}
+        {!draft && (m.ra || m.rb) && <p className="an-note">Tied to the players: move them and it follows.</p>}
       </>}
       {m.kind === "measure" && <>
         {slider("Thickness", m.size, 0.4, 2.5, 0.05, v => set({ size: v }, true))}
@@ -202,19 +202,19 @@ export function Inspector({ mark, shot, set, begin, end, textRef, onDuplicate, o
         {row("Line", <Seg label="Line style" value={m.dash} options={[["solid", "Solid"], ["dash", "Dashed"], ["dot", "Dotted"]]} set={v => set({ dash: v })} />)}
         {row("Heads", <Seg label="Arrow heads" value={m.head} options={[["none", "None"], ["end", "End"], ["both", "Both"]]} set={v => set({ head: v })} />)}
         {slider("Thickness", m.size, 0.3, 2.5, 0.05, v => set({ size: v }, true))}
-        {m.c ? <button className="an-btn" onClick={() => set({ c: null })}>Straighten</button> : <p className="an-note">Drag the diamond in the middle to curve it.</p>}
+        {!draft && (m.c ? <button className="an-btn" onClick={() => set({ c: null })}>Straighten</button> : <p className="an-note">Drag the diamond in the middle to curve it.</p>)}
       </>}
       {m.kind === "text" && <>
         {row("Style", <Seg label="Text style" value={m.box} options={[[true, "Caption box"], [false, "Plain"]]} set={v => set({ box: v })} />)}
         {slider("Size", m.size, 0.5, 2.5, 0.05, v => set({ size: v }, true))}
       </>}
 
-      <div className="an-acts">
+      {draft ? <p className="an-note">Set it up here, then click the picture. Every new one comes out like this.</p> : <div className="an-acts">
         <button className="an-act" onClick={onDuplicate} title="Duplicate (⌘D)"><CopyPlus size={15} /> Duplicate</button>
         <button className="an-act bad" onClick={onDelete} title="Delete (Del)"><Trash2 size={15} /> Delete</button>
         <button className="an-act sm" onClick={onFront} title="Bring to front"><ArrowUpToLine size={15} /> To front</button>
         <button className="an-act sm" onClick={onBack} title="Send to back"><ArrowDownToLine size={15} /> To back</button>
-      </div>
+      </div>}
       {layers}
     </div>
   )

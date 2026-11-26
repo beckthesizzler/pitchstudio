@@ -73,7 +73,7 @@ export async function loadLibrary(userId: string, say: (t: string) => void): Pro
   const db = supabase as any
   const [b, a, n] = await Promise.all([
     db.from("boards").select("id, title, updated_at, players:canvas_data->players, arrows:canvas_data->arrows, zones:canvas_data->customZones, settings:canvas_data->settings").eq("user_id", userId).order("updated_at", { ascending: false }).limit(40),
-    db.from("analysis_items").select("id, title, updated_at, path:data->>path, w:data->w, h:data->h, dim:data->dim, items:data->items, head:data->notes->>head").eq("user_id", userId).eq("kind", "shot").order("updated_at", { ascending: false }).limit(40),
+    db.from("analysis_items").select("id, title, updated_at, path:data->>path, w:data->w, h:data->h, dim:data->dim, items:data->items, head:data->notes->>head").is("deleted_at", null).eq("user_id", userId).eq("kind", "shot").order("updated_at", { ascending: false }).limit(40),
     db.from("notes").select("id, kind, title, color, updated_at, first:body->0->>html").eq("user_id", userId).neq("kind", "tree").order("updated_at", { ascending: false }).limit(40),
   ])
   const out: LibItem[] = []

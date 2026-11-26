@@ -10,7 +10,7 @@ const db = supabase as any
 /** A folder's match: set once, every Game Shot and Game Film in the folder takes the teams, colours and the line above the headline */
 export type Match = { home: string; away: string; homeColor: string; awayColor: string; comp: string; date: string; score: string }
 export const EMPTY_MATCH: Match = { home: "", away: "", homeColor: "#d7ff3c", awayColor: "#ffffff", comp: "", date: "", score: "" }
-export type Folder = { id: string; parent_id: string | null; name: string; x: number | null; y: number | null; created_at: string; match: Match | null; is_public: boolean }
+export type Folder = { id: string; parent_id: string | null; name: string; x: number | null; y: number | null; sort: number | null; created_at: string; match: Match | null; is_public: boolean; deleted_at: string | null }
 export function readMatch(v: any): Match | null {
   if (!v || typeof v !== "object") return null
   const t = (k: string, n: number) => (typeof v[k] === "string" ? v[k].slice(0, n) : "")
@@ -24,16 +24,16 @@ export function matchLine(m: Match | null) {
   const teams = m.home && m.away ? `${m.home} v ${m.away}` : m.home || m.away
   return [teams, m.comp, m.date, m.score].filter(Boolean).join(" · ")
 }
-const FOLDER_COLS = "id, parent_id, name, x, y, created_at, match, is_public"
-const tidyFolder = (f: any): Folder => ({ ...f, match: readMatch(f.match), is_public: !!f.is_public })
+const FOLDER_COLS = "id, parent_id, name, x, y, sort, created_at, match, is_public, deleted_at"
+const tidyFolder = (f: any): Folder => ({ ...f, sort: f.sort ?? null, deleted_at: f.deleted_at ?? null, match: readMatch(f.match), is_public: !!f.is_public })
 /** An item as the Library lists it (no marks: those load when you open it) */
-export type ItemRow = { id: string; folder_id: string | null; kind: "shot" | "video"; title: string; cover_path: string | null; sort: number; created_at: string; updated_at: string; head: string | null }
+export type ItemRow = { id: string; folder_id: string | null; kind: "shot" | "video"; title: string; cover_path: string | null; sort: number; created_at: string; updated_at: string; head: string | null; deleted_at?: string | null }
 export type Teams = { us: { name: string; color: string }; them: { name: string; color: string } }
 export const DEFAULT_TEAMS: Teams = { us: { name: "Us", color: "#d7ff3c" }, them: { name: "Them", color: "#ffffff" } }
 export type ShotData = { path: string | null; w: number; h: number; dim: number; items: Mark[]; notes: Notes; calib: Calib | null; teams: Teams }
 export type VideoData = { video: VideoProject | null; notes: Notes; teams: Teams }
 
-const LIST_COLS = "id, folder_id, kind, title, cover_path, sort, created_at, updated_at, head:data->notes->>head"
+const LIST_COLS = "id, folder_id, kind, title, cover_path, sort, created_at, updated_at, deleted_at, head:data->notes->>head"
 
 const HEX = /^#[0-9a-fA-F]{6}$/
 function readTeams(v: any): Teams {
@@ -69,13 +69,79 @@ export function geoOf(items: Mark[], calib: Calib | null): Record<string, number
 export const shotPayload = (s: ShotData) => ({ v: 2, path: s.path, w: s.w, h: s.h, dim: s.dim, items: s.items, notes: s.notes, calib: s.calib, teams: s.teams, geo: geoOf(s.items, s.calib) })
 export const videoPayload = (v: VideoData) => ({ v: 2, video: v.video ? { ...v.video, moments: v.video.moments.map(m => ({ ...m, geo: geoOf(m.items, m.calib ?? null) })) } : null, notes: v.notes, teams: v.teams })
 
-export async function loadLibrary(userId: string): Promise<{ folders: Folder[]; items: ItemRow[] } | null> {
+export const BIN_DAYS = 30
+export type Library = { folders: Folder[]; items: ItemRow[]; bin: { folders: Folder[]; items: ItemRow[] } }
+/** Everything of one user. What sat in the Bin longer than BIN_DAYS is deleted for good on the way. */
+export async function loadLibrary(userId: string): Promise<Library | null> {
   const [f, i] = await Promise.all([
     db.from("library_folders").select(FOLDER_COLS).eq("user_id", userId).order("created_at"),
-    db.from("analysis_items").select(LIST_COLS).eq("user_id", userId).order("updated_at", { ascending: false }).range(0, 1999),
+    db.from("analysis_items").select(LIST_COLS).eq("user_id", userId).order("updated_at", { ascending: false }).range(0, 2999),
   ])
   if (f.error || i.error) return null
-  return { folders: (f.data ?? []).map(tidyFolder), items: i.data ?? [] }
+  let folders: Folder[] = (f.data ?? []).map(tidyFolder), items: ItemRow[] = i.data ?? []
+  const old = (d?: string | null) => !!d && Date.now() - Date.parse(d) > BIN_DAYS * 864e5
+  const oldF = folders.filter(x => old(x.deleted_at)), oldI = items.filter(x => old(x.deleted_at) || (x.folder_id && oldF.some(o => o.id === x.folder_id)))
+  if (oldF.length || oldI.length) {
+    try { await eraseForGood(userId, oldF.map(x => x.id), oldI) } catch { /* try again next time */ }
+    folders = folders.filter(x => !oldF.includes(x)); items = items.filter(x => !oldI.includes(x))
+  }
+  return { folders: folders.filter(x => !x.deleted_at), items: items.filter(x => !x.deleted_at), bin: { folders: folders.filter(x => x.deleted_at), items: items.filter(x => x.deleted_at) } }
+}
+/** Days until something in the Bin is deleted for good */
+export const daysLeft = (deletedAt: string) => Math.max(0, Math.ceil(BIN_DAYS - (Date.now() - Date.parse(deletedAt)) / 864e5))
+const withKids = (ids: string[], all: Folder[]) => {
+  const out = new Set(ids)
+  let grew = true
+  while (grew) { grew = false; for (const f of all) if (f.parent_id && out.has(f.parent_id) && !out.has(f.id)) { out.add(f.id); grew = true } }
+  return [...out]
+}
+/** To the Bin: these items, and these folders with every folder and item inside them. One time stamp, so they come back together. */
+export async function toBin(itemIds: string[], folderIds: string[], all: Folder[]) {
+  const at = new Date().toISOString(), fids = withKids(folderIds, all)
+  if (fids.length) {
+    const { error: e1 } = await db.from("analysis_items").update({ deleted_at: at }).in("folder_id", fids).is("deleted_at", null)
+    if (e1) throw e1
+    const { error: e2 } = await db.from("library_folders").update({ deleted_at: at, is_public: false }).in("id", fids)
+    if (e2) throw e2
+  }
+  if (itemIds.length) {
+    const { error } = await db.from("analysis_items").update({ deleted_at: at }).in("id", itemIds)
+    if (error) throw error
+  }
+}
+/** Back from the Bin. A folder brings back what was binned with it. Anything whose folder is gone lands in Unsorted, top level. */
+export async function fromBin(itemIds: string[], folderIds: string[], all: Folder[], binItems: ItemRow[]) {
+  const live = new Set(all.filter(f => !f.deleted_at).map(f => f.id))
+  for (const id of folderIds) {
+    const f = all.find(x => x.id === id)
+    if (!f?.deleted_at) continue
+    const fids = withKids([id], all).filter(k => all.find(x => x.id === k)?.deleted_at === f.deleted_at)
+    const { error: e1 } = await db.from("library_folders").update({ deleted_at: null }).in("id", fids)
+    if (e1) throw e1
+    if (f.parent_id && !live.has(f.parent_id)) await db.from("library_folders").update({ parent_id: null }).eq("id", id)
+    const { error: e2 } = await db.from("analysis_items").update({ deleted_at: null }).in("folder_id", fids).eq("deleted_at", f.deleted_at)
+    if (e2) throw e2
+    fids.forEach(k => live.add(k))
+  }
+  for (const id of itemIds) {
+    const it = binItems.find(x => x.id === id)
+    const { error } = await db.from("analysis_items").update({ deleted_at: null, ...(it?.folder_id && !live.has(it.folder_id) ? { folder_id: null } : {}) }).eq("id", id)
+    if (error) throw error
+  }
+}
+/** Deleted for good: the items (and their pictures) and the folders with everything inside them */
+export async function eraseForGood(userId: string, folderIds: string[], items: { id: string }[], all: Folder[] = []) {
+  const fids = withKids(folderIds, all)
+  let rows = [...items]
+  if (fids.length) {
+    const { data } = await db.from("analysis_items").select("id").in("folder_id", fids)
+    rows = [...rows, ...(data ?? [])]
+  }
+  if (rows.length) await deleteItems([...new Map(rows.map(r => [r.id, r])).values()], userId)
+  if (fids.length) {
+    const { error } = await db.from("library_folders").delete().in("id", fids)
+    if (error) throw error
+  }
 }
 export async function loadItem(id: string, userId: string) {
   const { data, error } = await db.from("analysis_items").select("id, folder_id, kind, title, data, cover_path, sort, created_at, updated_at").eq("id", id).eq("user_id", userId).maybeSingle()
@@ -83,7 +149,7 @@ export async function loadItem(id: string, userId: string) {
   return data as (ItemRow & { data: any }) | null
 }
 export async function folderItems(userId: string, folderId: string | null): Promise<ItemRow[]> {
-  let q = db.from("analysis_items").select(LIST_COLS).eq("user_id", userId)
+  let q = db.from("analysis_items").select(LIST_COLS).eq("user_id", userId).is("deleted_at", null)
   q = folderId ? q.eq("folder_id", folderId) : q.is("folder_id", null)
   const { data, error } = await q.order("sort").order("created_at")
   if (error) throw error
@@ -140,7 +206,7 @@ export async function createFolder(userId: string, name: string, parent: string 
   if (error) throw error
   return tidyFolder(data)
 }
-export async function updateFolder(id: string, patch: Partial<Pick<Folder, "name" | "x" | "y" | "parent_id" | "match" | "is_public">> & { share?: object | null }) {
+export async function updateFolder(id: string, patch: Partial<Pick<Folder, "name" | "x" | "y" | "sort" | "parent_id" | "match" | "is_public">> & { share?: object | null }) {
   const { error } = await db.from("library_folders").update(patch).eq("id", id)
   if (error) throw error
 }
@@ -184,7 +250,7 @@ export function withMatch<T extends object>(d: T, m: Match | null): T {
   return { ...d, teams: { us: { name: (m.home || "Us").slice(0, 20), color: m.homeColor }, them: { name: (m.away || "Them").slice(0, 20), color: m.awayColor } }, notes: { kicker: matchLine(m), head: "", body: "", show: true } }
 }
 export async function loadFolders(userId: string): Promise<Folder[]> {
-  const { data, error } = await db.from("library_folders").select(FOLDER_COLS).eq("user_id", userId).order("created_at")
+  const { data, error } = await db.from("library_folders").select(FOLDER_COLS).eq("user_id", userId).is("deleted_at", null).order("created_at")
   if (error) throw error
   return (data ?? []).map(tidyFolder)
 }

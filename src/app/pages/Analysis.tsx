@@ -17,7 +17,7 @@ export default function AnalysisPage() {
   const navigate = useNavigate()
   const loc = useLocation()
   const qs = new URLSearchParams(loc.search)
-  const item = qs.get("item") ?? qs.get("open"), folder = qs.get("folder"), view = folder ? "folder" : qs.get("view") === "library" ? "library" : "new"
+  const item = qs.get("item") ?? qs.get("open"), folder = qs.get("folder"), view = folder ? "folder" : qs.get("view") === "library" ? "library" : qs.get("view") === "bin" ? "bin" : "new"
   const [user, setUser] = useState<Who | null>(null)
   const [brand, setBrand] = useState<Brand>(DEFAULT_BRAND)
   const [handle, setHandle] = useState("")

@@ -447,7 +447,8 @@ function WallPage({ wallId }: { wallId: string }) {
   const loadPieces = async () => {
     if (pieces || !user) return
     const ask = async (table: string, kind: PieceKind, k: string) => {
-      const { data } = await (supabase as any).from(table).select("id, title, updated_at").eq("user_id", user.id).order("updated_at", { ascending: false }).limit(20)
+      const sel = (supabase as any).from(table).select("id, title, updated_at")
+      const { data } = await (table === "analysis_items" ? sel.is("deleted_at", null) : sel).eq("user_id", user.id).order("updated_at", { ascending: false }).limit(20)
       return ((data ?? []) as any[]).map(x => ({ ref: `${k}:${x.id}`, kind, title: listName(kind, x.title, x.updated_at), updated: String(x.updated_at ?? "") }))
     }
     const lists = await Promise.all([ask("boards", "Board", "board"), ask("reports", "Report", "report"), ask("analysis_items", "Analysis", "analysis")])

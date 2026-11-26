@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router"
 import { BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Clapperboard, Copy, FolderInput, FolderPlus, ImagePlus, LayoutGrid, Library as LibraryIcon, Link2, List as ListIcon, Loader2, MoreHorizontal, Pencil, Play, Plus, Search, Stars, Trash2, X, ZoomIn } from "lucide-react"
 import { Mark as PSMark } from "../brand/Mark"
-import { applyMatch, withMatch, createFolder, createItem, deleteFolder, deleteItems, duplicateItem, itemPicPath, loadLibrary, matchLine, moveItems, reorder, saveItem, signed, updateFolder, uploadPic, type Folder, type ItemRow, type Match } from "./items"
+import { applyMatch, withMatch, createFolder, createItem, daysLeft, eraseForGood, fromBin, toBin, BIN_DAYS, duplicateItem, itemPicPath, loadLibrary, matchLine, moveItems, reorder, saveItem, signed, updateFolder, uploadPic, type Folder, type ItemRow, type Match } from "./items"
 import { prepareShot, newId } from "./model"
 import { keepVideo, probeVideo, videoKey, videoProblem } from "./videoStore"
 import { pendingFiles, type Who } from "./Suite"
@@ -20,7 +20,7 @@ import { DS_BORDER, DS_BORDER_STRONG, SURFACE_1, TEXT_MUTED, TEXT_PRIMARY } from
    Your Library ("?view=library"): every folder on a wall (or in a list), zoomable; drag any Game Shot or Game Film
    onto any folder. A folder ("?folder=ID") is one analysis: its match, its order, a thread of it, its share link. */
 
-export type HomeView = "new" | "library" | "folder"
+export type HomeView = "new" | "library" | "folder" | "bin"
 const plain = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
 const ago = (iso: string) => {
   const s = (Date.now() - new Date(iso).getTime()) / 1000
@@ -47,15 +47,16 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
   const [items, setItems] = useState<ItemRow[] | null>(null)
   const [loadErr, setLoadErr] = useState(false)
   const [urls, setUrls] = useState<Record<string, string>>({})
-  const [mode, setModeS] = useState<"wall" | "list">(() => (store.get("la-view") === "list" ? "list" : "wall"))
+  const [bin, setBin] = useState<{ folders: Folder[]; items: ItemRow[] }>({ folders: [], items: [] })
   const [zoom, setZoomS] = useState(() => Math.min(1.2, Math.max(0.5, Number(store.get("la-zoom")) || 1)))
-  const [guideHidden, setGuideHidden] = useState(() => store.get("la-guide-hidden") === "1")
+  const [guideHidden, setGuideHidden] = useState(false) // the guide is back on every visit; Hide is for this visit only
   const [railAll, setRailAll] = useState(false)
   const [exOpen, setExOpen] = useState(false)
   const [q, setQ] = useState("")
   const [picking, setPicking] = useState(false)
   const [ticked, setTicked] = useState<Set<string>>(new Set())
-  const [confirm, setConfirm] = useState<null | { items?: string[]; folder?: string }>(null)
+  const [tickedF, setTickedF] = useState<Set<string>>(new Set())
+  const [confirm, setConfirm] = useState<null | { items: string[]; folders: string[] }>(null)
   const [moveOpen, setMoveOpen] = useState(false)
   const [newOpen, setNewOpen] = useState(false)
   const [naming, setNaming] = useState<{ id: string | null; parent: string | null; name: string } | null>(null)
@@ -64,34 +65,40 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
   const [busy, setBusy] = useState("")
   const [toast, setToast] = useState("")
   const [fileOver, setFileOver] = useState(false)
-  const [stackDrag, setStackDrag] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [stackDrag, setStackDrag] = useState<{ id: string; x: number; y: number; to: number } | null>(null)
   const stackRef = useRef<{ id: string; sx: number; sy: number; x: number; y: number; moved: boolean } | null>(null)
   const wallRef = useRef<HTMLDivElement>(null)
   const [wallW, setWallW] = useState(1000)
   const fileRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const depth = useRef(0)
+  const [, setTick] = useState(0)
+  /** background look: try one with ?bg=flood, ?bg=chalk, ?bg=flood+chalk or ?bg=mown (remembered), ?bg=off to go back */
+  const bgLook = useMemo(() => {
+    const q = new URLSearchParams(window.location.search).get("bg")
+    if (q != null) store.set("la-bg", q === "off" ? "" : q.replace(/[^a-z ]/g, " ").trim())
+    return store.get("la-bg") || undefined
+  }, [])
   const done = guideDone()
   const say = (t: string) => setToast(t)
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 3800); return () => clearTimeout(t) }, [toast])
-  const setMode = (v: "wall" | "list") => { setModeS(v); store.set("la-view", v) }
   const setZoom = (z: number) => { const v = Math.round(Math.min(1.2, Math.max(0.5, z)) * 100) / 100; setZoomS(v); store.set("la-zoom", String(v)) }
-  const hideGuide = (h: boolean) => { setGuideHidden(h); store.set("la-guide-hidden", h ? "1" : "0") }
+  const hideGuide = (h: boolean) => setGuideHidden(h)
 
   const load = async () => {
     const r = await loadLibrary(user.id)
     if (!r) { setLoadErr(true); return }
-    setLoadErr(false); setFolders(r.folders); setItems(r.items)
-    setUrls(await signed(r.items.map(i => i.cover_path).filter(Boolean) as string[]))
+    setLoadErr(false); setFolders(r.folders); setItems(r.items); setBin(r.bin)
+    setUrls(await signed([...r.items, ...r.bin.items].map(i => i.cover_path).filter(Boolean) as string[]))
   }
   useEffect(() => { load() }, [user.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setPicking(false); setTicked(new Set()); setMoveOpen(false); setMenu(null); setTool(null); setNewOpen(false) }, [view, folderParam])
+  useEffect(() => { setPicking(false); setTicked(new Set()); setTickedF(new Set()); setMoveOpen(false); setMenu(null); setTool(null); setNewOpen(false) }, [view, folderParam])
   useEffect(() => {
     const el = wallRef.current
     if (!el) return
     const ro = new ResizeObserver(() => setWallW(el.clientWidth)); ro.observe(el)
     return () => ro.disconnect()
-  }, [view, mode, items === null]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, items === null]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const byFolder = useMemo(() => {
     const m = new Map<string | null, ItemRow[]>()
@@ -100,7 +107,8 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
     return m
   }, [items])
   const inFolder = (id: string | null) => byFolder.get(id) ?? []
-  const top = folders.filter(f => !f.parent_id)
+  /** folders on the wall, in the order they were put in (new ones at the end) */
+  const top = useMemo(() => folders.filter(f => !f.parent_id).map((f, i) => ({ f, k: f.sort ?? (f.y != null && f.x != null ? 1e6 + f.y * 10 + f.x / 100 : 2e6 + i) })).sort((a, b) => a.k - b.k).map(x => x.f), [folders])
   const cover = (i?: ItemRow) => (i?.cover_path ? urls[i.cover_path] : undefined)
   const curFolder = view === "folder" && folderParam && folderParam !== "unsorted" ? folders.find(f => f.id === folderParam) ?? null : null
   const unsortedPage = view === "folder" && folderParam === "unsorted"
@@ -153,39 +161,49 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
   const dragIds = (id: string) => () => (ticked.has(id) ? [...ticked] : [id])
   const isOver = (id: string) => !!dragging && over?.folder === id
 
-  /* ── the wall ── */
+  /* ── the wall: always in neat rows; dragging a folder moves it to another place in the rows ── */
   const cols = Math.max(1, Math.floor((wallW / zoom - 20) / (STACK_W + 40)))
-  const spot = (f: Folder, i: number) => (f.x != null && f.y != null ? { x: f.x, y: f.y } : { x: 24 + (i % cols) * (STACK_W + 40), y: 26 + Math.floor(i / cols) * (STACK_H + 34) })
-  const wallH = Math.max(380, ...top.map((f, i) => spot(f, i).y + STACK_H + 40))
-  const onStackDown = (e: React.PointerEvent, f: Folder, i: number) => {
+  const slot = (k: number) => ({ x: 24 + (k % cols) * (STACK_W + 40), y: 26 + Math.floor(k / cols) * (STACK_H + 34) })
+  const slotAt = (x: number, y: number) => Math.max(0, Math.min(top.length - 1, Math.round((y - 26) / (STACK_H + 34)) * cols + Math.max(0, Math.min(cols - 1, Math.round((x - 24) / (STACK_W + 40))))))
+  /** where each folder sits now: while one is dragged, the others make room for it */
+  const order = useMemo(() => {
+    const ids = top.map(f => f.id)
+    if (!stackDrag) return ids
+    const rest = ids.filter(id => id !== stackDrag.id)
+    rest.splice(stackDrag.to, 0, stackDrag.id)
+    return rest
+  }, [top, stackDrag])
+  const spot = (f: Folder) => slot(Math.max(0, order.indexOf(f.id)))
+  const wallH = Math.max(380, slot(Math.max(0, top.length - 1)).y + STACK_H + 40)
+  const tickF = (id: string) => setTickedF(t => { const n = new Set(t); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const onStackDown = (e: React.PointerEvent, f: Folder) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return
-    const p = spot(f, i)
+    const p = spot(f)
     stackRef.current = { id: f.id, sx: e.clientX, sy: e.clientY, x: p.x, y: p.y, moved: false }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
   const onStackMove = (e: React.PointerEvent) => {
     const d = stackRef.current
-    if (!d) return
+    if (!d || picking) return
     const dx = (e.clientX - d.sx) / zoom, dy = (e.clientY - d.sy) / zoom
     if (!d.moved && Math.hypot(dx, dy) < 5) return
     d.moved = true
-    setStackDrag({ id: d.id, x: Math.max(0, Math.min(wallW / zoom - STACK_W, d.x + dx)), y: Math.max(0, d.y + dy) })
+    const x = Math.max(0, Math.min(wallW / zoom - STACK_W, d.x + dx)), y = Math.max(0, d.y + dy)
+    setStackDrag({ id: d.id, x, y, to: slotAt(x, y) })
   }
   const onStackUp = () => {
     const d = stackRef.current
     stackRef.current = null
     if (!d) return
-    if (!d.moved) { navigate(`/analysis?folder=${d.id}`); return }
+    if (!d.moved) { if (picking) tickF(d.id); else navigate(`/analysis?folder=${d.id}`); return }
     const p = stackDrag
     setStackDrag(null)
     if (!p) return
-    setFolders(fs => fs.map(f => (f.id === d.id ? { ...f, x: p.x, y: p.y } : f)))
-    updateFolder(d.id, { x: p.x, y: p.y }).catch(() => say("Couldn't keep it there. Check your connection."))
-  }
-  const lineUp = async () => {
-    const next = top.map((f, i) => ({ id: f.id, x: 24 + (i % cols) * (STACK_W + 40), y: 26 + Math.floor(i / cols) * (STACK_H + 34) }))
-    setFolders(fs => fs.map(f => { const n = next.find(x => x.id === f.id); return n ? { ...f, x: n.x, y: n.y } : f }))
-    await Promise.all(next.map(f => updateFolder(f.id, { x: f.x, y: f.y }))).catch(() => say("Couldn't keep the new places."))
+    const ids = top.map(f => f.id).filter(id => id !== p.id)
+    ids.splice(p.to, 0, p.id)
+    const changed = ids.filter((id, k) => folders.find(f => f.id === id)?.sort !== k)
+    setFolders(fs => fs.map(f => (ids.includes(f.id) ? { ...f, sort: ids.indexOf(f.id) } : f)))
+    Promise.all(changed.map(id => updateFolder(id, { sort: ids.indexOf(id) }))).catch(() => say("Couldn't keep the new order. Check your connection."))
   }
 
   /* ── adding ── */
@@ -230,8 +248,8 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
     const key = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest?.("input, textarea")
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); if (view !== "library") navigate("/analysis?view=library"); setTimeout(() => searchRef.current?.focus(), 60) }
-      if (view === "library" && mode === "wall" && !typing && (e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+" || e.key === "-")) { e.preventDefault(); setZoom(zoom + (e.key === "-" ? -0.1 : 0.1)) }
-      if (e.key === "Escape") { if (tool) setTool(null); else if (confirm) setConfirm(null); else if (naming) setNaming(null); else if (picking) { setPicking(false); setTicked(new Set()) } else if (q) setQ("") }
+      if (view === "library" && !typing && (e.metaKey || e.ctrlKey) && (e.key === "=" || e.key === "+" || e.key === "-")) { e.preventDefault(); setZoom(zoom + (e.key === "-" ? -0.1 : 0.1)) }
+      if (e.key === "Escape") { if (tool) setTool(null); else if (confirm) setConfirm(null); else if (naming) setNaming(null); else if (picking) { setPicking(false); setTicked(new Set()); setTickedF(new Set()) } else if (q) setQ("") }
     }
     window.addEventListener("paste", paste); window.addEventListener("keydown", key)
     return () => { window.removeEventListener("paste", paste); window.removeEventListener("keydown", key) }
@@ -248,14 +266,27 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
       else { const f = await createFolder(user.id, name, naming.parent); setFolders(fs => [...fs, f]); say(naming.parent ? `${name} is inside.` : `${name} is in Your Library. Drag Game Shots onto it.`) }
     } catch { say("Couldn't save the folder. Try again.") }
   }
-  const doDelete = async () => {
+  /** to the Bin: nothing is erased for BIN_DAYS days */
+  const binIt = async (itemIds: string[], folderIds: string[]) => {
+    if (!itemIds.length && !folderIds.length) return
+    try { await toBin(itemIds, folderIds, folders) } catch { say("Couldn't delete. Try again."); return }
+    setTicked(new Set()); setTickedF(new Set()); setPicking(false)
+    if (folderParam && (folderIds.includes(folderParam) || folderIds.includes(folders.find(f => f.id === folderParam)?.parent_id ?? ""))) navigate("/analysis?view=library")
+    await load()
+    const n = itemIds.length + folderIds.length
+    say(`${n === 1 ? (folderIds.length ? "Folder" : "It") : n} moved to the Bin. You can bring ${n === 1 ? "it" : "them"} back for ${BIN_DAYS} days.`)
+  }
+  const restore = async (itemIds: string[], folderIds: string[]) => {
+    try { await fromBin(itemIds, folderIds, [...folders, ...bin.folders], bin.items) } catch { say("Couldn't bring it back. Try again."); return }
+    await load(); say("Back where it was.")
+  }
+  /** for good, only from the Bin, after asking */
+  const doErase = async () => {
     const c = confirm
     setConfirm(null)
     if (!c) return
-    try {
-      if (c.items) { await deleteItems(c.items.map(id => ({ id })), user.id); setItems(list => (list ?? []).filter(i => !c.items!.includes(i.id))); setTicked(new Set()); setPicking(false); say(`Deleted ${c.items.length === 1 ? "it" : c.items.length}.`) }
-      if (c.folder) { await deleteFolder(c.folder, folders); if (folderParam === c.folder) navigate("/analysis?view=library"); await load(); say("Folder deleted. What was in it is in Unsorted.") }
-    } catch { say("Couldn't delete. Try again.") }
+    try { await eraseForGood(user.id, c.folders, c.items.map(id => ({ id })), [...folders, ...bin.folders]) } catch { say("Couldn't delete. Try again."); return }
+    await load(); say("Deleted for good.")
   }
   const dup = async (id: string) => {
     try { const r = await duplicateItem(user.id, id); setItems(list => [r, ...(list ?? [])]); if (r.cover_path) { const u = await signed([r.cover_path]); setUrls(x => ({ ...x, ...u })) } say("Duplicated.") }
@@ -293,7 +324,6 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
           {!pic && (i.kind === "video" ? <Clapperboard size={22} /> : <ImagePlus size={22} />)}
           {order != null && <span className="lh-no">{order}</span>}
           {i.kind === "video" && <span className="lh-vid"><Play size={10} fill="currentColor" /> Game Film</span>}
-          {picking && <span className={`lh-tick${on ? " on" : ""}`}>{on && <Check size={13} strokeWidth={3} />}</span>}
         </button>
         <div className="lh-meta">
           <b title={nameOf(i)}>{nameOf(i)}</b>
@@ -301,7 +331,7 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
         </div>
         {!picking && <div className="lh-acts" data-nodrag="1">
           <button className="an-x" aria-label="Duplicate" title="Duplicate" onClick={() => dup(i.id)}><Copy size={13} /></button>
-          <button className="an-x" aria-label="Delete" title="Delete" onClick={() => setConfirm({ items: [i.id] })}><Trash2 size={13} /></button>
+          <button className="an-x" aria-label="Delete" title="Move to the Bin" onClick={() => binIt([i.id], [])}><Trash2 size={13} /></button>
         </div>}
       </div>
     )
@@ -312,7 +342,6 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
       onClick={() => { if (picking) tick(i.id); else navigate(`/analysis?item=${i.id}`) }}>
       {!cover(i) && (i.kind === "video" ? <Clapperboard size={16} /> : <ImagePlus size={16} />)}
       {i.kind === "video" && cover(i) && <span className="lh-vid" style={{ right: 4, bottom: 4 }}><Play size={9} fill="currentColor" /></span>}
-      {picking && <span className={`lh-tick${ticked.has(i.id) ? " on" : ""}`} style={{ right: 4, top: 4, width: 18, height: 18 }}>{ticked.has(i.id) && <Check size={11} strokeWidth={3} />}</span>}
     </button>
   )
 
@@ -328,6 +357,7 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
       {railFolders.length > RAIL_SHOW && <button className="lh-more" onClick={() => setRailAll(a => !a)}>{railAll ? <>Show less <ChevronDown size={13} style={{ transform: "rotate(180deg)" }} /></> : <>Show {railFolders.length - RAIL_SHOW} more <ChevronDown size={13} /></>}</button>}
       <button className={`la-fi${unsortedPage ? " on" : ""}${isOver("unsorted") ? " drop" : ""}`} data-drop="unsorted" onClick={() => navigate("/analysis?folder=unsorted")}><Glyph dashed /> <span className="nm">Unsorted</span><em>{inFolder(null).length}</em></button>
       {!top.length && <button className="la-fi" style={{ color: TEXT_MUTED }} onClick={() => setNaming({ id: null, parent: null, name: "" })}><FolderPlus size={15} /> New folder</button>}
+      <button className={`la-fi${view === "bin" ? " on" : ""}`} onClick={() => navigate("/analysis?view=bin")}><Trash2 size={15} /> <span className="nm">Bin</span><em>{bin.folders.filter(f => !bin.folders.some(p => p.id === f.parent_id)).length + bin.items.filter(i => !bin.folders.some(f => f.id === i.folder_id)).length || ""}</em></button>
       <h4 style={{ cursor: "pointer" }} onClick={() => setExOpen(o => !o)} role="button" aria-expanded={exOpen}>Examples <ChevronRight size={14} style={{ transform: exOpen ? "rotate(90deg)" : undefined, transition: "transform .15s" }} /></h4>
       {exOpen && EXAMPLES.map((x, k) => (
         <button key={x.key} className="la-fi" title="Copies it into an Examples folder for you to change" onClick={() => takeApart(k)}>
@@ -336,22 +366,21 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
     </aside>
   )
 
-  const bulkBar = (list: ItemRow[]) => !picking ? null : (
+  const nSel = ticked.size + tickedF.size
+  const bulkBar = () => !picking ? null : (
     <div className="lh-bulk">
-      <b>{ticked.size} ticked</b>
-      <button className="la-tiny" onClick={() => setTicked(ticked.size === list.length ? new Set() : new Set(list.map(s => s.id)))}>{ticked.size === list.length ? "None" : "All"}</button>
-      <span style={{ position: "relative" }}>
-        <button className="la-tiny" disabled={!ticked.size} onClick={() => setMoveOpen(o => !o)}><FolderInput size={13} /> Move to…</button>
+      <b>{nSel ? `${nSel} selected` : "Click what you want to select"}</b>
+      {nSel > 0 && !tickedF.size && <span style={{ position: "relative" }}>
+        <button className="la-tiny" onClick={() => setMoveOpen(o => !o)}><FolderInput size={13} /> Move to…</button>
         {moveOpen && <div className="la-pop" style={{ top: 32, left: 0, maxHeight: 320, overflowY: "auto" }}>
           {top.flatMap(f => [f, ...folders.filter(c => c.parent_id === f.id)]).map(f => <button key={f.id} style={f.parent_id ? { paddingLeft: 26 } : undefined} onClick={() => moveTo([...ticked], f.id)}><Glyph /> {f.name}</button>)}
           <button onClick={() => moveTo([...ticked], null)}><Glyph dashed /> Unsorted</button>
         </div>}
-      </span>
-      <button className="la-tiny bad" disabled={!ticked.size} onClick={() => setConfirm({ items: [...ticked] })}><Trash2 size={13} /> Delete</button>
-      <span className="la-sp" /><span style={{ color: TEXT_MUTED, fontSize: 12 }}>Tick, press Done, then drag any ticked one: they all go</span>
+      </span>}
+      {nSel > 0 && <button className="la-tiny bad" onClick={() => binIt([...ticked], [...tickedF])}><Trash2 size={13} /> Delete</button>}
     </div>
   )
-  const selectBtn = (list: ItemRow[]) => list.length ? <button className={`an-btn${picking ? " pri" : ""}`} onClick={() => { setPicking(p => !p); if (picking) setMoveOpen(false) }}>{picking ? "Done" : "Select"}</button> : null
+  const selectBtn = (show: boolean) => show || picking ? <button className={`an-btn${picking ? " pri" : ""}`} onClick={() => { setPicking(p => !p); setTicked(new Set()); setTickedF(new Set()); setMoveOpen(false) }}>{picking ? "Cancel" : "Select"}</button> : null
 
   /* ── the pages ── */
   const newPage = () => (
@@ -359,7 +388,7 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
       <main className="lh-welcome">
         <div className="lh-k">Live Analysis</div>
         <h1 className="lh-h1">Show what the broadcast missed.</h1>
-        <p className="lh-lede">Bring in a still or a clip from the match, pin it to the pitch, mark the shape and render it with your name on it.</p>
+        <p className="lh-lede">Bring in a still or a clip from the match, mark the shape and render it with your name on it.</p>
         <div className="lh-drop" onClick={() => fileRef.current?.click()} role="button" tabIndex={0} onKeyDown={e => { if (e.key === "Enter") fileRef.current?.click() }}>
           <b>Drop a screenshot or a clip</b>
           <span>PNG, JPG or WebP · MP4, MOV or WebM up to 10 min · or paste with <kbd>⌘V</kbd></span>
@@ -378,25 +407,25 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
       </main>
       {!guideHidden && (
         <aside className="lh-guide" aria-label="Your first breakdown">
-          <div style={{ display: "flex", alignItems: "center" }}><div className="lh-k" style={{ margin: 0 }}>Your first breakdown · 3 min</div><span className="la-sp" /><button className="la-tiny" onClick={() => hideGuide(true)} aria-label="Hide the guide"><X size={13} /> Hide</button></div>
-          <h2>Five steps to your first post</h2>
+          <div style={{ display: "flex", alignItems: "center" }}><div className="lh-k" style={{ margin: 0 }}>Your first breakdown</div><span className="la-sp" /><button className="la-tiny" onClick={() => hideGuide(true)} aria-label="Hide the guide"><X size={13} /> Hide</button></div>
+          <h2>{["", "One", "Two", "Three", "Four", "Five", "Six"][GUIDE.length]} steps to your first post</h2>
           <p>Each one ticks off as you do it.</p>
           <ol>{GUIDE.map((g, i) => { const d = done.has(g.id), now = !d && GUIDE.findIndex(x => !done.has(x.id)) === i; return (
             <li key={g.id} className={d ? "done" : now ? "now" : ""}><i>{d ? <Check size={13} strokeWidth={3} /> : i + 1}</i><div><b>{g.title}</b><span>{g.sub}</span></div></li>
           ) })}</ol>
           <video className="lh-film" src="/examples/man-for-man.mp4" muted loop playsInline autoPlay poster="/examples/man-for-man.jpg" aria-label="What a finished Game Film looks like" />
-          <button className="la-tiny" style={{ marginTop: 10 }} onClick={() => { skipGuide(); hideGuide(true); say("Guide off. Press ? in the editor for every key.") }}>I know my way around</button>
+          <button className="la-tiny" style={{ marginTop: 10 }} onClick={() => { skipGuide(); setTick(t => t + 1); say("All ticked. Press ? in the editor for every key.") }}>I know my way around</button>
         </aside>
       )}
     </div>
   )
 
   const stack = (f: Folder, i: number) => {
-    const p = stackDrag?.id === f.id ? stackDrag : spot(f, i)
+    const p = stackDrag?.id === f.id ? stackDrag : spot(f)
     const kids = inFolder(f.id).slice(0, 3), sub = folders.filter(c => c.parent_id === f.id).length
     return (
-      <div key={f.id} className={`lh-stack${isOver(f.id) ? " drop" : ""}${stackDrag?.id === f.id ? " lift" : ""}`} data-drop={f.id} style={{ left: p.x, top: p.y }}
-        onPointerDown={e => onStackDown(e, f, i)} onPointerMove={onStackMove} onPointerUp={onStackUp}
+      <div key={f.id} className={`lh-stack${isOver(f.id) ? " drop" : ""}${stackDrag?.id === f.id ? " lift" : ""}${tickedF.has(f.id) ? " on" : ""}${picking ? " picking" : ""}`} data-drop={f.id} style={{ left: p.x, top: p.y }}
+        onPointerDown={e => onStackDown(e, f)} onPointerMove={onStackMove} onPointerUp={onStackUp}
         role="button" tabIndex={0} aria-label={`${f.name}, ${tally(inFolder(f.id))}. Open`} onKeyDown={e => { if (e.key === "Enter") navigate(`/analysis?folder=${f.id}`) }}>
         <div className="pile">
           {(kids.length ? kids : [undefined]).map((it, j, arr) => (
@@ -411,30 +440,28 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
         {menu === f.id && <div className="la-pop" style={{ top: 176, left: 10 }} onPointerDown={e => e.stopPropagation()} onPointerLeave={() => setMenu(null)}>
           <button onClick={() => { setMenu(null); navigate(`/analysis?folder=${f.id}`) }}>Open</button>
           <button onClick={() => { setMenu(null); setNaming({ id: f.id, parent: null, name: f.name }) }}><Pencil size={14} /> Rename</button>
-          <button onClick={() => { setMenu(null); setConfirm({ folder: f.id }) }} style={{ color: "#ff8fa3" }}><Trash2 size={14} /> Delete folder</button>
+          <button onClick={() => { setMenu(null); binIt([], [f.id]) }} style={{ color: "#ff8fa3" }}><Trash2 size={14} /> Delete folder</button>
         </div>}
       </div>
     )
   }
 
   const libraryPage = () => {
-    const pickList = qn ? found : mode === "list" ? items ?? [] : inFolder(null)
     return (
       <main className="lh-main">
         <div className="lh-bar">
           <h2>Your Library</h2><span className="lh-count">{tally(items ?? [])} · {folders.length} {folders.length === 1 ? "folder" : "folders"}</span>
           <span className="la-sp" />
-          <label className="lh-search"><Search size={15} /><input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Search Game Shots, players, notes…" aria-label="Search" />{q ? <button className="an-x" aria-label="Clear the search" onClick={() => setQ("")}><X size={13} /></button> : <kbd>⌘K</kbd>}</label>
-          {!qn && <div className="la-seg" role="group" aria-label="View"><button className={mode === "wall" ? "on" : ""} onClick={() => setMode("wall")}><LayoutGrid size={14} /> Wall</button><button className={mode === "list" ? "on" : ""} onClick={() => setMode("list")}><ListIcon size={14} /> List</button></div>}
-          {!qn && mode === "wall" && <label className="lh-zoom" title="Zoom (⌘+ and ⌘−)"><ZoomIn size={14} /><input type="range" min={0.5} max={1.2} step={0.05} value={zoom} onChange={e => setZoom(Number(e.target.value))} aria-label="Zoom the wall" /><span>{Math.round(zoom * 100)}%</span></label>}
-          {selectBtn(pickList)}
+          <label className="lh-search"><Search size={15} /><input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Search" aria-label="Search" />{q ? <button className="an-x" aria-label="Clear the search" onClick={() => setQ("")}><X size={13} /></button> : <kbd>⌘K</kbd>}</label>
+          {!qn && <label className="lh-zoom" title="Zoom (⌘+ and ⌘−)"><ZoomIn size={14} /><input type="range" min={0.5} max={1.2} step={0.05} value={zoom} onChange={e => setZoom(Number(e.target.value))} aria-label="Zoom the wall" /><span>{Math.round(zoom * 100)}%</span></label>}
+          {selectBtn(top.length + inFolder(null).length + found.length > 0)}
         </div>
-        {bulkBar(pickList)}
+        {bulkBar()}
         {qn ? (
           found.length ? <div className="lh-grid">{found.map(i => card(i))}</div> : <p className="lh-none">Nothing matches. Try a player, a word from your notes, or a folder.</p>
-        ) : mode === "wall" ? (
+        ) : (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0 8px" }}><span className="lh-hint">Drag folders to arrange them. Drag any Game Shot onto a folder to file it.</span><span className="la-sp" />{top.length > 1 && <button className="la-tiny" onClick={lineUp}>Line them up</button>}<button className="la-tiny" onClick={() => setNaming({ id: null, parent: null, name: "" })}><FolderPlus size={13} /> New folder</button></div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0 8px" }}><span className="lh-hint">{picking ? "Click folders and Game Shots to select them." : "Drag a Game Shot onto a folder to file it."}</span><span className="la-sp" /><button className="la-tiny" onClick={() => setNaming({ id: null, parent: null, name: "" })}><FolderPlus size={13} /> New folder</button></div>
             <div className="lh-wallbox" ref={wallRef} style={{ height: (wallH + 20) * zoom }}>
               <div className="lh-wall" style={{ transform: `scale(${zoom})`, width: `${100 / zoom}%`, height: wallH + 20 }}>
                 {!top.length && <div className="lh-nofolders"><b>No folders yet</b><span>One folder per match, idea or player, with every Game Shot and Game Film for it inside.</span><button className="an-btn pri" onClick={() => setNaming({ id: null, parent: null, name: "" })}><FolderPlus size={15} /> New folder</button></div>}
@@ -447,17 +474,38 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
               {!inFolder(null).length && <small style={{ color: TEXT_MUTED }}>Everything is filed.</small>}
             </div>
           </>
-        ) : (
-          <div className="lh-list">
-            {[...top.flatMap(f => [f, ...folders.filter(c => c.parent_id === f.id)]), null].map(f => {
-              const id = f?.id ?? "unsorted", list = inFolder(f?.id ?? null)
+        )}
+      </main>
+    )
+  }
+
+  const binPage = () => {
+    const shownF = bin.folders.filter(f => !f.parent_id || !bin.folders.some(p => p.id === f.parent_id && p.deleted_at === f.deleted_at))
+    const shownI = bin.items.filter(i => !(i.folder_id && bin.folders.some(f => f.id === i.folder_id && f.deleted_at === i.deleted_at)))
+    const inBinFolder = (f: Folder) => bin.items.filter(i => i.folder_id === f.id && i.deleted_at === f.deleted_at)
+    const rows = [...shownF.map(f => ({ f, at: f.deleted_at! })), ...shownI.map(i => ({ i, at: i.deleted_at! }))].sort((a, b) => b.at.localeCompare(a.at))
+    return (
+      <main className="lh-main">
+        <div className="lh-bar">
+          <h2>Bin</h2><span className="lh-count">Kept for {BIN_DAYS} days, then deleted for good</span>
+          <span className="la-sp" />
+          {rows.length > 0 && <button className="an-btn" onClick={() => setConfirm({ items: shownI.map(i => i.id), folders: shownF.map(f => f.id) })}><Trash2 size={15} /> Empty the Bin</button>}
+        </div>
+        {!rows.length ? <p className="lh-none">The Bin is empty.</p> : (
+          <div className="lh-binlist">
+            {rows.map(r => {
+              const pic = "f" in r && r.f ? cover(inBinFolder(r.f)[0]) : cover((r as any).i)
+              const name = "f" in r && r.f ? r.f.name : nameOf((r as any).i)
+              const what = "f" in r && r.f ? `Folder · ${tally(inBinFolder(r.f))}` : (r as any).i.kind === "video" ? "Game Film" : "Game Shot"
+              const left = daysLeft(r.at)
+              const id = "f" in r && r.f ? r.f.id : (r as any).i.id
               return (
-                <section key={id} className={`lh-row${isOver(id) ? " drop" : ""}`} data-drop={id}>
-                  <button className="lh-rowhead" onClick={() => navigate(`/analysis?folder=${id}`)} style={f?.parent_id ? { paddingLeft: 22 } : undefined}>
-                    <Glyph dashed={!f} /> <b>{f?.name ?? "Unsorted"}</b><span>{tally(list)}{f?.match ? ` · ${matchLine(f.match)}` : ""}</span>{f?.is_public && <Link2 size={13} style={{ color: "#d7ff3c" }} />}<ChevronRight size={15} style={{ marginLeft: "auto", color: TEXT_MUTED }} />
-                  </button>
-                  <div className="lh-strip">{list.map(thumb)}{!list.length && <span className="lh-hint">Drop Game Shots here</span>}</div>
-                </section>
+                <div key={id} className="lh-binrow">
+                  <span className="pic" style={pic ? { backgroundImage: `url(${pic})` } : undefined}>{!pic && ("f" in r ? <Glyph /> : <ImagePlus size={16} />)}</span>
+                  <div className="nm"><b>{name}</b><span>{what} · {left <= 1 ? "deleted for good tomorrow" : `deleted for good in ${left} days`}</span></div>
+                  <button className="an-btn" onClick={() => "f" in r && r.f ? restore([], [r.f.id]) : restore([id], [])}>Restore</button>
+                  <button className="an-btn" onClick={() => setConfirm("f" in r && r.f ? { items: [], folders: [r.f.id] } : { items: [id], folders: [] })}>Delete now</button>
+                </div>
               )
             })}
           </div>
@@ -479,14 +527,14 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
             <button className="an-btn" onClick={() => setTool("thread")} disabled={!list.some(i => i.kind === "shot")} title="Every Game Shot here as numbered pictures, plus the text for each post"><Stars size={15} /> Render as a thread</button>
             <button className={`an-btn${f.is_public ? " shared" : ""}`} onClick={() => setTool("share")}><Link2 size={15} /> {f.is_public ? "Shared" : "Share"}</button>
           </>}
-          {selectBtn(list)}
+          {selectBtn(list.length > 0)}
           <span style={{ position: "relative" }}>
             <button className="an-btn pri" onClick={() => setNewOpen(o => !o)}><Plus size={15} /> Add</button>
             {newOpen && <div className="la-pop" style={{ right: 0, top: 42 }} onPointerLeave={() => setNewOpen(false)}>
               <button onClick={() => { setNewOpen(false); fileRef.current?.click() }}><ImagePlus size={15} /> Game Shots or a Game Film<small>{f ? `into ${f.name}` : "into Unsorted"}</small></button>
               {f && !f.parent_id && <button onClick={() => { setNewOpen(false); setNaming({ id: null, parent: f.id, name: "" }) }}><FolderPlus size={15} /> A folder inside</button>}
               {f && <button onClick={() => { setNewOpen(false); setNaming({ id: f.id, parent: f.parent_id, name: f.name }) }}><Pencil size={15} /> Rename this folder</button>}
-              {f && <button onClick={() => { setNewOpen(false); setConfirm({ folder: f.id }) }} style={{ color: "#ff8fa3" }}><Trash2 size={15} /> Delete this folder</button>}
+              {f && <button onClick={() => { setNewOpen(false); binIt([], [f.id]) }} style={{ color: "#ff8fa3" }}><Trash2 size={15} /> Delete this folder</button>}
             </div>}
           </span>
         </div>
@@ -500,7 +548,7 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
           </button>
         )}
         {subs.length > 0 && <div className="lh-sub">{subs.map(c => <button key={c.id} className={`la-chip${isOver(c.id) ? " drop" : ""}`} data-drop={c.id} onClick={() => navigate(`/analysis?folder=${c.id}`)}><Glyph /> {c.name} <span style={{ color: TEXT_MUTED }}>{inFolder(c.id).length}</span></button>)}</div>}
-        {bulkBar(list)}
+        {bulkBar()}
         {list.length > 1 && f && <p className="lh-hint" style={{ margin: "0 0 10px" }}>This is the thread order: drag a Game Shot in front of another to change it.</p>}
         <div className="lh-grid">
           {list.map((i, k) => card(i, f ? k + 1 : undefined))}
@@ -511,7 +559,7 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
   }
 
   return (
-    <div className={`lh${fileOver ? " over" : ""}${dragging ? " dragging" : ""}`}
+    <div className={`lh${fileOver ? " over" : ""}${dragging ? " dragging" : ""}`} data-bg={bgLook}
       onDragEnter={e => { if ([...e.dataTransfer.types].includes("Files")) { depth.current++; setFileOver(true) } }}
       onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (!depth.current) setFileOver(false) }}
       onDragOver={e => { if ([...e.dataTransfer.types].includes("Files")) e.preventDefault() }}
@@ -533,7 +581,7 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
       ) : (
         <div className="lh-body">
           {rail}
-          {view === "new" ? newPage() : items === null ? <div className="lh-load"><Loader2 className="an-spin" size={24} color="#d7ff3c" /></div> : view === "library" ? libraryPage() : folderPage()}
+          {view === "new" ? newPage() : items === null ? <div className="lh-load"><Loader2 className="an-spin" size={24} color="#d7ff3c" /></div> : view === "library" ? libraryPage() : view === "bin" ? binPage() : folderPage()}
         </div>
       )}
 
@@ -552,10 +600,10 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
       )}
       {confirm && (
         <div className="la-keys" onPointerDown={e => { if (e.target === e.currentTarget) setConfirm(null) }}>
-          <div role="alertdialog" aria-label="Delete" style={{ width: 440 }}>
-            <h3>{confirm.folder ? "Delete the folder?" : `Delete ${confirm.items!.length === 1 ? "it" : confirm.items!.length}?`}</h3>
-            <p style={{ color: "#c9ccd2", fontSize: 14, lineHeight: 1.5, margin: "0 0 16px" }}>{confirm.folder ? "The folder goes. What was in it moves to Unsorted, so nothing is lost." : "Game Shots and their marks are deleted for good. This can't be undone."}</p>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><button className="an-btn" onClick={() => setConfirm(null)}>Keep</button><button className="an-btn" style={{ background: "#ff4d6d", borderColor: "#ff4d6d", color: "#fff" }} onClick={doDelete}>Delete</button></div>
+          <div role="alertdialog" aria-label="Delete for good" style={{ width: 440 }}>
+            <h3>Delete for good?</h3>
+            <p style={{ color: "#c9ccd2", fontSize: 14, lineHeight: 1.5, margin: "0 0 16px" }}>{confirm.items.length + confirm.folders.length === 1 ? "It's" : "They're"} gone for good, with everything inside. This can't be undone.</p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><button className="an-btn" onClick={() => setConfirm(null)}>Keep</button><button className="an-btn" style={{ background: "#ff4d6d", borderColor: "#ff4d6d", color: "#fff" }} onClick={doErase}>Delete for good</button></div>
           </div>
         </div>
       )}
@@ -576,6 +624,16 @@ const HOME_CSS = `
   .lh.dragging, .lh.dragging * { cursor: grabbing !important; user-select: none; }
   .lh.over::after { content: "Drop to add"; position: fixed; inset: 10px; border: 2px dashed #d7ff3c; border-radius: 16px; background: rgba(215,255,60,.06); display: grid; place-items: center; font: 800 30px 'Barlow Condensed', sans-serif; letter-spacing: .04em; text-transform: uppercase; color: #d7ff3c; z-index: 60; pointer-events: none; }
   .lh-load { display: grid; place-items: center; }
+  /* backgrounds: data-bg on .lh holds any of flood, chalk, mown */
+  .lh[data-bg~="flood"] .lh-welcome, .lh[data-bg~="flood"] .lh-main { background-color: #111215; background-image: radial-gradient(1200px 620px at 22% -220px, rgba(215,255,60,.30), rgba(215,255,60,.08) 45%, transparent 70%), radial-gradient(900px 520px at 105% -160px, rgba(140,200,255,.14), transparent 62%); }
+  .lh[data-bg~="flood"] .lh-welcome::before, .lh[data-bg~="flood"] .lh-main::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .09; mix-blend-mode: overlay; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+  .lh[data-bg] .lh-welcome, .lh[data-bg] .lh-main { position: relative; isolation: isolate; }
+  .lh[data-bg] .lh-welcome > *, .lh[data-bg] .lh-main > * { position: relative; z-index: 1; }
+  .lh[data-bg~="chalk"] .lh-welcome::after, .lh[data-bg~="chalk"] .lh-main::after { content: ""; position: absolute; left: 50%; top: 40px; width: 1500px; height: 980px; transform: translateX(-50%); pointer-events: none; z-index: 0; background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1050 680' fill='none' stroke='%23d7ff3c' stroke-opacity='.15' stroke-width='2'><rect x='1' y='1' width='1048' height='678'/><line x1='525' y1='1' x2='525' y2='679'/><circle cx='525' cy='340' r='91.5'/><circle cx='525' cy='340' r='3' fill='%23d7ff3c' fill-opacity='.2'/><rect x='1' y='138' width='165' height='404'/><rect x='1' y='248' width='55' height='184'/><rect x='884' y='138' width='165' height='404'/><rect x='994' y='248' width='55' height='184'/><path d='M166 267 A91.5 91.5 0 0 1 166 413'/><path d='M884 267 A91.5 91.5 0 0 0 884 413'/><circle cx='110' cy='340' r='3' fill='%23d7ff3c' fill-opacity='.2'/><circle cx='940' cy='340' r='3' fill='%23d7ff3c' fill-opacity='.2'/></svg>") center / contain no-repeat; -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.55) 55%, transparent 92%); mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.55) 55%, transparent 92%); }
+  .lh[data-bg~="chalk"]:not([data-bg~="flood"]) .lh-welcome, .lh[data-bg~="chalk"]:not([data-bg~="flood"]) .lh-main { background: #121315; }
+  .lh[data-bg~="mown"] .lh-welcome, .lh[data-bg~="mown"] .lh-main { background: radial-gradient(900px 420px at 50% 110%, rgba(215,255,60,.09), transparent 70%), repeating-linear-gradient(90deg, #121614 0 120px, #0e1110 120px 240px); }
+  .lh[data-bg] .lh-guide { background: rgba(22,23,27,.78); backdrop-filter: blur(6px); }
+  .lh[data-bg] .lh-drop { background: rgba(18,19,22,.72); }
   .lh-body { display: grid; grid-template-columns: 248px minmax(0,1fr); min-height: 0; }
   .lh-body > * { min-height: 0; }
   .lh-rail { border-right: 1px solid ${DS_BORDER}; background: #1c1d21; padding: 12px 10px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
@@ -638,6 +696,13 @@ const HOME_CSS = `
   .lh-card:hover { border-color: ${DS_BORDER_STRONG}; }
   .lh-pic { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 16/9; border: none; background: #0e0f12 center/cover; color: ${TEXT_MUTED}; cursor: pointer; padding: 0; }
   .lh-no { position: absolute; left: 8px; top: 8px; min-width: 24px; height: 24px; padding: 0 7px; border-radius: 6px; background: rgba(10,12,15,.82); color: #d7ff3c; font: 800 14px 'Barlow Condensed', sans-serif; display: grid; place-items: center; }
+  .lh-stack.picking { cursor: pointer; }
+  .lh-stack.on .card.front { outline: 3px solid #d7ff3c; outline-offset: 2px; } .lh-stack.on .card.front::after { content: ""; position: absolute; inset: 0; border-radius: 9px; background: rgba(215,255,60,.16); } .lh-stack.on .name b { color: #d7ff3c; }
+  .lh-card.on .lh-pic { box-shadow: inset 0 0 0 999px rgba(215,255,60,.14); } .lh-mini.on { box-shadow: inset 0 0 0 999px rgba(215,255,60,.18); }
+  .lh-binlist { display: flex; flex-direction: column; max-width: 860px; }
+  .lh-binrow { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid ${DS_BORDER}; }
+  .lh-binrow .pic { width: 96px; height: 56px; border-radius: 8px; background: #2a2c31 center/cover; flex: none; display: grid; place-items: center; color: ${TEXT_MUTED}; }
+  .lh-binrow .nm { flex: 1; min-width: 0; } .lh-binrow .nm b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .lh-binrow .nm span { font-size: 12.5px; color: ${TEXT_MUTED}; }
   .lh-tick { position: absolute; right: 8px; top: 8px; width: 22px; height: 22px; border-radius: 6px; border: 2px solid #fff; background: rgba(10,12,15,.55); display: grid; place-items: center; color: #0a0c0f; }
   .lh-tick.on { background: #d7ff3c; border-color: #d7ff3c; }
   .lh-meta { padding: 9px 12px 11px; display: flex; flex-direction: column; gap: 2px; }

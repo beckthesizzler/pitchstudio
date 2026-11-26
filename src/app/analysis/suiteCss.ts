@@ -117,6 +117,7 @@ export const SUITE_CSS = `        .an-icon.ghost { border-color: transparent; ba
         .la-tile.over { box-shadow: -4px 0 0 #d7ff3c; }
         .la-tile b { position: absolute; left: 5px; top: 4px; font: 700 10px 'Inter', sans-serif; color: #fff; background: rgba(10,12,15,.78); padding: 1px 5px; border-radius: 4px; }
         .la-tile .vid { position: absolute; right: 4px; bottom: 4px; font: 700 9.5px 'Inter', sans-serif; color: #d7ff3c; background: rgba(10,12,15,.82); padding: 1px 5px; border-radius: 3px; }
+        .la-tile.sel { outline: 3px solid #d7ff3c; outline-offset: 2px; box-shadow: inset 0 0 0 999px rgba(215,255,60,.18); }
         .la-tile .tick { position: absolute; right: 5px; top: 5px; width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #fff; background: rgba(10,12,15,.6); display: grid; place-items: center; color: #0a0c0f; }
         .la-tile .tick.on { background: #d7ff3c; border-color: #d7ff3c; }
         .la-add { flex: none; width: 66px; height: 66px; border-radius: 8px; border: 1.5px dashed rgba(255,255,255,.22); background: none; color: ${TEXT_MUTED}; display: grid; place-items: center; cursor: pointer; }
