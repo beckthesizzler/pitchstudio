@@ -1,3 +1,8 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+
+/* No lone word left on the last line, anywhere in the app: headings split into even lines,
+   paragraphs and short UI text avoid ending on one word. */
+h1, h2, h3, h4, h5, h6, .lh-h1, .lh-lede, .lh-drop b, .lh-guide h2 { text-wrap: balance; }
+p, li, small, figcaption, blockquote, label, .an-note, .lh-hint, .lh-guide li b, .lh-guide li span, .lh-excard .s, .lh-nofolders span, .la-narroff { text-wrap: pretty; }
