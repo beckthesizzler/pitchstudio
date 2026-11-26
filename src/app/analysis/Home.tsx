@@ -73,13 +73,6 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
   const searchRef = useRef<HTMLInputElement>(null)
   const depth = useRef(0)
   const [, setTick] = useState(0)
-  /** background look: try one with ?bg=flood, ?bg=chalk, ?bg=flood+chalk or ?bg=mown (remembered), ?bg=off to go back */
-  const bgLook = useMemo(() => {
-    const q = new URLSearchParams(window.location.search).get("bg")
-    if (q != null) store.set("la-bg", q === "off" ? "" : q.replace(/[^a-z ]/g, " ").trim())
-    const v = store.get("la-bg")
-    return v === null ? "flood chalk" : v || undefined // floodlights + chalk lines unless you chose otherwise
-  }, [])
   const done = guideDone()
   const say = (t: string) => setToast(t)
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 3800); return () => clearTimeout(t) }, [toast])
@@ -451,7 +444,7 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
     return (
       <main className="lh-main">
         <div className="lh-bar">
-          <h2>Your Library</h2><span className="lh-count">{tally(items ?? [])} · {folders.length} {folders.length === 1 ? "folder" : "folders"}</span>
+          <div className="lh-titles"><h2>Your Library</h2><span className="lh-count">{tally(items ?? [])} · {folders.length} {folders.length === 1 ? "folder" : "folders"}</span></div>
           <span className="la-sp" />
           <label className="lh-search"><Search size={15} /><input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Search" aria-label="Search" />{q ? <button className="an-x" aria-label="Clear the search" onClick={() => setQ("")}><X size={13} /></button> : <kbd>⌘K</kbd>}</label>
           {!qn && <label className="lh-zoom" title="Zoom (⌘+ and ⌘−)"><ZoomIn size={14} /><input type="range" min={0.5} max={1.2} step={0.05} value={zoom} onChange={e => setZoom(Number(e.target.value))} aria-label="Zoom the wall" /><span>{Math.round(zoom * 100)}%</span></label>}
@@ -560,7 +553,7 @@ export function Home({ user, view, folderParam, sealFor }: { user: Who; view: Ho
   }
 
   return (
-    <div className={`lh${fileOver ? " over" : ""}${dragging ? " dragging" : ""}`} data-bg={bgLook}
+    <div className={`lh${fileOver ? " over" : ""}${dragging ? " dragging" : ""}`}
       onDragEnter={e => { if ([...e.dataTransfer.types].includes("Files")) { depth.current++; setFileOver(true) } }}
       onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (!depth.current) setFileOver(false) }}
       onDragOver={e => { if ([...e.dataTransfer.types].includes("Files")) e.preventDefault() }}
@@ -625,16 +618,14 @@ const HOME_CSS = `
   .lh.dragging, .lh.dragging * { cursor: grabbing !important; user-select: none; }
   .lh.over::after { content: "Drop to add"; position: fixed; inset: 10px; border: 2px dashed #d7ff3c; border-radius: 16px; background: rgba(215,255,60,.06); display: grid; place-items: center; font: 800 30px 'Barlow Condensed', sans-serif; letter-spacing: .04em; text-transform: uppercase; color: #d7ff3c; z-index: 60; pointer-events: none; }
   .lh-load { display: grid; place-items: center; }
-  /* backgrounds: data-bg on .lh holds any of flood, chalk, mown */
-  .lh[data-bg~="flood"] .lh-welcome, .lh[data-bg~="flood"] .lh-main { background-color: #111215; background-image: radial-gradient(1200px 620px at 22% -220px, rgba(215,255,60,.30), rgba(215,255,60,.08) 45%, transparent 70%), radial-gradient(900px 520px at 105% -160px, rgba(140,200,255,.14), transparent 62%); }
-  .lh[data-bg~="flood"] .lh-welcome::before, .lh[data-bg~="flood"] .lh-main::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .09; mix-blend-mode: overlay; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
-  .lh[data-bg] .lh-welcome, .lh[data-bg] .lh-main { position: relative; isolation: isolate; }
-  .lh[data-bg] .lh-welcome > *, .lh[data-bg] .lh-main > * { position: relative; z-index: 1; }
-  .lh[data-bg~="chalk"] .lh-welcome::after, .lh[data-bg~="chalk"] .lh-main::after { content: ""; position: absolute; left: 50%; top: 40px; width: 1500px; height: 980px; transform: translateX(-50%); pointer-events: none; z-index: 0; background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1050 680' fill='none' stroke='%23d7ff3c' stroke-opacity='.15' stroke-width='2'><rect x='1' y='1' width='1048' height='678'/><line x1='525' y1='1' x2='525' y2='679'/><circle cx='525' cy='340' r='91.5'/><circle cx='525' cy='340' r='3' fill='%23d7ff3c' fill-opacity='.2'/><rect x='1' y='138' width='165' height='404'/><rect x='1' y='248' width='55' height='184'/><rect x='884' y='138' width='165' height='404'/><rect x='994' y='248' width='55' height='184'/><path d='M166 267 A91.5 91.5 0 0 1 166 413'/><path d='M884 267 A91.5 91.5 0 0 0 884 413'/><circle cx='110' cy='340' r='3' fill='%23d7ff3c' fill-opacity='.2'/><circle cx='940' cy='340' r='3' fill='%23d7ff3c' fill-opacity='.2'/></svg>") center / contain no-repeat; -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.55) 55%, transparent 92%); mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.55) 55%, transparent 92%); }
-  .lh[data-bg~="chalk"]:not([data-bg~="flood"]) .lh-welcome, .lh[data-bg~="chalk"]:not([data-bg~="flood"]) .lh-main { background: #121315; }
-  .lh[data-bg~="mown"] .lh-welcome, .lh[data-bg~="mown"] .lh-main { background: radial-gradient(900px 420px at 50% 110%, rgba(215,255,60,.09), transparent 70%), repeating-linear-gradient(90deg, #121614 0 120px, #0e1110 120px 240px); }
-  .lh[data-bg] .lh-guide { background: rgba(22,23,27,.78); backdrop-filter: blur(6px); }
-  .lh[data-bg] .lh-drop { background: rgba(18,19,22,.72); }
+  /* gloss: a soft sheen from the top of the page, and a lit top edge on cards, like a glossy screen */
+  .lh-welcome, .lh-main { background: linear-gradient(180deg, rgba(255,255,255,.05) 0, rgba(255,255,255,.018) 180px, rgba(255,255,255,0) 420px), #17181b; }
+  .lh-excard, .lh-guide, .lh-tray, .lh-binrow .pic { box-shadow: inset 0 1px 0 rgba(255,255,255,.09); }
+  .lh-excard { background: linear-gradient(180deg, #2b2d33 0, #232429 100%) !important; }
+  .lh-excard:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 10px 28px rgba(0,0,0,.35); }
+  .lh-guide { background: linear-gradient(180deg, #212227 0, #1b1c20 260px) !important; }
+  .lh-drop { box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+  .lh-stack .card { box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 22px rgba(0,0,0,.38) !important; }
   .lh-body { display: grid; grid-template-columns: 248px minmax(0,1fr); min-height: 0; }
   .lh-body > * { min-height: 0; }
   .lh-rail { border-right: 1px solid ${DS_BORDER}; background: #1c1d21; padding: 12px 10px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
@@ -647,6 +638,10 @@ const HOME_CSS = `
   .lh-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
   .lh-bar h2 { margin: 0; font: 800 32px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw; }
   .lh-count { color: ${TEXT_MUTED}; font-size: 13px; }
+  .lh-excard .t, .lh-excard .s, .lh-h1, .lh-lede, .lh-guide h2, .lh-guide li b, .lh-guide li span, .lh-drop b, .lh-drop small, .lh-hint, .lh-none { text-wrap: balance; }
+  .lh-guide .lh-k { white-space: nowrap; }
+  .lh-titles { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .lh-search { width: clamp(200px, 24vw, 340px) !important; }
   .lh-hint { color: ${TEXT_MUTED}; font-size: 12.5px; }
   .an-btn.shared { border-color: rgba(215,255,60,.5); color: #d7ff3c; }
   .lh-search { height: 38px; width: min(340px, 30vw); border-radius: 10px; background: ${SURFACE_1}; border: 1px solid ${DS_BORDER}; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; color: ${TEXT_MUTED}; }
@@ -755,6 +750,7 @@ const HOME_CSS = `
   .lt-posts .txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13px; line-height: 1.45; white-space: pre-wrap; color: #d7d9de; }
   .lt-posts .txt em { color: #d7ff3c; font-style: normal; font-size: 12px; } .lt-posts .txt small { font-size: 11px; }
   a.an-btn { text-decoration: none; }
-  @media (max-width: 1250px) { .lh-new { grid-template-columns: minmax(0,1fr); } .lh-guide { display: none; } }
+  @media (max-width: 1320px) { .lh-new { grid-template-columns: minmax(0,1fr) 290px; } .lh-guide { padding: 20px 18px; } .lh-welcome { padding: 28px 30px; } .lh-ex { gap: 12px; } }
+  @media (max-width: 980px) { .lh-new { grid-template-columns: minmax(0,1fr); } .lh-guide { display: none; } }
   @media (max-width: 900px) { .lh-body { grid-template-columns: 1fr; } .lh-rail { display: none; } .lh-ex { grid-template-columns: 1fr; } }
 `

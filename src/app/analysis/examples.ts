@@ -7,7 +7,7 @@ import { pendingFiles } from "./Suite"
    marks and all, so you can take it apart, change it and render it like your own. */
 
 export const EXAMPLES = [
-  { title: "One jumps. Nine wait.", sub: "Game Shot · build-up against a block", kind: "shot" as const, thumb: "/examples/ex1-card.jpg", key: "ex1", pic: "/examples/ex1.jpg" },
+  { title: "One jumps. Nine wait.", sub: "Game Shot · build‑up against a block", kind: "shot" as const, thumb: "/examples/ex1-card.jpg", key: "ex1", pic: "/examples/ex1.jpg" },
   { title: "Ten behind the ball.", sub: "Game Shot · focus on the break", kind: "shot" as const, thumb: "/examples/ex4-card.jpg", key: "ex4", pic: "/examples/ex4.jpg" },
   { title: "Man for man.", sub: "Game Film · freeze and build · 0:09", kind: "video" as const, thumb: "/examples/man-for-man.jpg", key: "vid", pic: "/examples/man-for-man-clip.mp4" },
 ]
